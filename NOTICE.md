@@ -11,8 +11,11 @@ The client reads the player's own StarCraft installation at runtime through
 Small functional metadata files under `engine-rust/fixtures/` (action ids,
 key codes, card positions, icon filenames and UI layout rectangles) are
 included only for interoperability.  They contain no images, fonts or audio.
-`engine-rust/fixtures/calibration/` and all screenshot evidence are
-deliberately ignored because they are derived from retail captures.
+The 1-bit alpha coverage masks under `engine-rust/src/menu_masks/` are
+measured text coverage, not retail artwork or font files.  They contain no
+source pixels or glyph outlines.  `engine-rust/fixtures/calibration/` and
+all screenshot evidence are deliberately ignored because they are derived
+from retail captures.
 
 StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
 trademarks of Blizzard Entertainment, Inc.  This project is not affiliated
