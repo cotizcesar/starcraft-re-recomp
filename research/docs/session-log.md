@@ -2932,3 +2932,25 @@ título 36 px con `y_scale 1.083` y bearing x -3; cuerpo 27 px con
 Hotkeys completo queda 0.76–1.13 sin capas; 16/16.  El 0.00 crudo sigue
 siendo el rasterizador CEF/DirectWrite (probados y falsados frame/glifo
 supersample, gamma y embolden).
+
+## 2026-10-31 (56) — Hotkeys: esquinas CEF y tooltip inventado
+
+Las capturas del usuario señalaban las esquinas de la pestaña "Hotkeys" y de
+Terran/Protoss/Zerg.  El CSS retail confirma `.hotkeyPanelHeader` y
+`.raceSelectionTabSection .tab` con radio superior (12 px portada, 9 px
+razas a la escala efectiva) y `selected` con `margin-bottom:-6px` (9 px),
+cuyos bordes laterales llegan al panel.  Se implementaron
+`tab_border_rounded`, `top_rounded_fill` y `css_panel3_rounded` (radio 12
+exterior / 6 interior); la comparación 1:1 de las tres zonas marcadas queda
+sin las líneas rectas y sin el escalón inferior.
+
+El tooltip de hover "Terran SCV" era nuestro, no del retail:
+`hotkeypanel.js` no tiene tooltip y solo aplica
+`.unit:hover:not(.selected){box-shadow: inset 0 0 0 2px #4cc428}`.  Se
+eliminó; el nuevo `--shot-screen hotkeys-terran-hover-scv` muestra el borde
+verde y ningún texto encima de "Ground Units".
+
+Verificación final: 16/16 Hotkeys (0.76–1.13), goal 19/19 a 0.00 con capas
+regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.  Repo privado
+`cotizcesar/starcraft-re-recomp` creado y subido sin assets, capturas,
+capas de calibración ni evidencia decompilada.

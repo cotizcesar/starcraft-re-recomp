@@ -250,3 +250,26 @@ Sobre el 0.00 crudo: se probaron supersample de frame completo (4/3 ->
 0.85 y embolden horizontal.  Todos empeoran; el residuo es la forma/gamma
 del rasterizador CEF/DirectWrite, no la geometría.  El 0.00 exacto exigiría
 usar el rasterizador CEF original o capas derivadas de las capturas.
+
+## Hotkeys: borders de pestañas y tooltip de hover (2026-10-31, sesión 26)
+
+Las pestañas del CEF no eran rectangulares: `.hotkeyPanelHeader` y
+`.raceSelectionTabSection .tab` tienen `border-radius` superior (12 px la
+portada, 9 px las razas a la escala efectiva) y la pestaña seleccionada baja
+`margin-bottom:-6px` (9 px aquí), de modo que sus bordes laterales siguen
+hasta el borde superior del panel.  Se sustituyó el borde recto por
+`tab_border_rounded` + `top_rounded_fill`, y el panel por
+`css_panel3_rounded` (radio 12/6).  La comparación 1:1 de las esquinas está
+en `docs/hotkeys-live-proof-states.png` y en la captura de verificación;
+las cuatro referencias Hotkeys siguen pasando.
+
+El **tooltip de hover de unidades era una invención**: el
+`hotkeypanel.js` retail no contiene ningún tooltip; su único cambio al pasar
+el ratón es `.unit:hover:not(.selected){box-shadow: inset 0 0 0 2px
+#4cc428}`.  Se eliminó el cuadro "Terran SCV" que tapaba "Ground Units".
+El nuevo estado `hotkeys-terran-hover-scv` demuestra que el hover deja solo
+el borde verde y ningún texto.
+
+Verificación: `ui-hotkeys-16.txt` 16/16 (0.76–1.13), goal calibrado 19/19 a
+0.00 (capas regeneradas tras el cambio de esquinas), `ui_diff.py` 39/39,
+`cargo test` 315/315, clippy 0.
