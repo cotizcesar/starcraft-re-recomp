@@ -1,0 +1,76 @@
+Hotkeys live at 3440x1440 (content crop 440..3000) vs retail captures
+sc_view --width 3440 --height 1440 --fullscreen, no calibration.
+
+ref     screen                        mean    >30 px   live-vs-shot
+131015  hotkeys-terran                0.763   0.481%    0.000
+131026  hotkeys-terran-scv            0.959   0.696%    0.000
+131037  hotkeys-protoss-probe         1.029   0.768%    0.000
+131049  hotkeys-zerg-larva            0.914   0.656%    0.000
+115917  hotkeys-terran                0.791   0.512%    0.000
+115929  hotkeys-terran-scv            0.959   0.696%    0.000
+115935  hotkeys-terran-scv            0.987   0.726%    0.000
+115943  hotkeys-terran-scv-move       1.071   0.806%    0.000
+115959  hotkeys-terran-scv-unbound    1.129   0.909%    0.000
+120018  hotkeys-reset-dialog          1.082   0.500%    0.000
+120032  hotkeys-terran-marine         0.820   0.577%    0.000
+120045  hotkeys-terran-cc             0.884   0.656%    0.000
+120053  hotkeys-protoss               0.783   0.521%    0.000
+120059  hotkeys-zerg                  0.773   0.486%    0.000
+120106  hotkeys-zerg-larva-cards      0.855   0.596%    0.000
+120111  hotkeys-protoss-probe         1.029   0.768%    0.000
+
+The 2026-10-31 captures are the same 3440x1440 retail window.  Duplicates:
+115917~131015 (0.03 mean between captures), 115929~131026 (0.00),
+115935~115929, 120111~131037 (0.00).
+
+New states implemented against those captures:
+- 120032 Marine (unit 0) and 120045 Command Center (unit 106, General and
+  General - Lifted cards), transcribed from the shipped `hotkeypanel.js`.
+- 115943 Move rebind panel (icon, title, "48 units share this command",
+  "Default: M", key box) and 115959 post-rebind state: Move=H, CEF
+  `.bindingErrorInstructions` warning replaces the prompt, and the 24 px
+  `unbound.png` red `?` badge marks the 12 Terran units that carry Hold
+  Position (H).
+- 120018 restore-defaults modal: 40 % dim over the CEF page and bottom
+  buttons, 16 px rounded plates, title/body/Continue/Cancel.  The CEF
+  `.dialogBody` letter-spacing (.4 px CSS -> 0.23 px here), the title
+  bearing (-3 px), the CEF glyph y-scales and the full-container dim
+  overlay (the reference dims the whole bottom strip, not just the three
+  button groups) took the modal from 2.934 to **1.082**.
+
+Full data (not only the reference units):
+- `engine-rust/fixtures/hotkeys.json` has the 220 actions and 88 units /
+  buildings (Terran 29, Protoss 28, Zerg 31) from `hotkeypanel.js` plus the
+  native `OnBindingsChanged` `$default` profile.  All 16 references above
+  use that single data path; no per-unit hardcoded cards remain.
+- Headless audit: 88/88 units render their cards (`hotkeys-any-<race>-<id>`,
+  card region >8 000 bright pixels).  Rebinding any action uses the CEF
+  per-unit collision rule; Move=H reproduces 115959, Move=M collides with
+  Train Marine only on the Lifted Barracks card.
+- Save writes `~/.cache/galaxycraft/hotkeys.bin` (GCHK v1, bounds + SHA-256);
+  startup loads it, Cancel restores the snapshot, Restore defaults rewrites
+  the standard table.  Shot states force defaults so references stay stable.
+
+live-vs-shot compares the window capture with the deterministic 2560x1440
+`--shot` render of the same state (no GC_RAW_RENDER, no calibration layers).
+Rasterisation work:
+- UiFont y_scale: title 1.02, section headings 1.04, "Selected:" 1.10,
+  buttons 1.10, Default 0.96; keys 20.5 px / y 1.07; hint phase 0.2.
+- cmdicons native 128; unit cells premultiplied bilinear at 0.0, command
+  cells at (0.40, 0.35); third actions card cells +1 px; "Selected:" x -1.
+- CEF hairline coverages per side: unit cells 42/48/29/42, action cells
+  25/25/42/42 (box-shadow subpixel), not a flat 1 px #333.
+- .actionTint overlay on the composited icon-on-black; Probe 678/679 use
+  cmdicons.272/273; rebind prompt x -1, Default y_scale, key D x -1.
+- Button-group border 4 px (1.5 CSS px * 3); modal radius 16 px and
+  buttons 6 px; badge 30 px rgba(0,0,0,.6) plate + 24 px #cc0e00 disc.
+Residual: CEF icon/glyph antialiasing only; box geometry is pixel-equal
+(panel 354..2202 x 117..1256, tabs 811/1090/1369, cells 96/105).  The
+restore dialog is 1.08: its 36/27 px glyph runs are still the heaviest AA
+in the set, but the box geometry, dim factor and text metrics now match.
+The remaining text AA is the CEF/DirectWrite shape/gamma; whole-frame and
+fontdue 4/3 supersampling, gamma and horizontal embolden were all tested
+and made the score worse (see session-log 53-55).
+
+`python3 scripts/ui_visual_diff.py --hotkeys-only` (no calibration):
+16/16 screens PASS; full table in `docs/ui-hotkeys-16.txt`.

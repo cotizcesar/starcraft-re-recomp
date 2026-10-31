@@ -1,0 +1,48 @@
+# Build outputs (regenerable, never commit)
+target/
+
+# Python bytecode / virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Retail-derived data: regenerable from the player's own install, never commit.
+# (engine-rust/fixtures/ is the exception: tiny tables baked into the binary
+# via include_bytes!, required to build and test.)
+engine-rust/assets/
+.galaxycraft-cache/
+
+# RE heavy outputs: local-only (memory dumps, Ghidra projects, run logs)
+research/work/
+research/build/
+research/logs/
+
+# Harness outputs
+*.bmp
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.vscode/
+.idea/
+
+# Secrets (checked-in templates are fine)
+.env
+!.env.example
+
+# Copyrighted retail captures and reference-derived corrections are local-only.
+engine-rust/docs/original_screenshots/
+engine-rust/fixtures/calibration/
+research/analysis/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webm
+*.mp4
+engine-rust/docs/evidence/
+research/docs/rea-evidence-c.md

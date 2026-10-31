@@ -1,0 +1,16 @@
+Headless audit of the complete Hotkeys browser (2026-10-31)
+
+For every unit/building in fixtures/hotkeys.json (88 entries: Terran 29,
+Protoss 28, Zerg 31) the client was rendered with:
+
+  sc_view --install "$SC_INSTALL" --no-intro --width 2560 --height 1440 \
+    --shot /tmp/audit.bmp --shot-screen hotkeys-any-<race>-<id>
+
+Result: 88/88 OK.
+- Minimum bright pixels in the card region (x 1140..2110, y 160..900,
+  sum RGB > 180): 8 459 (median 22 123), i.e. every unit has a non-empty
+  card panel.
+- The same fixture drives the 16 reference states:
+  docs/ui-hotkeys-16.txt = 16/16 PASS, raw means 0.76..1.13.
+- The data tests (cargo test) cover all 220 actions, default keys, shared
+  counts and rebind collisions; no hardcoded per-unit cards remain.

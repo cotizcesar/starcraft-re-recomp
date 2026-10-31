@@ -1,0 +1,7 @@
+/target
+
+# Retail art/audio/maps are never committed.  Materialise the local subset
+# from the player's own installation with:
+#   sc_assets --install "/path/to/StarCraft" extract --out .galaxycraft-cache
+/assets/
+/.galaxycraft-cache/

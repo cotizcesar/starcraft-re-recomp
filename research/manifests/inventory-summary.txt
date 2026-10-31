@@ -1,0 +1,28 @@
+GAME_ROOT: /var/home/cotizcesar/Games/battlenet/drive_c/Program Files (x86)/StarCraft
+archivos: 724
+bytes totales: 5879150935
+
+extension  archivos  MB
+.scm             163        18.7
+.scx             160        15.4
+.htm             128         0.2
+.pak             118        20.2
+.idx              48         4.2
+.index            47         3.0
+.dll              20       148.7
+.exe              11        43.5
+(ninguna)          9         0.1
+.bin               4         1.8
+.db                2         0.0
+.000               2      1073.9
+.dat               2        20.4
+.info              1         0.0
+.result            1         0.0
+.001               1      1073.7
+.002               1      1073.7
+.003               1      1073.7
+.004               1      1073.7
+.005               1       234.0
+.json              1         0.0
+.chm               1         0.1
+.js                1         0.0

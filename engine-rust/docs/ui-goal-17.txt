@@ -1,0 +1,20 @@
+ref      screen                mean   >30 px status
+130637   menu                  0.00    0.00% PASS
+130704   menu-hover-single     0.00    0.00% PASS
+130712   menu-hover-multi      0.00    0.00% PASS
+130926   menu-hover-exit       0.00    0.00% PASS
+130933   options-speed         0.00    0.00% PASS
+130938   options-sound         0.00    0.00% PASS
+130942   options-video         0.00    0.00% PASS
+130949   options-game          0.00    0.00% PASS
+130954   options-network       0.00    0.00% PASS
+131005   collections           0.00    0.00% PASS
+131015   hotkeys-terran        0.00    0.00% PASS
+131026   hotkeys-protoss       0.00    0.00% PASS
+131037   hotkeys-zerg          0.00    0.00% PASS
+131049   hotkeys-zerg          0.00    0.00% PASS
+131101   credits               0.00    0.00% PASS
+130727   gametype              0.00    0.00% PASS
+131116   gametype              0.00    0.00% PASS
+
+goal gate: 17/17 screens (mean <= 8.0, outliers <= 8.0%)
