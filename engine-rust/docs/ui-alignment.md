@@ -259,9 +259,9 @@ portada, 9 px las razas a la escala efectiva) y la pestaña seleccionada baja
 `margin-bottom:-6px` (9 px aquí), de modo que sus bordes laterales siguen
 hasta el borde superior del panel.  Se sustituyó el borde recto por
 `tab_border_rounded` + `top_rounded_fill`, y el panel por
-`css_panel3_rounded` (radio 12/6).  La comparación 1:1 de las esquinas está
-en `docs/hotkeys-live-proof-states.png` y en la captura de verificación;
-las cuatro referencias Hotkeys siguen pasando.
+`css_panel3_rounded` (radio 12/6).  La comparación 1:1 de las esquinas está en
+`docs/hotkeys-tabs-proof.png` (recortes de 131015 con REF arriba y el
+render actual abajo); las cuatro referencias Hotkeys siguen pasando.
 
 El **tooltip de hover de unidades era una invención**: el
 `hotkeypanel.js` retail no contiene ningún tooltip; su único cambio al pasar
