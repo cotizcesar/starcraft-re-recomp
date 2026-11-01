@@ -2954,3 +2954,16 @@ Verificación final: 16/16 Hotkeys (0.76–1.13), goal 19/19 a 0.00 con capas
 regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.  Repo privado
 `cotizcesar/starcraft-re-recomp` creado y subido sin assets, capturas,
 capas de calibración ni evidencia decompilada.
+
+## 2026-10-31 (57) — Hotkeys: remate inferior de las pestañas
+
+Las esquinas superiores ya eran curvas, pero el borde interior seguía
+bajando 2 px de más en la portada y 12 px de más en las pestañas no
+seleccionadas (el círculo verde sobre Protoss).  Se ajustó el remate:
+título interior termina en y=125 y exterior en y=127 (el retail exterior
+llega a 128); pestañas no seleccionadas terminan el interior en y=113 y el
+exterior en 119; la seleccionada conserva su solape.  El zoom REF/OUR de
+las dos zonas está en `engine-rust/docs/hotkeys-tabs-proof.png`.
+
+Verificación: 16/16 Hotkeys (0.76–1.13), goal 19/19 a 0.00 con capas
+regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.

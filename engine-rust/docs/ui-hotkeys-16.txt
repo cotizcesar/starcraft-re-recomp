@@ -11,9 +11,9 @@ ref      screen                mean   >30 px status
 120045   hotkeys-terran-cc     0.88    0.65% PASS
 120106   hotkeys-zerg-larva-cards    0.85    0.59% PASS
 120032   hotkeys-terran-marine    0.82    0.57% PASS
-115917   hotkeys-terran        0.79    0.51% PASS
-120053   hotkeys-protoss       0.78    0.52% PASS
+115917   hotkeys-terran        0.79    0.50% PASS
+120053   hotkeys-protoss       0.78    0.51% PASS
 120059   hotkeys-zerg          0.77    0.48% PASS
-131015   hotkeys-terran        0.76    0.48% PASS
+131015   hotkeys-terran        0.76    0.47% PASS
 
 visual gate: 16/16 screens (mean <= 8.0, outliers <= 8.0%)

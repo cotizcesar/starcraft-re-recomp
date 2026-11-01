@@ -11030,7 +11030,7 @@ impl App {
             dx(12.0) as f32,
             230,
         );
-        tab_border_rounded(fb, title_tab, border, inner, dx(12.0), dy(9.0), CSS_OUTER);
+        tab_border_rounded(fb, title_tab, border, inner, dx(12.0), dy(11.0), CSS_OUTER);
         tab_border_rounded(
             fb,
             (
@@ -11042,7 +11042,7 @@ impl App {
             border,
             inner,
             (dx(12.0) - inner).max(1),
-            dy(9.0),
+            dy(3.0),
             CSS_INNER,
         );
         if let Some(font) = self.ui_font_hover.as_mut() {
@@ -11096,7 +11096,7 @@ impl App {
                 border,
                 inner,
                 (dx(9.0) - inner).max(1),
-                extra,
+                if selected { extra } else { -inner - 3 },
                 CSS_INNER,
             );
             let color = if selected || self.hotkey_tab_hover == Some(*r) {
