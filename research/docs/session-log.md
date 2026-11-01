@@ -2967,3 +2967,36 @@ las dos zonas está en `engine-rust/docs/hotkeys-tabs-proof.png`.
 
 Verificación: 16/16 Hotkeys (0.76–1.13), goal 19/19 a 0.00 con capas
 regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.
+
+## 2026-10-31 (58) — Hotkeys: remate final de bordes y botones redondeados
+
+Las cuatro zonas marcadas en las capturas del usuario (esquina inferior
+izquierda de "Hotkeys", borde derecho de la portada, esquina inferior
+derecha de Terran y borde superior de "Restore to Default") seguían sin
+coincidir.  La medición fila a fila sobre 131015/131037 falsó parte de la
+nota de la sesión 57: el relleno y el borde exterior de la portada llegan a
+la fila 128 (no 127), el interior `#6c0000` termina en 125 y el borde
+izquierdo queda atenuado en 126–128; la pestaña seleccionada termina el
+interior en 122 y el exterior en 125 (9 px de solape); las no seleccionadas
+terminan en 113 (interior) y 116 (exterior), no en 119.
+
+Los tres botones inferiores tampoco eran rectángulos: el grupo usa radio
+15 px (5 CSS) y banda `#331f1f` de 4 px; el botón radio 9 px (3 CSS) y
+banda `#6c0000` de 3 px, ambos con relleno alfa 205.  Se cambiaron los
+`rect_outline` por `rounded_fill_alpha` + `rounded_band`, la portada pasó a
+12 px de solape y la pestaña seleccionada dibuja su borde interior sin
+extensión (0 en vez de 9 px).
+
+El hover de unidad se verificó otra vez con `--shot-screen
+hotkeys-terran-hover-scv`: marco inset de 3 px `#4cc428` en
+423..518/309..404 y ningún tooltip (el `hotkeypanel.js` retail no lo tiene).
+
+Verificación de píxeles contra 131015: x=360/361/362 filas 126–128 =
+`(10,0,0)`; x=775–777 exterior hasta 128; x=769–771 interior hasta 125;
+x=817–819 y 1063–1065 seleccionada 122/125; Protoss/Zerg 113/116.  Los
+bordes REF/OUR de los botones quedan con desviación 0–1 px.  Gates:
+Hotkeys 16/16 (0.76–1.12), goal 19/19 a 0.00 con las cuatro capas
+regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.  Evidencia
+local ignorada por git: `engine-rust/docs/hotkeys-tabs-proof.png` y
+`/tmp/opencode/hotkeys-hover.png`.
+

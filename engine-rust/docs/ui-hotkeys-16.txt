@@ -1,19 +1,19 @@
 ref      screen                mean   >30 px status
-115959   hotkeys-terran-scv-move-unbound    1.13    0.90% PASS
+115959   hotkeys-terran-scv-move-unbound    1.12    0.90% PASS
 120018   hotkeys-reset-dialog    1.08    0.50% PASS
-115943   hotkeys-terran-scv-move    1.07    0.80% PASS
-131037   hotkeys-protoss-probe    1.03    0.76% PASS
-120111   hotkeys-protoss-probe    1.03    0.76% PASS
-115935   hotkeys-terran-scv    0.98    0.72% PASS
-131026   hotkeys-terran-scv    0.96    0.69% PASS
-115929   hotkeys-terran-scv    0.96    0.69% PASS
-131049   hotkeys-zerg-larva    0.91    0.65% PASS
-120045   hotkeys-terran-cc     0.88    0.65% PASS
-120106   hotkeys-zerg-larva-cards    0.85    0.59% PASS
-120032   hotkeys-terran-marine    0.82    0.57% PASS
+115943   hotkeys-terran-scv-move    1.07    0.79% PASS
+131037   hotkeys-protoss-probe    1.02    0.76% PASS
+120111   hotkeys-protoss-probe    1.02    0.76% PASS
+115935   hotkeys-terran-scv    0.98    0.71% PASS
+131026   hotkeys-terran-scv    0.95    0.68% PASS
+115929   hotkeys-terran-scv    0.95    0.68% PASS
+131049   hotkeys-zerg-larva    0.91    0.64% PASS
+120045   hotkeys-terran-cc     0.88    0.64% PASS
+120106   hotkeys-zerg-larva-cards    0.85    0.58% PASS
+120032   hotkeys-terran-marine    0.81    0.56% PASS
 115917   hotkeys-terran        0.79    0.50% PASS
 120053   hotkeys-protoss       0.78    0.51% PASS
-120059   hotkeys-zerg          0.77    0.48% PASS
+120059   hotkeys-zerg          0.77    0.47% PASS
 131015   hotkeys-terran        0.76    0.47% PASS
 
 visual gate: 16/16 screens (mean <= 8.0, outliers <= 8.0%)

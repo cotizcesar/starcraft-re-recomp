@@ -1,7 +1,7 @@
 # PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
 
-Última actualización: 2026-10-30 (menú principal y Game Type 1:1;
-39/39 checks; intros retail 28/28).
+Última actualización: 2026-10-31 (menú principal y Game Type 1:1;
+39/39 checks; intros retail 28/28; Hotkeys con remate final de bordes).
 
 1. Objetivo general: reconstrucción verificable del comportamiento (código,
    datos, contenido) hasta donde sea técnica y legalmente posible.
@@ -44,10 +44,9 @@
     (sin guardar/cargar, sin replays, sin red; cosmética Carbot/WebM parcial).
 15. Última modificación: hallazgo dump válido + timeout REA documentados
     (`docs/blockers.md`, `docs/tool-errors.md`); `analyzeHeadless` en fondo.
-16. Próxima acción: revisión visual de las capturas en
-    `engine-rust/docs/ui-coverage.png` contra las 32 referencias y ajuste fino
-    de las pantallas web (Options/Hotkeys) que quedan; después, completar
-    `analyzeHeadless` del dump. Recaptura en juego solo con tu autorización.
+16. Próxima acción: prueba física LAN en 2 PCs
+    (`scripts/lan_two_machines.sh`); después, completar `analyzeHeadless`
+    del dump. Recaptura en juego solo con tu autorización.
     Menú principal + `Select Game Type` + las 13 vistas ampliadas
     (Options×5, Collections, Hotkeys×4, Credits, GameType) reconstruidos
     (2026-10-30): RTTI/
@@ -82,10 +81,10 @@
     Hotkeys 131015/131026/131037/131049 reconstruido con el bundle CEF
     real (`hotkeypanel.js`) y geometría 1:1 medida (placa 354..2202 x
     117..1256, pestañas 261x75, celdas 96/105, tarjetas en x
-    1164/1504/1843, rebind de Larva).  En vivo a 3440x1440 las cuatro
-    quedan en 0.763/0.959/1.029/0.914 de media sin calibración (idéntico a las
-    capturas deterministas); con capas regeneradas siguen a 0.00 y el goal
-    de 19 vistas a 19/19.  Rasterizado CEF igualado con escala vertical de
+    1164/1504/1843, rebind de Larva).  El render determinista queda en
+    0.76/0.95/1.02/0.91 de media sin calibración (131015/131026/131037/
+    131049); con capas regeneradas siguen a 0.00 y el goal de 19 vistas a
+    19/19.  Rasterizado CEF igualado con escala vertical de
     glifos, cmdicons a 128 con bilineal premultiplicado y 272/273 en
     Probe.
     Ampliado el 2026-10-31 con las 12 capturas nuevas: Marine y Command
@@ -97,12 +96,15 @@
     edificios (Terran 29, Protoss 28, Zerg 31) con las teclas `$default`
     del cliente nativo; 88/88 renderizan tarjetas y el rebind aplica la
     colisión CEF por unidad.  Save escribe un perfil `GCHK` v1 con
-    SHA-256 y el arranque lo carga.  Sin calibrar quedan 0.76–1.13 (el
-    modal 1.08 es solo AA de textos de 36/27 px) y en vivo a 3440x1440
-    cada estado coincide con su render determinista (`live-vs-shot
-    0.000`).  `ui_visual_diff.py` cubre 43 referencias; las Hotkeys pasan
-    16/16, el goal sigue 19/19 a 0.00, `ui_diff.py` 39/39, `cargo test`
-    315/315 y clippy 0.  Evidencia:
+    SHA-256 y el arranque lo carga.  Sin calibrar quedan 0.76–1.12 (el
+    modal 1.08 es solo AA de textos de 36/27 px).  El remate final de la
+    sesión 58 deja la portada con relleno/exterior hasta la fila 128 e
+    interior en 125, la pestaña seleccionada en 122/125, las no
+    seleccionadas en 113/116 y los botones inferiores con radios 15/9 px;
+    el hover de unidad es solo el marco verde de 3 px, sin tooltip.
+    `ui_visual_diff.py` cubre 43
+    referencias; las Hotkeys pasan 16/16, el goal sigue 19/19 a 0.00,
+    `ui_diff.py` 39/39, `cargo test` 315/315 y clippy 0.  Evidencia:
     `engine-rust/docs/hotkeys-live-proof-{units,states}.png` y
     `research/docs/hotkeys-data.md`.
     Registry se alcanza por Single → GameType → Original y su Ok lleva a

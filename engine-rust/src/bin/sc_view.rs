@@ -11019,18 +11019,19 @@ impl App {
         css_panel3_rounded(fb, panel, 230, border, inner, dx(12.0));
 
         // Title tab, open at the bottom and overlapping the plate border by
-        // 9 px (the selected-tab `margin-bottom:-3px` at 3x).
+        // 12 px: the 90% fill reaches row 128 and dims both panel bands,
+        // while the inner #6c0000 band stops at row 125 (reference 131015).
         let title_tab = (sx(354.0), sy(42.0), dx(424.0), dy(75.0));
         top_rounded_fill(
             fb,
             title_tab.0,
             title_tab.1,
             title_tab.2,
-            title_tab.3 + dy(9.0),
+            title_tab.3 + dy(12.0),
             dx(12.0) as f32,
             230,
         );
-        tab_border_rounded(fb, title_tab, border, inner, dx(12.0), dy(11.0), CSS_OUTER);
+        tab_border_rounded(fb, title_tab, border, inner, dx(12.0), dy(12.0), CSS_OUTER);
         tab_border_rounded(
             fb,
             (
@@ -11096,7 +11097,7 @@ impl App {
                 border,
                 inner,
                 (dx(9.0) - inner).max(1),
-                if selected { extra } else { -inner - 3 },
+                if selected { 0 } else { -inner - 3 },
                 CSS_INNER,
             );
             let color = if selected || self.hotkey_tab_hover == Some(*r) {
@@ -11675,28 +11676,33 @@ impl App {
             ("Cancel", 1825.0, 1302.0, 378.0, 84.0, 360.0, 66.0),
         ] {
             let group = (sx(gx0), sy(gy0), dx(gw), dy(gh));
-            fill_alpha_rect(fb, group.0, group.1, group.2, group.3, 205);
-            // The Button-group border is 1.5 CSS px -> 4 px at 3x.
-            for t in 0..dx(4.0) {
-                fb.rect_outline(
-                    group.0 + t,
-                    group.1 + t,
-                    group.2 - 2 * t,
-                    group.3 - 2 * t,
-                    CSS_OUTER,
-                );
-            }
+            // Retail button group: 5 CSS px radius with a 1.5 CSS px brown
+            // band; the inner button uses 3 CSS px and a 1 CSS px red band.
+            rounded_fill_alpha(fb, group.0, group.1, group.2, group.3, dx(15.0) as f32, 205);
+            rounded_band(
+                fb,
+                group.0,
+                group.1,
+                group.2,
+                group.3,
+                dx(15.0) as f32,
+                0,
+                dx(4.0),
+                CSS_OUTER,
+            );
             let btn = (group.0 + dx(9.0), group.1 + dx(9.0), dx(rw), dy(rh));
-            fill_alpha_rect(fb, btn.0, btn.1, btn.2, btn.3, 205);
-            for t in 0..border {
-                fb.rect_outline(
-                    btn.0 + t,
-                    btn.1 + t,
-                    btn.2 - 2 * t,
-                    btn.3 - 2 * t,
-                    CSS_INNER,
-                );
-            }
+            rounded_fill_alpha(fb, btn.0, btn.1, btn.2, btn.3, dx(9.0) as f32, 205);
+            rounded_band(
+                fb,
+                btn.0,
+                btn.1,
+                btn.2,
+                btn.3,
+                dx(9.0) as f32,
+                0,
+                border,
+                CSS_INNER,
+            );
             if let Some(font) = self.ui_font_hover.as_mut() {
                 font.draw_centered_stretched(
                     fb,

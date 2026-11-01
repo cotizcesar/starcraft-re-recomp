@@ -270,6 +270,18 @@ el ratón es `.unit:hover:not(.selected){box-shadow: inset 0 0 0 2px
 El nuevo estado `hotkeys-terran-hover-scv` demuestra que el hover deja solo
 el borde verde y ningún texto.
 
-Verificación: `ui-hotkeys-16.txt` 16/16 (0.76–1.13), goal calibrado 19/19 a
-0.00 (capas regeneradas tras el cambio de esquinas), `ui_diff.py` 39/39,
-`cargo test` 315/315, clippy 0.
+### Remate final de bordes y botones (2026-10-31, sesión 58)
+
+La medición fila a fila sobre 131015/131037 corrige el remate de la sesión
+57: el relleno y el borde exterior de la portada llegan a la **fila 128**
+(no 127), el interior `#6c0000` termina en 125 y el borde izquierdo queda
+atenuado en 126–128; la pestaña seleccionada termina el interior en 122 y
+el exterior en 125 (9 px de solape); las no seleccionadas terminan en
+113 (interior) y 116 (exterior).  Los tres botones inferiores usan un grupo
+con radio 15 px (5 CSS) y banda `#331f1f` de 4 px, y un botón con radio
+9 px (3 CSS) y banda `#6c0000` de 3 px (relleno alfa 205 en ambos).  El
+hover de unidad es solo el marco inset de 3 px `#4cc428`; no hay tooltip.
+
+Verificación: `ui-hotkeys-16.txt` 16/16 (0.76–1.12; 120018 baja a 1.08),
+goal calibrado 19/19 a 0.00 (capas regeneradas tras el cambio de esquinas),
+`ui_diff.py` 39/39, `cargo test` 315/315, clippy 0.
