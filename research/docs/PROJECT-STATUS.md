@@ -1,7 +1,7 @@
 # PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
 
-Última actualización: 2026-10-31 (menú principal y Game Type 1:1;
-39/39 checks; intros retail 28/28; Hotkeys con remate final de bordes).
+Última actualización: 2026-10-31 (cursor y loops de menú 1:1; Options
+0.59-1.40 calibrado; 39/39 checks; goal 19/19; Hotkeys 16/16).
 
 1. Objetivo general: reconstrucción verificable del comportamiento (código,
    datos, contenido) hasta donde sea técnica y legalmente posible.
@@ -103,8 +103,15 @@
     seleccionadas en 113/116 y los botones inferiores con radios 15/9 px;
     el hover de unidad es solo el marco verde de 3 px, sin tooltip.
     `ui_visual_diff.py` cubre 43
-    referencias; las Hotkeys pasan 16/16, el goal sigue 19/19 a 0.00,
-    `ui_diff.py` 39/39, `cargo test` 315/315 y clippy 0.  Evidencia:
+    referencias; las Hotkeys pasan 16/16, el goal sigue 19/19 (las cinco
+    Options quedan en 0.59-1.40 con las capas `.gcal` previas al rework;
+    el resto a 0.00), `ui_diff.py` 39/39, `cargo test` 318/318 y clippy 0.
+    Cursor y loops de menú (sesión 59): GRP de 5 frames 80x84 a 6 fps con
+    escala alto/1920 (56x58 px a 1440p vs 56x57 retail) y loops Single/
+    Multi/Exit a 10.5 fps (151 frames = 14.381 s; 105 = 10.0 s, sin
+    corte).  Options rehecho contra 130933/130938/130942/130949/130954:
+    pestañas, sliders de 7 topes, checkboxes con discos, dropdowns,
+    radios, input `60` y botones a 0-2 px.  Evidencia:
     `engine-rust/docs/hotkeys-live-proof-{units,states}.png` y
     `research/docs/hotkeys-data.md`.
     Registry se alcanza por Single → GameType → Original y su Ok lleva a

@@ -285,3 +285,50 @@ hover de unidad es solo el marco inset de 3 px `#4cc428`; no hay tooltip.
 Verificación: `ui-hotkeys-16.txt` 16/16 (0.76–1.12; 120018 baja a 1.08),
 goal calibrado 19/19 a 0.00 (capas regeneradas tras el cambio de esquinas),
 `ui_diff.py` 39/39, `cargo test` 315/315, clippy 0.
+
+## Cursor, loops de menú y Options (2026-10-31, sesión 59)
+
+### Cursor
+
+El cursor retail es un GRP de **5 frames de 80x84** con el hotspot en el
+origen del asset y un ciclo de **6 fps en orden GRP 0→4**.  Se dibuja con
+escala `alto_pantalla / 1920` y blit bilineal premultiplicado (sin
+`fill_diamond` ni escalados fijos).  A 1440p la caja medida queda en
+**56x58 px** contra **56x57** del retail (una fila de AA); a 1080p la
+escala es 0.5625 (42-43 px).  Tests:
+`retail_timing_tests::cursor_cycles_five_frames_at_six_fps` y
+`cursor_is_hd_art_scaled_to_screen_height`.
+
+### Loops Single/Multiplayer/Exit
+
+Los WebM del install son de **15 fps**, pero el cliente retail los
+consume a **10.5 fps**.  Se decodifican a 15 fps y la línea de tiempo
+avanza a 10.5 fps desde el frame 0, sin recortar el loop:
+
+- Single/Multi: 151 frames = **14.381 s** (captura en vivo 14.4 s).
+- Exit: 105 frames = **10.0 s**.
+
+`video.rs` pasa `-ss` con 4 decimales: con 2 decimales el chunk derivaba
+casi un frame y el loop retenía o saltaba uno.  Test:
+`menu_layers_use_the_measured_retail_10_5_fps_loop`.
+
+### Options
+
+Se rehízo `draw_options` para las cinco pestañas contra 130933/130938/
+130942/130949/130954 en el content box 2560x1440 (recorte retail
+`(440,0,3000,1440)`): placa con marco doble, pestañas y divisor, sliders
+de 7 topes circulares, checkboxes con discos de ayuda, dropdowns
+(habilitado/deshabilitado), radios, input `60` redondeado y botones
+Restore/Ok.  Título, captions, sliders, labels y botones quedan a 0-1 px;
+las pestañas a 1-2 px.  El peso de las pestañas inactivas sigue ~30-40 %
+por encima del CEF en la métrica de tinta (rasterizado DirectWrite vs
+fontdue), sin afectar al gate.
+
+Gate calibrado (`ui_visual_diff.py --calibrated --goal-only`): **19/19**;
+las cinco Options dan **0.59-1.40** de media y **0.95-1.91 %** de
+outliers.  Las capas `.gcal` de esas cinco referencias son anteriores al
+rework (por eso el calibrado no da 0.00 allí); el resto sigue a 0.00.
+Sin capas, Options queda en 5.20-6.26 de media (el fondo translúcido
+fuera de los controles).  `ui_diff.py` 39/39, Hotkeys 16/16 (0.00-1.12),
+`cargo test` **318/318**, clippy 0.  Capturas locales:
+`/tmp/opencode/n4-options-{speed,sound,video,game,network}.png`.

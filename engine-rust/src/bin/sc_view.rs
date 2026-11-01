@@ -297,10 +297,14 @@ struct MenuClip {
     current: Option<Arc<galaxycraft::video::RgbaFrame>>,
     decoded: u64,
     started: Instant,
+    /// Playback rate (retail holds 15 fps source frames for 1/10.5 s).
     fps: f32,
+    /// Rate the worker asks the decoder for; every authored frame is kept.
+    source_fps: f32,
     chunk: usize,
     width: u32,
-    duration: f32,
+    /// Authored frames in one loop, from `start` to the end of the file.
+    frames: usize,
     /// First second of the clip this player starts at (and loops back to).
     start: f32,
     /// `--menu-at` captures pin the first decoded frame instead of advancing
@@ -312,14 +316,130 @@ struct MenuClip {
     alpha_known: bool,
 }
 
-const MENU_CLIP_FPS: f32 = 8.0;
+/// Retail advances the shipped 15 fps `glue/mainmenu` clips at a fixed
+/// 10.5 fps: measured on the live client, the 151-frame Single/Multi clips
+/// loop every 14.4 s and the 105-frame Exit clip every 10.0 s
+/// (151 / 14.4 = 105 / 10.0 = 10.5).  Playing them at the WebM container
+/// rate makes the loops 43 % too fast; resampling to 8 fps (the old value)
+/// additionally dropped every other frame.
+const MENU_CLIP_FPS: f32 = 10.5;
+/// Native frame rate of the shipped WebM layers.  Decoding at this rate keeps
+/// every authored frame; playback then holds each one for 1/10.5 s.
+const MENU_CLIP_SOURCE_FPS: f32 = 15.0;
 // Decode at the native width of the retail `glue/mainmenu` clips (1200 px)
 // so the 1440p hover overlays keep their hairline grid instead of being
 // upscaled from a 640 px intermediate.
 const MENU_CLIP_WIDTH: u32 = 1200;
 const MENU_CLIP_CHUNK: f32 = 0.5;
-/// Skip the opening explosion so the idle loop matches the retail capture.
-const MENU_CLIP_START: f32 = 2.5;
+/// Retail loops each layer over its whole timeline (the last frame of
+/// Single/Multi matches the first, and Exit's seam is a normal-motion step).
+/// The old 2.5 s offset skipped the fleet entrance and made the seam visible.
+const MENU_CLIP_START: f32 = 0.0;
+
+/// The shipped cursor GRP (80x84) is 4x the 640x480 UI art, i.e. authored
+/// for a 1920-line canvas.  The live client draws it at `height / 1920`
+/// (`ui_scale / 4`): measured 56-57 px tall at 1440p and 42-43 px at 1080p,
+/// with the visible tip at the pointer.  Drawing the frames 1:1 (the old
+/// behaviour) made the arrow 43 % too large at 1440p.
+const CURSOR_ASSET_HEIGHT: f32 = 1920.0;
+/// Retail cycles the five cursor frames at 6 fps (ten 60 Hz samples each).
+const CURSOR_FPS: f32 = 6.0;
+
+/// Index of the cursor frame for `elapsed`, in GRP order (0..4).
+fn cursor_frame_index(elapsed: Duration, frames: usize) -> usize {
+    if frames <= 1 {
+        return 0;
+    }
+    ((elapsed.as_secs_f32() * CURSOR_FPS) as usize) % frames
+}
+
+/// Retail cursor scale for a framebuffer of `height` pixels.
+fn cursor_scale_for_height(height: i32) -> f32 {
+    (height.max(1) as f32 / CURSOR_ASSET_HEIGHT).max(0.02)
+}
+
+/// Authored-frame timeline for a menu layer: `(aligned_start, remaining
+/// frames, playback seconds at 10.5 fps)`.  Kept pure so the retail rates
+/// measured on the live client are unit-tested without a video decoder.
+fn menu_clip_timeline(source_seconds: f32, start: f32) -> (f32, usize, f32) {
+    let total_frames = (source_seconds.max(0.0) * MENU_CLIP_SOURCE_FPS)
+        .round()
+        .max(1.0) as usize;
+    let max_start = total_frames.saturating_sub(1);
+    let start_frame = ((start.max(0.0) * MENU_CLIP_SOURCE_FPS).round() as usize).min(max_start);
+    let aligned_start = start_frame as f32 / MENU_CLIP_SOURCE_FPS;
+    let frames = total_frames - start_frame;
+    (aligned_start, frames, frames as f32 / MENU_CLIP_FPS)
+}
+
+/// Bilinear, premultiplied blit of one cursor frame.  The GRP is 4K art, so
+/// at 1440p every source pixel spans less than one screen pixel; nearest
+/// sampling would make the arrow visibly chunky.
+fn blit_cursor_scaled(
+    fb: &mut Framebuffer,
+    img: &galaxycraft::dds::DdsImage,
+    x: i32,
+    y: i32,
+    scale: f32,
+) {
+    if img.width == 0 || img.height == 0 || scale <= 0.0 {
+        return;
+    }
+    let sw = img.width as f32;
+    let sh = img.height as f32;
+    let dw = (sw * scale).round().max(1.0) as i32;
+    let dh = (sh * scale).round().max(1.0) as i32;
+    for dy in 0..dh {
+        let sy = ((dy as f32 + 0.5) / scale - 0.5).clamp(0.0, sh - 1.0);
+        let y0 = sy.floor() as usize;
+        let y1 = (y0 + 1).min(img.height - 1);
+        let fy = sy - y0 as f32;
+        for dx in 0..dw {
+            let sx = ((dx as f32 + 0.5) / scale - 0.5).clamp(0.0, sw - 1.0);
+            let x0 = sx.floor() as usize;
+            let x1 = (x0 + 1).min(img.width - 1);
+            let fx = sx - x0 as f32;
+            let sample = |px: u32| {
+                (
+                    ((px >> 16) & 0xff) as f32,
+                    ((px >> 8) & 0xff) as f32,
+                    (px & 0xff) as f32,
+                    ((px >> 24) & 0xff) as f32 / 255.0,
+                )
+            };
+            let (r00, g00, b00, a00) = sample(img.pixel(x0, y0));
+            let (r10, g10, b10, a10) = sample(img.pixel(x1, y0));
+            let (r01, g01, b01, a01) = sample(img.pixel(x0, y1));
+            let (r11, g11, b11, a11) = sample(img.pixel(x1, y1));
+            let w00 = (1.0 - fx) * (1.0 - fy);
+            let w10 = fx * (1.0 - fy);
+            let w01 = (1.0 - fx) * fy;
+            let w11 = fx * fy;
+            let alpha = a00 * w00 + a10 * w10 + a01 * w01 + a11 * w11;
+            if alpha <= 0.003 {
+                continue;
+            }
+            // Interpolate premultiplied colour, then unpremultiply, so the
+            // transparent black outside the arrow does not darken its edge.
+            let r = (r00 * a00 * w00 + r10 * a10 * w10 + r01 * a01 * w01 + r11 * a11 * w11) / alpha;
+            let g = (g00 * a00 * w00 + g10 * a10 * w10 + g01 * a01 * w01 + g11 * a11 * w11) / alpha;
+            let b = (b00 * a00 * w00 + b10 * a10 * w10 + b01 * a01 * w01 + b11 * a11 * w11) / alpha;
+            let a8 = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+            if a8 == 0 {
+                continue;
+            }
+            let dst = fb.get(x + dx, y + dy);
+            fb.put(
+                x + dx,
+                y + dy,
+                dst.blend(
+                    Rgb::new(r.round() as u8, g.round() as u8, b.round() as u8),
+                    a8,
+                ),
+            );
+        }
+    }
+}
 
 impl MenuClip {
     /// Open the clip at an explicit second.  `--menu-at` uses this to take
@@ -330,10 +450,11 @@ impl MenuClip {
         if full <= 0.0 || info.pixel_width == 0 {
             return None;
         }
-        let start = start.clamp(0.0, (full - 0.25).max(0.0));
-        // The clip is looped from `start`, so the loop length is the
-        // remaining time, not the file duration.
-        let duration = (full - start).max(1.0);
+        // Timeline in authored frames, so the seam lands on the first frame
+        // instead of drifting by the rounding of a seconds-based duration.
+        // Retail holds each authored frame for 1/10.5 s, so a 151-frame
+        // layer loops in 14.38 s (not the WebM's 10.07 s).
+        let (start, frames, _duration) = menu_clip_timeline(full, start);
         let mut clip = Self {
             path,
             info,
@@ -344,9 +465,10 @@ impl MenuClip {
             decoded: 0,
             started: Instant::now(),
             fps: MENU_CLIP_FPS,
-            chunk: (MENU_CLIP_CHUNK * MENU_CLIP_FPS).round() as usize,
+            source_fps: MENU_CLIP_SOURCE_FPS,
+            chunk: (MENU_CLIP_CHUNK * MENU_CLIP_SOURCE_FPS).round().max(1.0) as usize,
             width: MENU_CLIP_WIDTH,
-            duration,
+            frames,
             start,
             frozen,
             has_alpha: false,
@@ -356,13 +478,14 @@ impl MenuClip {
         Some(clip)
     }
 
-    /// Restart the worker at the beginning of the clip.
+    /// Start the streaming worker.  It keeps decoding the clip in a loop:
+    /// the player wraps by simply consuming the next frame the worker
+    /// produced, so the seam never waits for a fresh decoder/chunk (the old
+    /// design stopped at the end and restarted the thread, which held the
+    /// last frame on screen for a beat and looked like a cut).
     fn restart(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.buffer.clear();
-        // Keep `current`: a loop restart must not block the render thread
-        // waiting for the new chunk.  The last frame stays on screen until
-        // the worker delivers the first frame of the new loop.
         self.decoded = 0;
         self.started = Instant::now();
         let (tx, rx) = std::sync::mpsc::sync_channel(2);
@@ -370,24 +493,33 @@ impl MenuClip {
         let cancel = Arc::clone(&self.cancel);
         let path = self.path.clone();
         let info = self.info.clone();
-        let fps = self.fps;
+        // Decode at the authored rate; playback (`self.fps`) is slower.
+        let source_fps = self.source_fps;
         let width = self.width;
         let chunk = self.chunk;
         let clip_start = self.start;
+        let total_frames = self.frames.max(1);
         std::thread::Builder::new()
             .name("menu-clip".into())
             .spawn(move || {
-                let mut start = clip_start;
-                while start < info.duration_ms.unwrap_or(0) as f32 / 1000.0 {
+                let mut cursor = 0usize;
+                loop {
                     if cancel.load(Ordering::Relaxed) {
                         return;
                     }
-                    let frames = galaxycraft::video::decode_rgba_frames_from_path(
-                        &path, &info, start, chunk, fps, width,
+                    let count = chunk.min(total_frames - cursor).max(1);
+                    let start = clip_start + cursor as f32 / source_fps;
+                    let mut frames = galaxycraft::video::decode_rgba_frames_from_path(
+                        &path, &info, start, count, source_fps, width,
                     );
                     if frames.is_empty() {
                         return;
                     }
+                    // The decoder can hand back one extra frame at the tail;
+                    // trim to the authored count so every loop has exactly
+                    // the same frame sequence.
+                    frames.truncate(count);
+                    let got = frames.len();
                     // Hand ownership to the player as refcounted frames: the
                     // old Vec<RgbaFrame> move put a multi-megabyte copy on
                     // the render thread every time a chunk arrived.
@@ -396,7 +528,10 @@ impl MenuClip {
                     if send_or_stop(&tx, frames, &cancel).is_err() {
                         return;
                     }
-                    start += chunk as f32 / fps;
+                    cursor += got;
+                    if cursor >= total_frames {
+                        cursor = 0;
+                    }
                 }
             })
             .ok();
@@ -405,9 +540,6 @@ impl MenuClip {
 
     /// Frame to draw for this instant.
     fn frame(&mut self) -> Option<&galaxycraft::video::RgbaFrame> {
-        if self.started.elapsed().as_secs_f32() >= self.duration {
-            self.restart();
-        }
         let want = if self.frozen {
             1
         } else {
@@ -756,9 +888,11 @@ struct App {
     overlay: u8,
     /// Retail install handle, used to read portrait videos on demand.
     install: Option<RetailInstall>,
-    /// Retail cursor art (`cursor/arrow.dds.grp`, frame 0), drawn in place of
-    /// the system pointer so the front-end keeps its own skin.
+    /// Retail cursor art (`cursor/arrow.dds.grp`, five animated frames),
+    /// drawn in place of the system pointer so the front-end keeps its skin.
     cursor_art: Option<galaxycraft::dds::DdsGrp>,
+    /// Wall clock that drives the 6 fps cursor animation.
+    cursor_started: Instant,
     /// Decoded portrait frames per unit type (None = tried and unavailable).
     portraits: std::collections::HashMap<u16, Option<PosterFrame>>,
     /// Episode-select art: first frame of `glue/campaign/{terr,zerg,prot}.webm`
@@ -1462,6 +1596,406 @@ const CSS_YELLOW: Rgb = Rgb::new(0xfc, 0xfc, 0x4c);
 
 /// Retail CEF dialog plate: translucent black, 1px #331f1f outer border and
 /// 1px #6c0000 inner hairline (scaled ~2 px at 2560x1440).
+/// Filled circle used by the retail slider knob and radio dots.
+fn fill_circle(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, color: Rgb) {
+    if r <= 0 {
+        return;
+    }
+    for dy in -r..=r {
+        let dx = ((r * r - dy * dy) as f32).sqrt() as i32;
+        fb.rect(cx - dx, cy + dy, dx * 2 + 1, 1, color);
+    }
+}
+
+fn opt_text(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x: i32,
+    top: i32,
+    text: &str,
+    px: f32,
+    color: Rgb,
+) {
+    if let Some(f) = font.as_mut() {
+        // CEF's coverage is a touch heavier than fontdue at the same size.
+        f.draw_top_stretched(
+            fb,
+            x,
+            top,
+            text,
+            px,
+            0.3,
+            1.0,
+            1.0,
+            color,
+            Some(Rgb::new(0, 0, 0)),
+            0.85,
+        );
+    } else {
+        fb.text(x, top, text, color, (px / 8.0).round().max(1.0) as i32);
+    }
+}
+
+fn opt_text_right(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    right: i32,
+    top: i32,
+    text: &str,
+    px: f32,
+    color: Rgb,
+) {
+    if let Some(f) = font.as_mut() {
+        f.draw_right(
+            fb,
+            right,
+            top,
+            text,
+            px,
+            0.3,
+            color,
+            Some(Rgb::new(0, 0, 0)),
+        );
+    } else {
+        let w = text.chars().count() as i32 * (px / 8.0).round().max(1.0) as i32;
+        fb.text(
+            right - w,
+            top,
+            text,
+            color,
+            (px / 8.0).round().max(1.0) as i32,
+        );
+    }
+}
+
+/// Shared help disc: a filled circle in the label colour with a dark "?".
+fn opt_help(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    color: Rgb,
+    px: f32,
+) {
+    fill_circle(fb, cx, cy, r, color);
+    let qpx = (px * 0.62).max(6.0);
+    if let Some(f) = font.as_mut() {
+        let w = f.measure("?", qpx, 0.0);
+        f.draw_top(
+            fb,
+            cx - w / 2,
+            cy - (qpx * 0.40).round() as i32,
+            "?",
+            qpx,
+            0.0,
+            Rgb::new(10, 5, 5),
+            None,
+        );
+    }
+}
+
+/// Retail checkbox: 29 px plate with a 2 px red border, optional yellow
+/// fill, lavender label and optional trailing help disc.
+#[allow(clippy::too_many_arguments)]
+fn opt_checkbox(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x: i32,
+    y: i32,
+    s: i32,
+    checked: bool,
+    enabled: bool,
+    label: &str,
+    help: bool,
+    px: f32,
+) {
+    let unit = s as f32 / 29.0;
+    let border = if enabled {
+        CSS_INNER
+    } else {
+        Rgb::new(120, 120, 125)
+    };
+    fb.rect(x + 3, y + 3, s - 6, s - 6, Rgb::new(4, 0, 0));
+    for t in 0..2 {
+        fb.rect_outline(x + t, y + t, s - 2 * t, s - 2 * t, border);
+    }
+    if checked {
+        let inset = (8.0 * unit).round() as i32;
+        fb.rect(
+            x + inset,
+            y + inset,
+            s - 2 * inset,
+            s - 2 * inset,
+            CSS_YELLOW,
+        );
+    }
+    let lx = x + s + (13.0 * unit).round() as i32;
+    // Retail checkbox labels sit low in the 29 px plate; "Mouse
+    // Sensitivity" is the one white label in the Speed column.
+    let color = if label == "Mouse Sensitivity" {
+        Rgb::new(255, 255, 255)
+    } else if enabled {
+        CSS_LAVENDER
+    } else {
+        Rgb::new(128, 128, 128)
+    };
+    let label_px = px * 0.97;
+    opt_text(
+        fb,
+        font,
+        lx,
+        y + (7.0 * unit).round() as i32,
+        label,
+        label_px,
+        color,
+    );
+    if help {
+        if let Some(f) = font.as_mut() {
+            let w = f.measure(label, label_px, 0.3);
+            let r = (9.0 * unit).round() as i32;
+            let hx = lx + w + (5.0 * unit).round() as i32 + r;
+            opt_help(
+                fb,
+                font,
+                hx,
+                y + (8.0 * unit).round() as i32,
+                r,
+                color,
+                label_px,
+            );
+        }
+    }
+}
+
+/// Seven-stop retail slider. Seven circular stops on a 5 px rail; the knob
+/// is the larger yellow-eyed disc. `frac` selects the stop.
+#[allow(clippy::too_many_arguments)]
+fn opt_slider(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x0: i32,
+    x1: i32,
+    cy: i32,
+    frac: f32,
+    left: &str,
+    right: &str,
+    label_y: i32,
+    unit: f32,
+    label_px: f32,
+) {
+    let th = (5.0 * unit).round().max(2.0) as i32;
+    fb.rect(x0, cy - th / 2, x1 - x0, th, CSS_INNER);
+    let sx0 = x0 + (16.0 * unit).round() as i32;
+    let sx1 = x1 - (17.0 * unit).round() as i32;
+    for i in 0..7 {
+        let cx = sx0 + ((sx1 - sx0) as f32 * i as f32 / 6.0).round() as i32;
+        fill_circle(fb, cx, cy, (12.0 * unit).round() as i32, CSS_INNER);
+        fill_circle(
+            fb,
+            cx,
+            cy,
+            (9.0 * unit).round() as i32,
+            Rgb::new(20, 24, 52),
+        );
+    }
+    let kx = sx0 + ((sx1 - sx0) as f32 * frac.clamp(0.0, 1.0)).round() as i32;
+    fill_circle(fb, kx, cy, (17.0 * unit).round() as i32, CSS_INNER);
+    fill_circle(
+        fb,
+        kx,
+        cy,
+        (15.0 * unit).round() as i32,
+        Rgb::new(20, 24, 52),
+    );
+    fill_circle(fb, kx, cy, (7.0 * unit).round() as i32, CSS_YELLOW);
+    opt_text(fb, font, x0, label_y, left, label_px, CSS_LAVENDER);
+    if let Some(f) = font.as_mut() {
+        let w = f.measure(right, label_px, 0.3);
+        opt_text(fb, font, x1 - w, label_y, right, label_px, CSS_LAVENDER);
+    }
+}
+
+/// Same rail with the dim grey knob used by Gamma Correction.
+#[allow(clippy::too_many_arguments)]
+fn opt_slider_grey(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x0: i32,
+    x1: i32,
+    cy: i32,
+    frac: f32,
+    left: &str,
+    right: &str,
+    label_y: i32,
+    unit: f32,
+    label_px: f32,
+) {
+    let th = (5.0 * unit).round().max(2.0) as i32;
+    fb.rect(x0, cy - th / 2, x1 - x0, th, Rgb::new(90, 90, 96));
+    let sx0 = x0 + (16.0 * unit).round() as i32;
+    let sx1 = x1 - (17.0 * unit).round() as i32;
+    for i in 0..7 {
+        let cx = sx0 + ((sx1 - sx0) as f32 * i as f32 / 6.0).round() as i32;
+        fill_circle(
+            fb,
+            cx,
+            cy,
+            (12.0 * unit).round() as i32,
+            Rgb::new(110, 110, 115),
+        );
+        fill_circle(fb, cx, cy, (9.0 * unit).round() as i32, Rgb::new(4, 4, 6));
+    }
+    let kx = sx0 + ((sx1 - sx0) as f32 * frac.clamp(0.0, 1.0)).round() as i32;
+    fill_circle(
+        fb,
+        kx,
+        cy,
+        (17.0 * unit).round() as i32,
+        Rgb::new(110, 110, 115),
+    );
+    fill_circle(fb, kx, cy, (15.0 * unit).round() as i32, Rgb::new(4, 4, 6));
+    fill_circle(
+        fb,
+        kx,
+        cy,
+        (7.0 * unit).round() as i32,
+        Rgb::new(160, 160, 166),
+    );
+    let label = Rgb::new(128, 128, 128);
+    opt_text(fb, font, x0, label_y, left, label_px, label);
+    if let Some(f) = font.as_mut() {
+        let w = f.measure(right, label_px, 0.3);
+        opt_text(fb, font, x1 - w, label_y, right, label_px, label);
+    }
+}
+
+/// Retail dropdown: black plate, double red border, green value and chevron.
+/// Disabled combos use the 64-grey frame and 128-grey value.
+#[allow(clippy::too_many_arguments)]
+fn opt_dropdown(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    value: &str,
+    enabled: bool,
+    unit: f32,
+) {
+    let (frame, fill, ink) = if enabled {
+        (CSS_INNER, Rgb::new(3, 0, 0), CSS_GREEN)
+    } else {
+        (
+            Rgb::new(64, 64, 64),
+            Rgb::new(0, 0, 0),
+            Rgb::new(128, 128, 128),
+        )
+    };
+    fb.rect(x + 3, y + 3, w - 6, h - 6, fill);
+    for t in 0..3 {
+        fb.rect_outline(x + t, y + t, w - 2 * t, h - 2 * t, frame);
+    }
+    opt_text(
+        fb,
+        font,
+        x + (9.0 * unit).round() as i32,
+        y + (14.0 * unit).round() as i32,
+        value,
+        (23.3 * unit).max(6.0),
+        ink,
+    );
+    let tw = (18.0 * unit).round() as i32;
+    let th = (10.0 * unit).round() as i32;
+    let ax = x + w - (28.0 * unit).round() as i32;
+    let ay = y + h / 2 - th / 2;
+    for row in 0..th {
+        let half = ((th - row) as f32 / th as f32 * (tw / 2) as f32).round() as i32;
+        fb.rect(ax - half, ay + row, half * 2 + 1, 1, ink);
+    }
+}
+
+/// Retail radio: red ring with a yellow centre when selected.
+#[allow(clippy::too_many_arguments)]
+fn opt_radio(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x: i32,
+    y: i32,
+    s: i32,
+    selected: bool,
+    enabled: bool,
+    label: &str,
+    px: f32,
+    unit: f32,
+) {
+    let cx = x + s / 2;
+    let cy = y + s / 2;
+    let ring = if enabled {
+        CSS_INNER
+    } else {
+        Rgb::new(120, 120, 125)
+    };
+    fill_circle(fb, cx, cy, s / 2, ring);
+    fill_circle(
+        fb,
+        cx,
+        cy,
+        s / 2 - (4.0 * unit).round() as i32,
+        Rgb::new(2, 0, 0),
+    );
+    if selected {
+        fill_circle(fb, cx, cy, (8.0 * unit).round() as i32, CSS_YELLOW);
+    }
+    let color = if selected { CSS_GREEN_HI } else { CSS_LAVENDER };
+    opt_text(
+        fb,
+        font,
+        x + s + (15.0 * unit).round() as i32,
+        y + (10.0 * unit).round() as i32,
+        label,
+        px,
+        color,
+    );
+}
+
+/// Small rounded input plate used by the APM threshold.
+#[allow(clippy::too_many_arguments)]
+fn opt_input(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    value: &str,
+    px: f32,
+    unit: f32,
+) {
+    // CEF input: rounded 2 px #404040 frame with a grey value.
+    rounded_band(
+        fb,
+        x,
+        y,
+        w,
+        h,
+        (8.0 * unit).max(2.0),
+        0,
+        2,
+        Rgb::new(64, 64, 64),
+    );
+    opt_text(
+        fb,
+        font,
+        x + (14.0 * unit).round() as i32,
+        y + (11.0 * unit).round() as i32,
+        value,
+        px,
+        Rgb::new(170, 170, 176),
+    );
+}
+
 fn css_panel(fb: &mut Framebuffer, r: (i32, i32, i32, i32), alpha: u8) {
     let (x, y, w, h) = r;
     for yy in y..y + h {
@@ -1480,20 +2014,6 @@ fn css_panel(fb: &mut Framebuffer, r: (i32, i32, i32, i32), alpha: u8) {
             CSS_INNER,
         );
     }
-}
-
-/// Retail CEF tab plate (`.Tab-label`): black plate, #331f1f border, inner
-/// #6c0000 hairline, green label; the active tab is #b4fc74.
-fn css_tab(fb: &mut Framebuffer, r: (i32, i32, i32, i32), _active: bool) {
-    let (x, y, w, h) = r;
-    for yy in y..y + h {
-        for xx in x..x + w {
-            let c = fb.get(xx, yy);
-            fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 230));
-        }
-    }
-    fb.rect_outline(x, y, w, h, CSS_OUTER);
-    fb.rect_outline(x + 2, y + 2, w - 4, h - 4, CSS_INNER);
 }
 
 /// Alpha-black fill used by the CEF plates (their `rgba(0,0,0,.9)`
@@ -2364,6 +2884,7 @@ fn main() {
         overlay: 0,
         install: install_handle,
         cursor_art: cursor_art.clone(),
+        cursor_started: Instant::now(),
         portraits: std::collections::HashMap::new(),
         campaign_frames: std::collections::HashMap::new(),
         credits: Vec::new(),
@@ -6952,20 +7473,12 @@ impl App {
         // Retail skin when the install provides it; the drawn arrow below is
         // only the fallback for runs without assets.
         if let Some(grp) = &self.cursor_art {
-            if let Some(img) = grp.frame(0) {
-                let (dw, dh) = (img.width as i32, img.height as i32);
-                for y in 0..dh {
-                    for x in 0..dw {
-                        let p = img.pixels[(y as usize) * img.width + x as usize];
-                        let a = p >> 24;
-                        if a < 8 {
-                            continue;
-                        }
-                        let dst = fb.get(mx + x, my + y);
-                        fb.put(mx + x, my + y, dst.blend(Rgb(p & 0x00ff_ffff), a as u8));
-                    }
+            if !grp.frames.is_empty() {
+                let frame = cursor_frame_index(self.cursor_started.elapsed(), grp.frames.len());
+                if let Some(img) = grp.frames.get(frame) {
+                    blit_cursor_scaled(fb, img, mx, my, cursor_scale_for_height(fb.height));
+                    return;
                 }
-                return;
             }
         }
         // 12x18 arrow.
@@ -10627,11 +11140,11 @@ impl App {
         }
     }
 
-    /// Retail Options panel (references 17-21). Geometry measured on the
-    /// 3440x1440 screenshots as fractions of the 2560x1440 content box:
-    /// panel 0.202..0.798 x 0.119..0.803, tab column 0.204 + 0.126 wide with
-    /// rows at 0.260/0.329/0.394/0.458/0.519, content column at 0.356,
-    /// Restore/Ok at the bottom edge.
+    /// Retail Options panel (references 130933/130938/130942/130949/130954).
+    /// Geometry is expressed in the 2560x1440 content pixels measured on the
+    /// captures: panel 521..2038 x 181..1146, tab stack 521..847 with five
+    /// 93 px cells from y=345, content columns at x=900 and x=1456 (516 px
+    /// wide each), Restore/Ok buttons along y=1221..1286.
     fn draw_options(&mut self, fb: &mut Framebuffer) {
         self.draw_menu_backdrop(fb);
         let tab = match &self.menu_screen {
@@ -10640,348 +11153,775 @@ impl App {
         };
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         dim_screen(fb, cx, cw, ch, 90);
-        let (scale, _uox, _uoy) = self.ui_metrics(fb);
-        let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let green = Rgb::new(120, 235, 120);
-        let grey = Rgb::new(215, 215, 220);
-        // The retail rows use ~16 px glyphs; our 8 px cell at `big` is 24 px.
-        let small = (big - 1).max(1);
+        let unit = ch as f32 / 1440.0;
+        let dx = |p: f32| cx + (cw as f32 * p / 2560.0).round() as i32;
+        let dy = |p: f32| (ch as f32 * p / 1440.0).round() as i32;
+        let px = |p: f32| p * unit;
+        let white = Rgb::new(255, 255, 255);
+        let dim_text = Rgb::new(150, 150, 155);
+        let green = CSS_GREEN;
+        let dxw = |p: f32| (cw as f32 * p / 2560.0).round() as i32;
 
-        // Panel: dark translucent plate with the retail hairline border.
-        // Reference 130933: outer panel x 518..2048, y 176..1146 of the
-        // 2560x1440 content box.
-        let (px, py) = at(0.2019, 0.1243);
-        let pw = (cw as f32 * (0.7988 - 0.2019)) as i32;
-        let ph = (ch as f32 * (0.7972 - 0.1243)) as i32;
-        css_panel(fb, (px, py, pw, ph), 230);
-        // Title (retail face, 20 UI px).
-        let (tx, ty) = at(0.2280, 0.1660);
-        let title_px = 15.5 * scale;
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_top(
-                fb,
-                tx,
-                ty,
-                "Options",
-                title_px,
-                1.2,
-                grey,
-                Some(Rgb::new(0, 0, 0)),
+        // Panel plate: 2 px #331f1f outer frame, 4 px black gap and a 3 px
+        // #6c0000 inner frame (measured on the captures).
+        fill_alpha_rect(fb, dx(515.0), dy(175.0), dxw(1532.0), dy(975.0), 230);
+        for t in 0..2 {
+            fb.rect_outline(
+                dx(515.0) + t,
+                dy(175.0) + t,
+                dxw(1532.0) - 2 * t,
+                dy(975.0) - 2 * t,
+                CSS_OUTER,
             );
-        } else {
-            fb.text(tx, ty, "Options", grey, big * 2);
+        }
+        for t in 0..3 {
+            fb.rect_outline(
+                dx(521.0) + t,
+                dy(180.0) + t,
+                dxw(1521.0) - 2 * t,
+                dy(964.0) - 2 * t,
+                CSS_INNER,
+            );
+        }
+        if let Some(font) = self.ui_font_hover.as_mut() {
+            font.draw_top_stretched(
+                fb,
+                dx(581.0),
+                dy(240.0),
+                "Options",
+                px(40.0),
+                0.0,
+                1.05,
+                1.06,
+                white,
+                None,
+                0.75,
+            );
         }
 
-        // Tab column.
-        let (tab_x, _) = at(0.2031, 0.0);
-        let tab_w = (cw as f32 * 0.1242) as i32;
-        let tab_h = (ch as f32 * 0.0514) as i32;
-        let rows = [0.3201f32, 0.3847, 0.4493, 0.5139, 0.5785];
+        // Tab stack: one continuous plate whose cells carry a raised 24 px
+        // lip. The active tab has no right edge below its lip (the sidebar
+        // divider continues from the second tab down to the panel bottom).
+        let rows = [345.0f32, 438.0, 531.0, 624.0, 717.0];
+        let tx = dx(521.0);
+        let tw = dxw(327.0);
+        let active_i = OptionsTab::all()
+            .iter()
+            .position(|t| *t == tab)
+            .unwrap_or(0);
+        fill_alpha_rect(fb, tx, dy(345.0), tw, dy(468.0), 240);
+        for row in rows {
+            fb.rect(tx, dy(row), dxw(3.0), dy(27.0), Rgb::new(2, 0, 0));
+        }
+        // Inactive cells stop 8 px short of the sidebar divider; the active
+        // cell merges with the content column (its bottom line is full width).
+        for (i, row) in rows.iter().enumerate() {
+            if i == active_i {
+                continue;
+            }
+            for off in [0.0f32, 24.0, 93.0] {
+                fb.rect(tx, dy(row + off), dxw(315.0), dy(3.0), CSS_INNER);
+            }
+        }
+        for off in [0.0f32, 24.0, 93.0] {
+            fb.rect(tx, dy(rows[active_i] + off), tw, dy(3.0), CSS_INNER);
+        }
+        fb.rect(dx(845.0), dy(350.0), dxw(3.0), dy(24.0), CSS_INNER);
+        let divider_top = rows[active_i] + 98.0;
+        fb.rect(
+            dx(845.0),
+            dy(divider_top),
+            dxw(3.0),
+            dy(1140.0 - divider_top),
+            CSS_INNER,
+        );
         for (i, t) in OptionsTab::all().iter().enumerate() {
-            let y = (ch as f32 * rows[i]) as i32;
-            let selected = *t == tab;
-            css_tab(fb, (tab_x, y, tab_w, tab_h), selected);
-            let color = if selected { CSS_GREEN_HI } else { CSS_GREEN };
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
-                    fb,
-                    tab_x + tab_w / 2,
-                    y + (tab_h as f32 * 0.35) as i32,
-                    t.name(),
-                    16.0 * scale,
-                    0.5,
-                    color,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                let lw = t.name().chars().count() as i32 * 8 * small;
-                fb.text(
-                    tab_x + (tab_w - lw) / 2,
-                    y + (tab_h - 8 * small) / 2,
-                    t.name(),
-                    color,
-                    small,
-                );
-            }
-        }
-
-        // Content column: one labelled row per setting, with the retail
-        // dotted slider for the continuous ones.
-        let content_x = 0.3520f32;
-        let row = |font: &mut Option<galaxycraft::text::UiFont>,
-                   fb: &mut Framebuffer,
-                   y: f32,
-                   label: &str,
-                   value: &str| {
-            let (x, yy) = at(content_x, y);
-            let px = 11.5 * scale;
-            if let Some(font) = font.as_mut() {
-                font.draw_top_scaled(
-                    fb,
-                    x,
-                    yy,
-                    label,
-                    px,
-                    0.3,
-                    0.78,
-                    grey,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-                if !value.is_empty() {
-                    font.draw_right_scaled(
-                        fb,
-                        cx + (cw as f32 * 0.770) as i32,
-                        yy,
-                        value,
-                        px,
-                        0.3,
-                        0.78,
-                        grey,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                }
-            } else {
-                fb.text(x, yy, label, grey, small);
-                if !value.is_empty() {
-                    let vw = value.chars().count() as i32 * 8 * small;
-                    fb.text(cx + (cw as f32 * 0.770) as i32 - vw, yy, value, grey, small);
-                }
-            }
-        };
-        let slider = |font: &mut Option<galaxycraft::text::UiFont>,
-                      fb: &mut Framebuffer,
-                      y: f32,
-                      frac: f32| {
-            let (x0, yy) = at(content_x, y);
-            let x1 = cx + (cw as f32 * 0.5535) as i32;
-            // Retail track: a dark-red rail with ten circular stops and a
-            // yellow knob.  The stops are ~13 px across at 1440p.
-            fb.rect(x0, yy - 1, x1 - x0, 3, CSS_INNER);
-            for i in 0..=10 {
-                let x = x0 + (x1 - x0) * i / 10;
-                fb.circle_outline(x, yy, 7, CSS_INNER);
-                fb.circle_outline(x, yy, 5, CSS_OUTER);
-                fb.rect(x - 3, yy - 3, 7, 7, Rgb::new(24, 2, 2));
-            }
-            let kx = x0 + ((x1 - x0) as f32 * frac.clamp(0.0, 1.0)) as i32;
-            fb.circle_outline(kx, yy, 12, CSS_YELLOW);
-            fb.circle_outline(kx, yy, 9, CSS_YELLOW);
-            fb.rect(kx - 7, yy - 7, 15, 15, CSS_YELLOW);
-            let (sx, sy) = at(content_x, y + 0.0056);
-            let px = 7.5 * scale;
-            if let Some(font) = font.as_mut() {
-                font.draw_top(fb, sx, sy, "slow", px, 0.2, CSS_LAVENDER, None);
-                let w = font.measure("fast", px, 0.2);
-                font.draw_top(fb, x1 - w, sy, "fast", px, 0.2, CSS_LAVENDER, None);
-            } else {
-                fb.text(sx, sy, "slow", CSS_LAVENDER, 1);
-                fb.text(x1 - 32, sy, "fast", CSS_LAVENDER, 1);
-            }
-        };
-        match tab {
-            OptionsTab::Speed => {
-                let gs = (self.game_options.game_speed - 0.5) / 3.5;
-                row(&mut self.ui_font, fb, 0.2403, "Game Speed", "");
-                slider(&mut self.ui_font, fb, 0.2670, gs);
-                row(&mut self.ui_font, fb, 0.3465, "Key Scroll Speed", "");
-                slider(&mut self.ui_font, fb, 0.3730, 0.5);
-                row(&mut self.ui_font, fb, 0.4528, "Mouse Scroll Speed", "");
-                slider(&mut self.ui_font, fb, 0.4790, 0.4);
-                // Right column: mouse sensitivity slider and its three toggles.
-                // The right column is dense: one glyph step smaller so the
-                // labels fit between the slider and the panel edge.
-                let small = (big - 1).max(1);
-                let (mx, my) = at(0.5848, 0.2451);
-                if let Some(font) = self.ui_font.as_mut() {
-                    font.draw_top(
-                        fb,
-                        mx,
-                        my,
-                        "Mouse Sensitivity",
-                        10.5 * scale,
-                        0.3,
-                        grey,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                } else {
-                    fb.text(mx, my, "Mouse Sensitivity", grey, small);
-                }
-                let mx1 = cx + (cw as f32 * 0.7707) as i32;
-                let myy = (ch as f32 * 0.2736) as i32;
-                fb.rect(mx, myy - 1, mx1 - mx, 3, CSS_INNER);
-                for i in 0..=10 {
-                    let x = mx + (mx1 - mx) * i / 10;
-                    fb.circle_outline(x, myy, 7, CSS_INNER);
-                    fb.circle_outline(x, myy, 5, CSS_OUTER);
-                    fb.rect(x - 3, myy - 3, 7, 7, Rgb::new(24, 2, 2));
-                }
-                let kx = mx + ((mx1 - mx) as f32 * 0.5) as i32;
-                fb.circle_outline(kx, myy, 12, CSS_YELLOW);
-                fb.circle_outline(kx, myy, 9, CSS_YELLOW);
-                fb.rect(kx - 7, myy - 7, 15, 15, CSS_YELLOW);
-                if let Some(font) = self.ui_font.as_mut() {
-                    font.draw_right(
-                        fb,
-                        cx + (cw as f32 * 0.7707) as i32,
-                        my,
-                        "50%",
-                        10.5 * scale,
-                        0.3,
-                        grey,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                } else {
-                    fb.text(
-                        cx + (cw as f32 * 0.7707) as i32 - 24,
-                        my,
-                        "50%",
-                        grey,
-                        small,
-                    );
-                }
-                // Checkbox rows measured on reference 130933 at y 428/484/540.
-                for (label, y, state) in [
-                    ("Use Mouse Scaling", 0.2972f32, 0u8),
-                    ("Hardware Cursor", 0.3361, 1),
-                    ("Use Mouse Confine", 0.3750, 2),
-                ] {
-                    let (bx, by) = at(0.5684, y);
-                    let bs = (cw as f32 * 0.0110) as i32;
-                    let border = if state == 2 {
-                        Rgb::new(110, 110, 115)
-                    } else {
-                        CSS_INNER
-                    };
-                    fb.rect_outline(bx, by, bs, bs, border);
-                    if state == 1 {
-                        fb.rect(bx + 3, by + 3, bs - 6, bs - 6, CSS_YELLOW);
-                    }
-                    let color = if state == 2 {
-                        Rgb::new(150, 150, 155)
-                    } else {
-                        grey
-                    };
-                    let lx = bx + bs + (cw as f32 * 0.006) as i32;
-                    let px = 8.2 * scale;
-                    if let Some(font) = self.ui_font.as_mut() {
-                        font.draw_top(fb, lx, by, label, px, 0.3, color, Some(Rgb::new(0, 0, 0)));
-                        let qx = lx + font.measure(label, px, 0.3) + 9;
-                        fb.circle_outline(qx, by + 8, 7, Rgb::new(200, 200, 210));
-                        font.draw_centered(
+            let cy = dy(rows[i] + 48.0);
+            let active = *t == tab;
+            if let Some(font) = self.ui_font_hover.as_mut() {
+                if !active {
+                    // A 1 px lit rim on the top/left edges only; a full halo
+                    // reads ~60 % heavier than the retail CEF glyphs.
+                    for (ox, oy) in [(-1, 0), (0, -1)] {
+                        font.draw_centered_stretched(
                             fb,
-                            qx,
-                            by + 3,
-                            "?",
-                            6.0 * scale,
-                            0.2,
-                            Rgb::new(200, 200, 210),
+                            dx(679.0) + ox,
+                            cy + oy - dy(1.0),
+                            t.name(),
+                            px(30.0),
+                            0.0,
+                            0.98,
+                            1.02,
+                            CSS_GREEN_HI,
                             None,
+                            2.0,
                         );
-                    } else {
-                        fb.text(lx, by, label, color, small);
                     }
                 }
-            }
-            OptionsTab::Sound => {
-                row(&mut self.ui_font, fb, 0.2403, "Music Volume", "");
-                slider(
-                    &mut self.ui_font,
+                font.draw_centered_stretched(
                     fb,
-                    0.2670,
-                    self.game_options.music_volume,
+                    dx(679.0),
+                    cy - if active { 0 } else { dy(1.0) },
+                    t.name(),
+                    px(30.0),
+                    0.0,
+                    0.98,
+                    if active { 1.08 } else { 1.02 },
+                    if active { CSS_GREEN_HI } else { green },
+                    None,
+                    if active { 1.0 } else { 1.3 },
                 );
-                row(&mut self.ui_font, fb, 0.3465, "SFX Volume", "");
-                slider(&mut self.ui_font, fb, 0.3730, self.game_options.sfx_volume);
-                row(
-                    &mut self.ui_font,
-                    fb,
-                    0.4528,
-                    "Subtitles",
-                    if self.game_options.subtitles {
-                        "ON"
-                    } else {
-                        "OFF"
-                    },
-                );
-            }
-            OptionsTab::Video => {
-                row(&mut self.ui_font, fb, 0.2403, "Display Mode", "Fullscreen");
-                row(&mut self.ui_font, fb, 0.3465, "Resolution", "Native");
-                row(&mut self.ui_font, fb, 0.4528, "Colour Depth", "32-bit");
-                row(&mut self.ui_font, fb, 0.5590, "Gamma", "50%");
-            }
-            OptionsTab::Game => {
-                row(
-                    &mut self.ui_font,
-                    fb,
-                    0.2403,
-                    "Fog of War",
-                    if self.game_options.fog { "ON" } else { "OFF" },
-                );
-                row(
-                    &mut self.ui_font,
-                    fb,
-                    0.3465,
-                    "Subtitles",
-                    if self.game_options.subtitles {
-                        "ON"
-                    } else {
-                        "OFF"
-                    },
-                );
-                row(&mut self.ui_font, fb, 0.4528, "Game Speed", "");
-                slider(
-                    &mut self.ui_font,
-                    fb,
-                    0.4790,
-                    (self.game_options.game_speed - 0.5) / 3.5,
-                );
-            }
-            OptionsTab::Network => {
-                row(
-                    &mut self.ui_font,
-                    fb,
-                    0.2403,
-                    "Connection",
-                    "Local Area Network",
-                );
-                row(&mut self.ui_font, fb, 0.3465, "Latency", "Auto");
-                row(&mut self.ui_font, fb, 0.4528, "Port", "6112");
             }
         }
 
-        // Restore to Default (left) and Ok (right) along the bottom edge.
-        for (label, x0, x1) in [
-            ("Restore to Default", 0.2035f32, 0.3496),
-            ("Ok", 0.6562, 0.7977),
-        ] {
-            let (bx, by) = at(x0, 0.8472);
-            let bw = (cw as f32 * (x1 - x0)) as i32;
-            let bh = (ch as f32 * 0.0472) as i32;
-            css_button(fb, (bx, by, bw, bh));
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
+        let left = dx(900.0);
+        let right = dx(1456.0);
+        let col_w = dx(516.0);
+        let right_end = right + col_w;
+
+        // ---- Speed -----------------------------------------------------
+        if tab == OptionsTab::Speed {
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(900.0),
+                dy(346.0),
+                "Game Speed",
+                px(23.5),
+                white,
+            );
+            // Seven retail game speeds; the shipped default is Fastest.
+            let gs = ((self.game_options.game_speed.clamp(0.5, 1.0) - 0.5) / 0.5).clamp(0.0, 1.0);
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(391.0),
+                gs,
+                "slow",
+                "fast",
+                dy(426.0),
+                unit,
+                px(20.0),
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(899.0),
+                dy(499.0),
+                "Key Scroll Speed",
+                px(23.5),
+                white,
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(544.0),
+                0.5,
+                "slow",
+                "fast",
+                dy(579.0),
+                unit,
+                px(20.0),
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(899.0),
+                dy(652.0),
+                "Mouse Scroll Speed",
+                px(23.5),
+                white,
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(697.0),
+                0.5,
+                "slow",
+                "fast",
+                dy(732.0),
+                unit,
+                px(20.0),
+            );
+
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(341.0),
+                dx(29.0),
+                true,
+                true,
+                "Mouse Sensitivity",
+                true,
+                px(24.0),
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                right,
+                right_end,
+                dy(394.0),
+                0.5,
+                "slow",
+                "fast",
+                dy(429.0),
+                unit,
+                px(20.0),
+            );
+            opt_text_right(
+                fb,
+                &mut self.ui_font,
+                right_end + dxw(1.0),
+                dy(349.0),
+                "50%",
+                px(24.0),
+                white,
+            );
+            for (i, (label, checked, enabled)) in [
+                ("Use Mouse Scaling", false, true),
+                ("Hardware Cursor", true, true),
+                ("Use Mouse Confine", false, false),
+            ]
+            .iter()
+            .enumerate()
+            {
+                opt_checkbox(
                     fb,
-                    bx + bw / 2,
-                    by + (bh as f32 * 0.2) as i32,
+                    &mut self.ui_font,
+                    right,
+                    dy(497.0 + 54.0 * i as f32),
+                    dx(29.0),
+                    *checked,
+                    *enabled,
                     label,
-                    10.5 * scale,
-                    0.4,
-                    green,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                let lw = label.chars().count() as i32 * 8 * small;
-                fb.text(
-                    bx + (bw - lw) / 2,
-                    by + (bh - 8 * small) / 2,
-                    label,
-                    green,
-                    small,
+                    true,
+                    px(24.0),
                 );
             }
         }
+
+        // ---- Sound -----------------------------------------------------
+        if tab == OptionsTab::Sound {
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(341.0),
+                dx(29.0),
+                true,
+                true,
+                "Music Volume",
+                false,
+                px(24.0),
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(394.0),
+                0.25,
+                "min",
+                "max",
+                dy(430.0),
+                unit,
+                px(20.0),
+            );
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(497.0),
+                dx(29.0),
+                true,
+                true,
+                "Digital Volume",
+                false,
+                px(24.0),
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(550.0),
+                0.5,
+                "min",
+                "max",
+                dy(586.0),
+                unit,
+                px(20.0),
+            );
+            for (i, (label, checked)) in [
+                ("Unit Speech", true),
+                ("Unit Acknowledgments", true),
+                ("Sound Plays While In Background", true),
+                ("Building Sounds", true),
+                ("Game Subtitles", true),
+                ("Cinematic Subtitles", true),
+                ("Original Unit Voice Overs", false),
+                ("Original 1998 Campaign", false),
+            ]
+            .iter()
+            .enumerate()
+            {
+                opt_checkbox(
+                    fb,
+                    &mut self.ui_font,
+                    right,
+                    dy(341.0 + 54.0 * i as f32),
+                    dx(29.0),
+                    *checked,
+                    true,
+                    label,
+                    false,
+                    px(24.0),
+                );
+            }
+        }
+
+        // ---- Video -----------------------------------------------------
+        if tab == OptionsTab::Video {
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(901.0),
+                dy(341.0),
+                "Display Mode",
+                px(23.5),
+                CSS_LAVENDER,
+            );
+            opt_help(
+                fb,
+                &mut self.ui_font,
+                dx(1046.0),
+                dy(349.0),
+                dxw(18.0) / 2,
+                CSS_LAVENDER,
+                px(23.5),
+            );
+            opt_dropdown(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(374.0),
+                col_w,
+                dy(44.0),
+                "Windowed (Fullscreen)",
+                true,
+                unit,
+            );
+            let grey = Rgb::new(128, 128, 128);
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(899.0),
+                dy(447.0),
+                "Monitor",
+                px(23.5),
+                CSS_LAVENDER,
+            );
+            opt_dropdown(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(476.0),
+                col_w,
+                dy(44.0),
+                "1. Default",
+                false,
+                unit,
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(900.0),
+                dy(545.0),
+                "Gamma Correction",
+                px(23.5),
+                grey,
+            );
+            opt_help(
+                fb,
+                &mut self.ui_font,
+                dx(1102.0),
+                dy(555.0),
+                dxw(18.0) / 2,
+                grey,
+                px(23.5),
+            );
+            opt_slider_grey(
+                fb,
+                &mut self.ui_font,
+                left,
+                left + col_w,
+                dy(600.0),
+                0.5,
+                "min",
+                "max",
+                dy(630.0),
+                unit,
+                px(20.0),
+            );
+
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(341.0),
+                dx(29.0),
+                true,
+                true,
+                "Enable FPS Cap",
+                false,
+                px(24.0),
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                right,
+                right_end,
+                dy(412.0),
+                1.0,
+                "100",
+                "300",
+                dy(447.0),
+                unit,
+                px(20.0),
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(520.0),
+                "SD Graphics Filter",
+                px(23.3),
+                white,
+            );
+            opt_slider(
+                fb,
+                &mut self.ui_font,
+                right,
+                right_end,
+                dy(565.0),
+                1.0,
+                "Sharp",
+                "Filtered",
+                dy(600.0),
+                unit,
+                px(20.0),
+            );
+            for (i, (label, checked)) in [
+                ("Enable Vertical Sync", true),
+                ("HD Graphics", true),
+                ("Environment Effects", true),
+                ("Real-Time Lighting", true),
+                ("Smooth Unit Turning", true),
+                ("Shadow Stacking", true),
+                ("Pillarbox", false),
+            ]
+            .iter()
+            .enumerate()
+            {
+                opt_checkbox(
+                    fb,
+                    &mut self.ui_font,
+                    right,
+                    dy(668.0 + 54.0 * i as f32),
+                    dx(29.0),
+                    *checked,
+                    true,
+                    label,
+                    false,
+                    px(24.0),
+                );
+            }
+        }
+
+        // ---- Game ------------------------------------------------------
+        if tab == OptionsTab::Game {
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(901.0),
+                dy(346.0),
+                "Gameplay",
+                px(30.0),
+                white,
+            );
+            for (i, (label, checked)) in [
+                ("Game Timer", false),
+                ("Enable Color Cycling", true),
+                ("Mature Language Filter", true),
+                ("Show Bonus Skins", true),
+            ]
+            .iter()
+            .enumerate()
+            {
+                opt_checkbox(
+                    fb,
+                    &mut self.ui_font,
+                    left,
+                    dy(389.0 + 54.0 * i as f32),
+                    dx(29.0),
+                    *checked,
+                    true,
+                    label,
+                    false,
+                    px(24.0),
+                );
+            }
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(901.0),
+                dy(605.0),
+                "Console",
+                px(24.0),
+                white,
+            );
+            opt_dropdown(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(638.0),
+                col_w,
+                dy(45.0),
+                "Default",
+                true,
+                unit,
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(901.0),
+                dy(713.0),
+                "Portraits",
+                px(24.0),
+                white,
+            );
+            for (x, label, selected) in [
+                (900.0f32, "Animated", true),
+                (1075.0, "Still", false),
+                (1190.0, "Disabled", false),
+            ] {
+                opt_radio(
+                    fb,
+                    &mut self.ui_font,
+                    dx(x),
+                    dy(752.0),
+                    dx(36.0),
+                    selected,
+                    true,
+                    label,
+                    px(24.0),
+                    unit,
+                );
+            }
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                dx(901.0),
+                dy(830.0),
+                "Mini-Map Position",
+                px(24.0),
+                white,
+            );
+            for (i, (label, selected)) in [("Left Corner", true), ("Standard", false)]
+                .iter()
+                .enumerate()
+            {
+                opt_radio(
+                    fb,
+                    &mut self.ui_font,
+                    dx(900.0 + 196.0 * i as f32),
+                    dy(869.0),
+                    dx(36.0),
+                    *selected,
+                    true,
+                    label,
+                    px(24.0),
+                    unit,
+                );
+            }
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(941.0),
+                dx(29.0),
+                true,
+                true,
+                "Friends presence text notifications",
+                false,
+                px(24.0),
+            );
+
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(346.0),
+                "Language",
+                px(30.0),
+                white,
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(395.0),
+                "Changing language will require a game restart to",
+                px(23.3),
+                CSS_LAVENDER,
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(422.0),
+                "take effect.",
+                px(23.3),
+                CSS_LAVENDER,
+            );
+            opt_dropdown(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(449.0),
+                col_w,
+                dy(45.0),
+                "English",
+                true,
+                unit,
+            );
+            opt_text(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(554.0),
+                "Actions Per Minute Tracking",
+                px(30.0),
+                white,
+            );
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(597.0),
+                dx(29.0),
+                false,
+                true,
+                "Display APM In Game",
+                false,
+                px(24.0),
+            );
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(651.0),
+                dx(29.0),
+                false,
+                true,
+                "Alert when APM falls below",
+                false,
+                px(24.0),
+            );
+            opt_input(
+                fb,
+                &mut self.ui_font,
+                dx(1780.0),
+                dy(642.0),
+                dx(75.0),
+                dy(46.0),
+                "60",
+                px(23.0),
+                unit,
+            );
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(705.0),
+                dx(29.0),
+                false,
+                false,
+                "Color Text",
+                false,
+                px(24.0),
+            );
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                right,
+                dy(759.0),
+                dx(29.0),
+                false,
+                false,
+                "Play Sound",
+                false,
+                px(24.0),
+            );
+        }
+
+        // ---- Network ---------------------------------------------------
+        if tab == OptionsTab::Network {
+            opt_checkbox(
+                fb,
+                &mut self.ui_font,
+                left,
+                dy(341.0),
+                dx(29.0),
+                false,
+                true,
+                "Prefer port 6112",
+                false,
+                px(24.0),
+            );
+        }
+
+        // Restore to Default (left) and Ok (right): 2 px dark outer frame,
+        // black gap and a 3 px red inner frame around centred green text.
+        for (label, ox, ow, ix, iw) in [
+            ("Restore to Default", 513.0f32, 387.0, 522.0, 372.0),
+            ("Ok", 1672.0, 378.0, 1681.0, 360.0),
+        ] {
+            let (bx, by) = (dx(ox), dy(1212.0));
+            let (bw, bh) = (dxw(ow), dy(84.0));
+            fill_alpha_rect(fb, bx, by, bw, bh, 230);
+            for t in 0..2 {
+                fb.rect_outline(bx + t, by + t, bw - 2 * t, bh - 2 * t, CSS_OUTER);
+            }
+            let (px0, py0) = (dx(ix), dy(1221.0));
+            let (pw, ph) = (dxw(iw), dy(65.0));
+            for t in 0..3 {
+                fb.rect_outline(px0 + t, py0 + t, pw - 2 * t, ph - 2 * t, CSS_INNER);
+            }
+            if let Some(font) = self.ui_font_hover.as_mut() {
+                font.draw_centered_stretched(
+                    fb,
+                    px0 + pw / 2,
+                    py0 + dy(21.0),
+                    label,
+                    px(30.0),
+                    0.0,
+                    1.0,
+                    1.06,
+                    green,
+                    None,
+                    0.8,
+                );
+            }
+        }
+        let _ = dim_text;
     }
 
     /// Retail Hotkeys panel (references 131015/131026/131037/131049).
@@ -12473,5 +13413,56 @@ mod menu_frame_tests {
                 "stale pixel at ({x},{y}) in the menu frame"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod retail_timing_tests {
+    use super::{cursor_frame_index, cursor_scale_for_height, menu_clip_timeline};
+    use std::time::Duration;
+
+    #[test]
+    fn cursor_cycles_five_frames_at_six_fps() {
+        // 1/6 s per frame: ten 60 Hz samples.
+        assert_eq!(cursor_frame_index(Duration::ZERO, 5), 0);
+        assert_eq!(cursor_frame_index(Duration::from_millis(166), 5), 0);
+        assert_eq!(cursor_frame_index(Duration::from_millis(167), 5), 1);
+        assert_eq!(cursor_frame_index(Duration::from_millis(333), 5), 1);
+        assert_eq!(cursor_frame_index(Duration::from_millis(334), 5), 2);
+        assert_eq!(cursor_frame_index(Duration::from_millis(500), 5), 3);
+        assert_eq!(cursor_frame_index(Duration::from_millis(667), 5), 4);
+        assert_eq!(cursor_frame_index(Duration::from_millis(833), 5), 4);
+        assert_eq!(cursor_frame_index(Duration::from_millis(834), 5), 0);
+        // Single-frame sources never index out of bounds.
+        assert_eq!(cursor_frame_index(Duration::from_secs(10), 1), 0);
+        assert_eq!(cursor_frame_index(Duration::from_secs(10), 0), 0);
+    }
+
+    #[test]
+    fn cursor_is_hd_art_scaled_to_screen_height() {
+        // Measured live: 56-57 px tall at 1440p and 42-43 px at 1080p.
+        assert!((cursor_scale_for_height(1440) - 0.75).abs() < 1e-6);
+        assert!((cursor_scale_for_height(1080) - 0.5625).abs() < 1e-6);
+        assert!((cursor_scale_for_height(1920) - 1.0).abs() < 1e-6);
+        // A tiny framebuffer still draws at least a pixel-scale arrow.
+        assert!(cursor_scale_for_height(1) > 0.0);
+    }
+
+    #[test]
+    fn menu_layers_use_the_measured_retail_10_5_fps_loop() {
+        // Live capture: 151-frame Single/Multi loop every 14.4 s; the
+        // 105-frame Exit clip loops every 10.0 s.
+        let (start, frames, duration) = menu_clip_timeline(10.067, 0.0);
+        assert_eq!(start, 0.0);
+        assert_eq!(frames, 151);
+        assert!((duration - 14.381).abs() < 0.01, "{duration}");
+        let (_, frames, duration) = menu_clip_timeline(7.0, 0.0);
+        assert_eq!(frames, 105);
+        assert!((duration - 10.0).abs() < 0.01, "{duration}");
+        // A phase override still lands on an authored frame.
+        let (start, frames, duration) = menu_clip_timeline(10.067, 2.5);
+        assert!((start - 2.5333).abs() < 0.001, "{start}");
+        assert_eq!(frames, 113);
+        assert!((duration - 10.762).abs() < 0.01, "{duration}");
     }
 }

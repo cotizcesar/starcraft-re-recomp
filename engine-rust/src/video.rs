@@ -982,7 +982,10 @@ pub fn decode_rgba_frames_from_path(
             "-c:v",
             "libvpx-vp9",
             "-ss",
-            &format!("{start:.2}"),
+            // Four decimals keep chunk starts frame-accurate at 15 fps
+            // (0.0667 s); two decimals drifted by almost a whole frame and
+            // made the menu loop hold or skip one.
+            &format!("{start:.4}"),
             "-i",
             &path.to_string_lossy(),
             "-vframes",

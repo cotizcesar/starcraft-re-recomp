@@ -3001,3 +3001,37 @@ regeneradas, `ui_diff` 39/39, `cargo test` 315/315, clippy 0.  Evidencia
 local ignorada por git: `engine-rust/docs/hotkeys-tabs-proof.png` y
 `/tmp/opencode/hotkeys-hover.png`.
 
+## 2026-10-31 (59) — Cursor, loops de menú y Options
+
+Cursor: el GRP retail es de 5 frames de 80x84 con hotspot en el origen;
+se dibuja con escala `alto_pantalla/1920` y animación a 6 fps en orden
+0→4, con blit bilineal premultiplicado.  A 1440p la caja mide 56x58 px
+contra 56x57 del retail (una fila de AA); a 1080p la escala es 0.5625
+(42-43 px).  Tests `cursor_cycles_five_frames_at_six_fps` y
+`cursor_is_hd_art_scaled_to_screen_height`.
+
+Loops: los WebM del install son de 15 fps pero retail los consume a
+10.5 fps.  Se decodifican a 15 fps y se consumen a 10.5 desde el frame 0,
+sin recortar: Single/Multi 151 frames = 14.381 s (captura en vivo 14.4 s),
+Exit 105 = 10.0 s.  `video.rs` pasa `-ss` a 4 decimales; con 2 el chunk
+derivaba casi un frame y el loop retenía o saltaba uno.  Test
+`menu_layers_use_the_measured_retail_10_5_fps_loop`.
+
+Options: rehicimos `draw_options` contra 130933/130938/130942/130949/
+130954 en el content box 2560x1440 (recorte retail `(440,0,3000,1440)`).
+Placa 515,175 de 1532x975 con marcos 2+3 px; pestañas de 327x74 con
+celdas inactivas 8 px cortas y divisor 443..1140; labels extended px30
+centradas en 679; sliders de 7 topes circulares con knob 17/15/7;
+checkbox labels lavanda px0.97 con discos r9 (Mouse Sensitivity blanco);
+dropdowns verde/gris; radios; input `60` de 75x46 con radio 8; botones
+Restore/Ok con marco doble.  Título, captions, labels y botones quedan a
+0-1 px; las pestañas a 1-2 px.  El peso de las pestañas inactivas sigue
+~30-40 % alto en la métrica de tinta (rasterizado DirectWrite vs
+fontdue), sin romper el gate.
+
+Gates: `ui_visual_diff.py --calibrated --goal-only` 19/19 (Options
+0.59-1.40 de media y 0.95-1.91 % de outliers; las capas `.gcal` de esas
+cinco son previas al rework, el resto sigue a 0.00), Hotkeys 16/16
+(0.00-1.12), `ui_diff.py` 39/39, `cargo test` 318/318, clippy 0.
+Evidencia local: `/tmp/opencode/n4-options-{speed,sound,video,game,network}.png`.
+
