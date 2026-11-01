@@ -2991,8 +2991,9 @@ El hover de unidad se verificó otra vez con `--shot-screen
 hotkeys-terran-hover-scv`: marco inset de 3 px `#4cc428` en
 423..518/309..404 y ningún tooltip (el `hotkeypanel.js` retail no lo tiene).
 
-Verificación de píxeles contra 131015: x=360/361/362 filas 126–128 =
-`(10,0,0)`; x=775–777 exterior hasta 128; x=769–771 interior hasta 125;
+Verificación de píxeles contra 131015: x=361/362 filas 126–128 =
+`(10,0,0)` (x=360 queda a 1–4 niveles por AA); x=775–777 exterior hasta
+128; x=769–771 interior hasta 125;
 x=817–819 y 1063–1065 seleccionada 122/125; Protoss/Zerg 113/116.  Los
 bordes REF/OUR de los botones quedan con desviación 0–1 px.  Gates:
 Hotkeys 16/16 (0.76–1.12), goal 19/19 a 0.00 con las cuatro capas
