@@ -3333,3 +3333,27 @@ en el ejecutable (buscado en ambos clientes). Evidencia:
 El resto de la verificación no cambia: walkthrough de 129 pasos con Hotkeys y
 LAN, 6 frames de Hotkeys idénticos, puertas 43/43 crudo y calibrado, 39/39,
 332 tests, clippy 0.
+
+## 2026-11-02 (66) — Sonidos retail capturados: hover y click verificados
+
+La clave era no usar el sink nulo: el usuario confirmó que `gc_retail` deja
+el juego sin sonido. Grabando el monitor del sink por defecto (JLB Go
+Bluetooth) con el audio del juego activo, y correlacionando localmente
+(48 kHz, latencia ~0,22 s de la captura Bluetooth) contra los WAV retail:
+
+- **hover** (celda de Collections, entrada del menú): `mouseover.wav`,
+  |r| 0,54–0,65;
+- **clic** (celda, Options, Single Player, Cancel): `mousedown2.wav`,
+  |r| 0,72–0,86 (fase invertida);
+- **cambio de pantalla** (abrir Options/GameType, Cancel): `swishin.wav`
+  |r| ≤0,11 y `swishout.wav` ≤0,26. El pico aparente de `countdown.wav`
+  (0,71–0,75) es un falso positivo: `countdown.wav` correlaciona 0,72 con
+  `mousedown2.wav` a 0,09 s, es la cola del clic.
+
+La envolvente RMS tras el clic decae en ~1,9 s sin el `swish` de 1,1 s, y el
+bundle CEF solo envía `GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN` (ningún SWISH
+desde los paneles). Por tanto, en el menú CEF remasterizado **hover y clic
+están verificados** y las transiciones de panel **no llevan swish**. Queda la
+decisión de producto: quitar `ui_swish` de las transiciones para 1:1 estricto
+(recomendado por la evidencia) o mantenerlo como sabor clásico.
+Evidencia: `engine-rust/docs/retail-sound-mapping.txt`.

@@ -192,3 +192,15 @@ capas regeneradas, `ui_diff` 39/39).
     pendiente de un entorno con audio CEF (login Battle.net y/o Wine/CEF con
     salida de audio). Evidencia: `docs/session-log.md` 2026-11-02 (65) y
     `engine-rust/docs/retail-sound-mapping.txt`.
+24. Sonidos retail capturados (2026-11-02): con el audio del juego activo y
+    el monitor del sink por defecto (JLB Go; nunca `gc_retail`, que silencia
+    el juego) se verificaron por correlación local `mouseover.wav`
+    (hover, |r| 0,54–0,65) y `mousedown2.wav` (clic, |r| 0,72–0,86, fase
+    invertida, latencia ~0,22 s). Los cambios de pantalla CEF no reproducen
+    `swishin.wav` (|r| ≤0,11) ni `swishout.wav` (≤0,26); el pico aparente de
+    `countdown.wav` es un falso positivo (correlaciona 0,72 con
+    `mousedown2.wav` a 0,09 s). El bundle CEF solo manda
+    `GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`. Queda decidir si se retira
+    `ui_swish` de las transiciones (1:1 estricto, recomendado) o se mantiene
+    como sabor clásico. Evidencia: `docs/session-log.md` 2026-11-02 (66) y
+    `engine-rust/docs/retail-sound-mapping.txt`.

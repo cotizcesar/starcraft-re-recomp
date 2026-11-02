@@ -86,3 +86,32 @@ client (the menu currently shows "[Login]") and/or use a Wine/Proton build
 whose CEF host has a working audio backend, verify a hover/click is audible,
 then record that output. In this environment the CEF host emits no UI audio,
 so no recording can contain the cues.
+
+--- successful capture on the JLB Go (default sink) ---
+The user reported that the null sink (`gc_retail`) silenced the game; capturing
+the default Bluetooth/JLB Go sink monitor instead works and the game keeps its
+audio. No null sink, no stream move. With the user's audio settings (music
+100, sfx 100; later music 0 for SNR) the following cues were identified by
+local normalized cross-correlation (48 kHz, ~0.22 s capture/Bluetooth lag):
+
+| event | file | best |r| | runs |
+|---|---|---|---|
+| hover a Collections cell / main entry | sound/glue/mouseover.wav | 0.54-0.65 | one-cue, options, single |
+| left click a cell / Options / Single / Cancel | sound/glue/mousedown2.wav | 0.72-0.86 (phase-inverted) | one-cue, options, single, cancel |
+| screen change (Options open, GameType open, Cancel back) | swishin.wav | 0.08-0.11 | same runs |
+| screen change | swishout.wav | <= 0.26 | same runs |
+
+`countdown.wav` shows 0.71-0.75 at the transitions, but it is a false
+positive: countdown.wav correlates 0.72 with mousedown2.wav at a 0.09 s
+offset, so that peak belongs to the click tail.
+
+The recorded RMS envelope after a click decays by ~1.9 s with no sustained
+1.1 s swish; the shipped CEF bundle only sends `GLUSND_MOUSE_OVER` on hover and
+`GLUSND_MOUSE_DOWN` on click, with no SWISH call from the panels. Conclusion:
+the remastered CEF menu plays the retail mouseover and mousedown2 cues, but
+the panel transitions in this client do NOT play swishin/swishout.
+
+This leaves one product decision: our client currently plays `ui_swish` on
+every menu screen change. Strict 1:1 (evidence above) says remove it; keeping
+it preserves the classic "swoosh" feel but is not present in the remastered
+CEF capture.
