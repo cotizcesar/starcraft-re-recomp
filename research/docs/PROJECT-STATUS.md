@@ -169,3 +169,16 @@ capas regeneradas, `ui_diff` 39/39).
     43/43 crudo y calibrado; `ui_diff` 39/39; hashes de los WAV de UI
     verificados contra el install. Evidencia: `docs/session-log.md`
     2026-11-02 (63) y `engine-rust/docs/menu-walkthrough.txt`.
+22. Hotkeys/LAN + retail en vivo (2026-11-02): sonidos de Hotkeys corregidos
+    (hover `ui_move`, selección `ui_click`), estados de Hotkeys y filas de LAN
+    en el walkthrough (129 pasos; SCV/Move/H/Restore/Protoss/Probe y
+    selección+join de un peer), con los 6 frames de Hotkeys idénticos a las
+    capturas de la puerta. El cliente retail se lanzó con Lutris/Proton y se
+    condujo con ratón uinput: Options/Collections/Select Game Type reales
+    (`docs/retail-live/`). La captura loopback no contiene los cues de UI: el
+    host CEF de este Proton no emite audio (RMS sin transitorio en clics y
+    correlación ≤0.4), así que el A/B de waveform queda pendiente de un
+    entorno con audio CEF; el mapeo de eventos sí está verificado en el JS
+    retail (`GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`/`GLUSND_SWISH_IN`).
+    Evidencia: `docs/session-log.md` 2026-11-02 (64),
+    `engine-rust/docs/retail-sound-mapping.txt`.

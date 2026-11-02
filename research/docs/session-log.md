@@ -3252,3 +3252,50 @@ crudo y **43/43** calibrado, `ui_diff.py` **39/39**, `cargo test`
 `cargo build --release --bin sc_view` OK, y
 `SC_INSTALL=… cargo test --test retail casc_returns_the_documented_retail_files`
 **ok** (hashes de los tres WAV de UI).
+
+## 2026-11-02 (64) — Hotkeys/LAN en el walkthrough + retail en vivo
+
+**Hotkeys**. El clic en una celda de unidad jugaba `ui_move` (sonido de
+hover) en vez de `ui_click`, y ni las celdas ni las pestañas emitían hover al
+entrar. Corregido: hover de pestaña/celda = `ui_move`, selección = `ui_click`.
+El log del walkthrough registra ahora `race/sel/action/key/reset/error`, y el
+recorrido hace clic en SCV, abre el diálogo de Restore y lo confirma, elige la
+tarjeta Move (id 664, bind `m`), la reasigna a `H` (colisión marcada,
+`error=true`), cambia a la pestaña Protoss y selecciona la celda del Probe.
+Los seis frames de esos estados son **idénticos** (diff máximo 0) a los
+renders de la puerta: `hotkeys-terran-scv`, `hotkeys-reset-dialog`,
+`hotkeys-terran-scv-move`, `hotkeys-terran-scv-move-unbound`,
+`hotkeys-protoss`, `hotkeys-protoss-probe`.
+
+**LAN**. El walkthrough inyecta dos peers de fixture (no hay un segundo host),
+hace clic en la fila del segundo (selección, `lan_sel=1`) y vuelve a pulsarla:
+`lan_join` intenta conectar y deja `join failed: Connection refused`. Cubre
+la acción de fila que antes no se ejercitaba.
+
+**Retail en vivo**. El cliente se lanzó con el script directo de Lutris
+(`umu-run .../x86/StarCraft.exe -launch`, Proton/UMU), se activó con KWin
+Scripting y se condujo con un ratón uinput real (python-evdev,
+`ID_INPUT_MOUSE=1`). Se abrieron de verdad Options/Sound, Collections y
+Select Game Type; las capturas están en `engine-rust/docs/retail-live/` y
+confirman que el layout retail coincide con el reconstruido.
+
+Audio: el stream de StarCraft se enrutó a un sink nulo y se grabó con
+`pw-record`. Con música desactivada (`music=0`, `sfx=100`), el análisis no
+encuentra las señales de UI: RMS alrededor del clic de una celda de
+Collections 528→339→338, y del Ok 236→175→169 (sin transitorio); la
+correlación local contra `mouseover/mousedown2/swishin` queda ≤0.4 sin lag ni
+escala consistentes. El motor clásico (música/ambiente) suena, pero el host
+CEF de este Proton no emite los sonidos de UI, así que el A/B de forma de
+onda no es obtenible en esta máquina. Lo que sí queda verificado del original
+es el mapeo de eventos en el bundle CEF retail:
+`handleButtonHover → PlaySound GLUSND_MOUSE_OVER`,
+`handleMouseClick → PlaySound GLUSND_MOUSE_DOWN`, y el enum incluye
+`GLUSND_SWISH_IN`; los assets asociados son los WAV ya hasheados. Evidencia:
+`engine-rust/docs/retail-sound-mapping.txt`. Paso manual pendiente: ejecutar
+el cliente donde el audio CEF sea audible (Windows nativo o un Wine/CEF con
+salida de audio) y grabar ese dispositivo; aquí el host CEF no emite audio.
+
+Verificación: `menu_walkthrough.py` **PASS** (129 pasos; 23 transiciones,
+37 pulsaciones, 47 hovers, LAN y los 6 frames de Hotkeys), `ui_visual_diff`
+**43/43** crudo y calibrado, `ui_diff` **39/39**, `cargo test` **332/332**,
+`clippy --all-targets -- -D warnings` **0**, release OK.

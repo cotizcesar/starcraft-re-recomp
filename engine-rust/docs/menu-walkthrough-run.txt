@@ -1,11 +1,13 @@
 PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples loaded from the retail install
 PASS transitions: 23 screen changes, each with ui_swish
      Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Main
-PASS sounds: ui_swish on 23 screen changes, ui_click on 28 presses, ui_move on 43 pointer entries
+PASS sounds: ui_swish on 23 screen changes, ui_click on 37 presses, ui_move on 47 pointer entries
      ui_move  <- sound/glue/mouseover.wav
      ui_click <- sound/glue/mousedown2.wav
      ui_swish <- sound/glue/swishin.wav
 PASS options: 5 tabs, sliders to 0.67/0.17/0.83 and music 0.50/sfx 0.00, 10 distinct checkbox states, Restore reset to defaults
+PASS lan: two peers discovered, row click selected peer 2 and join returned 'Connection refused'
+PASS hotkeys: SCV cell + Move card + H rebind (collision flagged), restore dialog confirmed, Protoss tab + Probe cell selected
 PASS lobby: race dropdowns set [Terran, Zerg, Random, Random, Random, Random, Random, Random]
 PASS frame GameType     == verified headless render (gametype)
 PASS frame Options      == verified headless render (options-speed)
@@ -18,5 +20,11 @@ PASS frame Mission      == verified headless render (mission)
 PASS frame SavedGames   == verified headless render (saved)
 PASS frame Replays      == verified headless render (replays)
 PASS frame Lobby        live race dropdown == verified 134831 popup (byte-identical region); opening it changes nothing outside the popup
+PASS frame Hotkeys      SCV selected         == hotkeys-terran-scv
+PASS frame Hotkeys      restore dialog       == hotkeys-reset-dialog
+PASS frame Hotkeys      Move action selected == hotkeys-terran-scv-move
+PASS frame Hotkeys      Move rebound to H    == hotkeys-terran-scv-move-unbound
+PASS frame Hotkeys      Protoss tab          == hotkeys-protoss
+PASS frame Hotkeys      Probe selected       == hotkeys-protoss-probe
 
-walkthrough gate: PASS (105 steps, artifacts in /tmp/opencode/walk-gate)
+walkthrough gate: PASS (129 steps, artifacts in /tmp/opencode/walk-gate)

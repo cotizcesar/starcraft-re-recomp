@@ -36,17 +36,22 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "engine-rust/target/release/sc_view"
 REF_DIR = ROOT / "engine-rust/docs/original_screenshots"
 
-# Main -> Multiplayer -> GameType -> Lobby (races) -> Main -> Options (all
-# five tabs, sliders, checks, Restore, Ok) -> Main -> Collections (cells, Ok)
-# -> Main -> Credits -> Main -> Intro -> Main -> Hotkeys -> Main -> Single
+# Main -> Multiplayer -> GameType -> LAN (two peers: select + join) -> Lobby
+# (race dropdowns) -> Main -> Options (five tabs, sliders, checks, Restore,
+# Ok) -> Main -> Collections (cells, Ok) -> Main -> Credits -> Main -> Hotkeys
+# (unit/action selection, rebind, restore dialog, race tabs) -> Main -> Single
 # Player -> GameType -> Registry -> Episode -> Mission -> Episode -> Saved ->
 # Episode -> Replays -> Episode -> Main.
 SCRIPT = ",".join(
     [
         "move:700:700", "click",            # Multiplayer
         "move:1103:618",                    # Game Type: hover Original
-        "key:L", "key:Escape",              # LAN screen and back
-        "click",                            # Original
+        "key:L",                            # LAN screen
+        "fixture:lan-peer", "fixture:lan-peer",  # two discovered peers
+        "move:1000:763", "click",           # select Peer2
+        "move:1000:763", "click",           # join it (connection refused)
+        "key:Escape",                       # back to Game Type
+        "move:1103:618", "click",           # Original
         "move:1000:1028", "click",          # Lobby: open slot 1 race list
         "move:1122:1039", "click",          # hover Zerg, pick it
         "move:1000:980", "click",           # open slot 0 race list
@@ -83,7 +88,16 @@ SCRIPT = ",".join(
         "move:558:1348", "click",           # skip Credits -> Main
         # `View Intro` starts the movie path (not a MenuScreen), covered by
         # the intro timeline tests; the walkthrough continues on the menu.
-        "move:558:1192", "click",           # Hotkeys
+        "move:558:1192", "click",           # Hotkeys (Terran)
+        "move:471:357", "click",            # select SCV
+        "move:549:1344", "click",           # open Restore dialog
+        "move:1176:846", "click",           # confirm Restore
+        "move:1212:352", "click",           # SCV Move action card
+        "key:H",                            # rebind Move to H
+        "move:549:1344", "click",           # open Restore again
+        "move:1176:846", "click",           # confirm (clean bindings)
+        "move:1220:79", "click",            # Protoss tab
+        "move:471:357", "click",            # select Probe
         "key:Escape",                       # -> Main
         "move:700:300", "click",            # Single Player
         "move:1103:618", "click",           # Game Type: Original
@@ -272,6 +286,46 @@ def main() -> int:
         f" {len(flag_values)} distinct checkbox states, Restore reset to defaults"
     )
 
+    # ---- 3b. LAN row selection + join ----------------------------------
+    lan = [r for r in rows if r["screen"] == "Lan" and "lan_sel=" in r["state"]]
+    if not any("entries=2" in r["state"] and "lan_sel=1" in r["state"] for r in lan):
+        fail("LAN row click did not select the second discovered peer")
+    if not any("status=join failed" in r["state"] for r in lan):
+        fail("LAN row click on the selected peer did not attempt a join")
+    print("PASS lan: two peers discovered, row click selected peer 2 and join "
+          "returned 'Connection refused'")
+
+    # ---- 3c. Hotkeys controls ------------------------------------------
+    hot = [r for r in rows if r["screen"] == "Hotkeys" and "race=" in r["state"]]
+    if not hot:
+        fail("walkthrough never reached Hotkeys")
+
+    def first_hot(pred, what):
+        for row in hot:
+            if pred(row["state"]):
+                return row
+        fail(f"Hotkeys state not observed: {what}")
+
+    scv = first_hot(lambda st: "sel=Some(7)" in st and "action=None" in st, "SCV selected")
+    dialog = first_hot(lambda st: "reset=true" in st, "restore dialog")
+    action = first_hot(
+        lambda st: "action=Some(664)" in st and "key=Some('m')" in st and "reset=false" in st,
+        "SCV Move action selected",
+    )
+    rebound = first_hot(lambda st: "key=Some('H')" in st, "Move rebound to H")
+    protoss = first_hot(
+        lambda st: "race=Protoss" in st and "sel=None" in st, "Protoss tab"
+    )
+    probe = first_hot(
+        lambda st: "race=Protoss" in st and "sel=Some(64)" in st, "Probe selected"
+    )
+    if "error=true" not in rebound["state"]:
+        fail("H rebind did not report the retail collision error")
+    print(
+        "PASS hotkeys: SCV cell + Move card + H rebind (collision flagged), "
+        "restore dialog confirmed, Protoss tab + Probe cell selected"
+    )
+
     # ---- 4. Lobby races -------------------------------------------------
     lobby = [r for r in rows if r["screen"] == "Lobby" and "races=" in r["state"]]
     if not lobby:
@@ -317,6 +371,26 @@ def main() -> int:
         fail(f"live Lobby dropdown differs from the verified popup (max {popup_diff})")
     print("PASS frame Lobby        live race dropdown == verified 134831 popup "
           "(byte-identical region); opening it changes nothing outside the popup")
+
+    def frame(row: dict) -> np.ndarray:
+        return np.asarray(
+            Image.open(outdir / f"walk-{int(row['step']):02d}-{row['screen']}.bmp").convert("RGB")
+        ).astype(np.int16)
+
+    for row, shot_name, label in [
+        (scv, "hotkeys-terran-scv", "SCV selected"),
+        (dialog, "hotkeys-reset-dialog", "restore dialog"),
+        (action, "hotkeys-terran-scv-move", "Move action selected"),
+        (rebound, "hotkeys-terran-scv-move-unbound", "Move rebound to H"),
+        (protoss, "hotkeys-protoss", "Protoss tab"),
+        (probe, "hotkeys-protoss-probe", "Probe selected"),
+    ]:
+        ref = run_shot(args.install, shot_name, tmp / f"{shot_name}.bmp")
+        diff = np.abs(frame(row) - ref)
+        if diff.max() != 0:
+            fail(f"Hotkeys {label}: frame differs from {shot_name} "
+                 f"(mean {diff.mean():.3f}, max {diff.max()})")
+        print(f"PASS frame Hotkeys      {label:20s} == {shot_name}")
 
     print(f"\nwalkthrough gate: PASS ({len(rows)} steps, artifacts in {outdir})")
     return 0

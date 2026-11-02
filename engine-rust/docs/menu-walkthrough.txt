@@ -2,105 +2,129 @@ step	action	screen	sounds	state
 0	move:700:700	Main	ui_move	
 1	click	GameType	ui_swish	
 2	move:1103:618	GameType		
-3	key:L	Lan	ui_swish	
-4	key:Escape	GameType	ui_swish	
-5	click	Lobby	ui_swish	races=[Random, Random, Random, Random, Random, Random, Random, Random]
-6	move:1000:1028	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
-7	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
-8	move:1122:1039	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
-9	click	Lobby	ui_click	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
-10	move:1000:980	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
-11	click	Lobby	ui_click	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
-12	move:1122:1046	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
-13	click	Lobby	ui_click	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
-14	move:1964:1288	Lobby	ui_move	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
-15	click	Main	ui_swish	
-16	move:558:1042	Main	ui_move	
-17	click	Options	ui_swish	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-18	move:1100:391	Options	ui_move	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-19	click	Options	ui_click	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-20	move:1000:544	Options	ui_move	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-21	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-22	move:1300:697	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-23	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-24	move:1700:394	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-25	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-26	move:1500:355	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-27	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100001
-28	move:1500:511	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100001
-29	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
-30	move:684:484	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
-31	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
-32	move:1158:394	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
-33	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.50 flags=1111111001111000011111100011
-34	move:900:550	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.50 flags=1111111001111000011111100011
-35	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000011111100011
-36	move:1500:355	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000011111100011
-37	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001111100011
-38	move:1500:517	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001111100011
-39	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
-40	move:684:577	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
-41	click	Options	ui_click	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
-42	move:1500:355	Options	ui_move	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
-43	click	Options	ui_click	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
-44	move:684:670	Options	ui_move	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
-45	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
-46	move:950:403	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
-47	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111000001101100011
-48	move:1100:769	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111000001101100011
-49	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111100001101100011
-50	move:1150:886	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111100001101100011
-51	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
-52	move:684:763	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
-53	click	Options	ui_click	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
-54	move:950:355	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
-55	click	Options	ui_click	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
-56	move:700:1254	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
-57	click	Options	ui_click	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-58	move:1860:1254	Options	ui_move	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-59	click	Main	ui_swish	
-60	move:558:1123	Main	ui_move	
-61	click	Collections	ui_swish	
-62	move:587:386	Collections	ui_move	
-63	click	Collections	ui_click	
-64	move:963:707	Collections	ui_move	
-65	click	Collections	ui_click	
-66	move:1337:1175	Collections	ui_move	
-67	click	Collections	ui_click	
-68	move:2017:1277	Collections	ui_move	
-69	click	Main	ui_swish	
-70	move:558:1273	Main	ui_move	
-71	click	Credits	ui_swish	
-72	move:558:1348	Credits	ui_move	
-73	click	Main	ui_swish	
-74	move:558:1192	Main	ui_move	
-75	click	Hotkeys	ui_swish	
-76	key:Escape	Main	ui_swish	
-77	move:700:300	Main	ui_move	
-78	click	GameType	ui_swish	
-79	move:1103:618	GameType		
-80	click	Registry	ui_swish	
-81	move:800:390	Registry		
-82	click	Registry	ui_move	
-83	move:1869:1178	Registry		
-84	click	Episode	ui_swish	
-85	move:1262:666	Episode		
-86	click	Mission	ui_swish	
-87	move:1200:670	Mission	ui_move	
-88	click	Mission	ui_click	
-89	move:1477:1015	Mission	ui_move	
-90	click	Episode	ui_swish	
-91	move:1332:1134	Episode		
-92	click	SavedGames	ui_swish	
-93	move:600:380	SavedGames	ui_move	
-94	click	SavedGames		
-95	move:1917:1283	SavedGames	ui_move	
-96	click	Episode	ui_swish	
-97	move:1325:1359	Episode		
-98	click	Replays	ui_swish	
-99	move:700:483	Replays	ui_move	
-100	click	Replays		
-101	move:1964:1288	Replays	ui_move	
-102	click	Episode	ui_swish	
-103	move:1967:1242	Episode		
-104	click	Main	ui_swish	
+3	key:L	Lan	ui_swish	lan_sel=0 entries=0 status=no games found (H to host)
+4	fixture:lan-peer	Lan		lan_sel=0 entries=1 status=no games found (H to host)
+5	fixture:lan-peer	Lan		lan_sel=0 entries=2 status=no games found (H to host)
+6	move:1000:763	Lan	ui_move	lan_sel=0 entries=2 status=no games found (H to host)
+7	click	Lan	ui_click	lan_sel=1 entries=2 status=no games found (H to host)
+8	move:1000:763	Lan		lan_sel=1 entries=2 status=no games found (H to host)
+9	click	Lan		lan_sel=1 entries=2 status=join failed: Connection refused (os error 111)
+10	key:Escape	GameType	ui_swish	
+11	move:1103:618	GameType		
+12	click	Lobby	ui_swish	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+13	move:1000:1028	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+14	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+15	move:1122:1039	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+16	click	Lobby	ui_click	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
+17	move:1000:980	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
+18	click	Lobby	ui_click	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
+19	move:1122:1046	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
+20	click	Lobby	ui_click	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
+21	move:1964:1288	Lobby	ui_move	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
+22	click	Main	ui_swish	
+23	move:558:1042	Main	ui_move	
+24	click	Options	ui_swish	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+25	move:1100:391	Options	ui_move	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+26	click	Options	ui_click	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+27	move:1000:544	Options	ui_move	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+28	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+29	move:1300:697	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+30	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+31	move:1700:394	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+32	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+33	move:1500:355	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+34	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100001
+35	move:1500:511	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100001
+36	click	Options	ui_click	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
+37	move:684:484	Options	ui_move	tab=Speed speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
+38	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
+39	move:1158:394	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100011
+40	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.50 flags=1111111001111000011111100011
+41	move:900:550	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.50 flags=1111111001111000011111100011
+42	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000011111100011
+43	move:1500:355	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000011111100011
+44	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001111100011
+45	move:1500:517	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001111100011
+46	click	Options	ui_click	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
+47	move:684:577	Options	ui_move	tab=Sound speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
+48	click	Options	ui_click	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
+49	move:1500:355	Options	ui_move	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=1111111001111000001101100011
+50	click	Options	ui_click	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
+51	move:684:670	Options	ui_move	tab=Video speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
+52	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
+53	move:950:403	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111001111000001101100011
+54	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111000001101100011
+55	move:1100:769	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111000001101100011
+56	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111100001101100011
+57	move:1150:886	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111100001101100011
+58	click	Options	ui_click	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
+59	move:684:763	Options	ui_move	tab=Game speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
+60	click	Options	ui_click	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
+61	move:950:355	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101001101100011
+62	click	Options	ui_click	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
+63	move:700:1254	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
+64	click	Options	ui_click	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+65	move:1860:1254	Options	ui_move	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+66	click	Main	ui_swish	
+67	move:558:1123	Main	ui_move	
+68	click	Collections	ui_swish	
+69	move:587:386	Collections	ui_move	
+70	click	Collections	ui_click	
+71	move:963:707	Collections	ui_move	
+72	click	Collections	ui_click	
+73	move:1337:1175	Collections	ui_move	
+74	click	Collections	ui_click	
+75	move:2017:1277	Collections	ui_move	
+76	click	Main	ui_swish	
+77	move:558:1273	Main	ui_move	
+78	click	Credits	ui_swish	
+79	move:558:1348	Credits	ui_move	
+80	click	Main	ui_swish	
+81	move:558:1192	Main	ui_move	
+82	click	Hotkeys	ui_swish	race=Terran sel=None action=None key=None reset=false error=false
+83	move:471:357	Hotkeys	ui_move	race=Terran sel=None action=None key=None reset=false error=false
+84	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
+85	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
+86	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=true error=false
+87	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=true error=false
+88	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
+89	move:1212:352	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
+90	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+91	key:H	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
+92	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
+93	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
+94	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
+95	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+96	move:1220:79	Hotkeys	ui_move	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+97	click	Hotkeys	ui_click	race=Protoss sel=None action=None key=None reset=false error=false
+98	move:471:357	Hotkeys	ui_move	race=Protoss sel=None action=None key=None reset=false error=false
+99	click	Hotkeys	ui_click	race=Protoss sel=Some(64) action=None key=None reset=false error=false
+100	key:Escape	Main	ui_swish	
+101	move:700:300	Main	ui_move	
+102	click	GameType	ui_swish	
+103	move:1103:618	GameType		
+104	click	Registry	ui_swish	
+105	move:800:390	Registry		
+106	click	Registry	ui_move	
+107	move:1869:1178	Registry		
+108	click	Episode	ui_swish	
+109	move:1262:666	Episode		
+110	click	Mission	ui_swish	
+111	move:1200:670	Mission	ui_move	
+112	click	Mission	ui_click	
+113	move:1477:1015	Mission	ui_move	
+114	click	Episode	ui_swish	
+115	move:1332:1134	Episode		
+116	click	SavedGames	ui_swish	
+117	move:600:380	SavedGames	ui_move	
+118	click	SavedGames		
+119	move:1917:1283	SavedGames	ui_move	
+120	click	Episode	ui_swish	
+121	move:1325:1359	Episode		
+122	click	Replays	ui_swish	
+123	move:700:483	Replays	ui_move	
+124	click	Replays		
+125	move:1964:1288	Replays	ui_move	
+126	click	Episode	ui_swish	
+127	move:1967:1242	Episode		
+128	click	Main	ui_swish	

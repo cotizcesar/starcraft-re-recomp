@@ -2423,6 +2423,7 @@ fn script_key(name: &str) -> Key {
         "Delete" => Key::Delete,
         "L" => Key::L,
         "R" => Key::R,
+        "H" => Key::H,
         _ => Key::Unknown,
     }
 }
@@ -2451,7 +2452,20 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     for (i, step) in script.split(',').map(str::trim).enumerate() {
         let mut keys = Vec::new();
         let mut down = false;
-        if let Some(rest) = step.strip_prefix("move:") {
+        if step == "fixture:lan-peer" {
+            // Walkthrough fixture: inject one discovered peer so the LAN row
+            // action (select + join) can be exercised without a second host.
+            let announce = galaxycraft::net::Announce {
+                name: format!("Peer{}", app.lan.entries.len() + 1),
+                map_hash: [0u8; 32],
+                port: 6112,
+                players: 1,
+                started: false,
+            };
+            if let Ok(addr) = "127.0.0.1:6112".parse() {
+                app.lan.entries.push((addr, announce));
+            }
+        } else if let Some(rest) = step.strip_prefix("move:") {
             let (x, y) = rest.split_once(':').unwrap_or(("0", "0"));
             mouse = Some((x.parse().unwrap_or(0), y.parse().unwrap_or(0)));
         } else if step == "click" {
@@ -2473,7 +2487,11 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             .next()
             .unwrap_or("?")
             .to_string();
-        if screen != prev_screen || step == "move:1122:1039" {
+        if screen != prev_screen
+            || step == "move:1122:1039"
+            || screen == "Hotkeys"
+            || screen == "Lan"
+        {
             let path = format!("{dir}/walk-{i:02}-{screen}.bmp");
             let _ = fb.write_bmp(std::path::Path::new(&path));
         }
@@ -2526,6 +2544,26 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 o.sfx_volume
             ),
             MenuScreen::Lobby { .. } => format!("races={:?}", app.lobby_races),
+            MenuScreen::Hotkeys { race } => format!(
+                "race={race:?} sel={:?} action={:?} key={:?} reset={} error={}",
+                app.hotkey_sel,
+                app.hotkey_action,
+                app.hotkey_action.and_then(|a| {
+                    app.hotkey_bindings
+                        .get(a as usize)
+                        .copied()
+                        .flatten()
+                        .map(|k| k.text)
+                }),
+                app.hotkey_reset,
+                app.hotkey_binding_error
+            ),
+            MenuScreen::Lan => format!(
+                "lan_sel={} entries={} status={}",
+                app.lan.sel,
+                app.lan.entries.len(),
+                app.lan.status
+            ),
             _ => String::new(),
         };
         log.push_str(&format!(
@@ -5901,6 +5939,8 @@ impl App {
                             return;
                         }
                     }
+                    let prev_tab_hover = self.hotkey_tab_hover;
+                    let prev_unit_hover = self.hotkey_hover;
                     let mut tab_hover = None;
                     for (i, r) in HotkeyRace::all().iter().enumerate() {
                         let tx = cx + (cw as f32 * (0.316797 + 0.108984 * i as f32)) as i32;
@@ -5925,6 +5965,12 @@ impl App {
                         .iter()
                         .find(|(_, r)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3)
                         .map(|(id, _)| *id);
+                    if self.hotkey_tab_hover != prev_tab_hover && self.hotkey_tab_hover.is_some() {
+                        self.play("ui_move");
+                    }
+                    if self.hotkey_hover != prev_unit_hover && self.hotkey_hover.is_some() {
+                        self.play("ui_move");
+                    }
                     let action_hit = self
                         .hotkey_action_cells
                         .iter()
@@ -5939,7 +5985,7 @@ impl App {
                         if let Some(id) = self.hotkey_hover {
                             self.hotkey_sel = Some(id);
                             self.hotkey_action = None;
-                            self.play("ui_move");
+                            self.play("ui_click");
                         }
                     }
                 }

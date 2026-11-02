@@ -1,0 +1,50 @@
+.props.gameClient&&this.props.gameClient.sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"})}},{key:"handleButtonHover",value:function(){th
+.props.gameClient&&this.props.gameClient.sendMessage("PlaySound",{id:"GLUSND_MOUSE_OVER"})}},{key:"render",value:function(e,t){return(0,l
+l"===e?(event.preventDefault(),p.default.sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"}),p.default.exit()):(b.default.getIsAltLeftDown(
+t"===e?(event.preventDefault(),p.default.sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"}),p.default.navigateToPopup("rez/gluBattlenetLeg
+d"===e?(event.preventDefault(),p.default.sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"}),p.default.navigateToPopup("rez/gluBattlenetLeg
+d"===e?(event.preventDefault(),p.default.sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"}),p.default.navigateToPopup("rez/gluBattlenetLeg
+{GLUSND_MOUSE_OVER:166},{GLUSND_BNET_CLICK:167},{GLUSND_SCORE_FILL:168},{GLUSND_SCORE_FILLEND:169},{GLUSND_CHAT_COUNTDOWN:170},{GLUSND_SWISH_LOCK:171},{GLUSND_SWISH_IN:172},{GLUSND_SWISH_OUT:173}
+--- retail assets (SHA-256 from tests/retail.rs) ---
+            "ui_click",
+            "d183413d3cc768e239ddcf15b17271fe0d6f28442777890722ea06b24741c155",
+            "ui_move",
+            "f3d369e4af62f3230de8075cf5a326fdc16d76a659730a4fc0fe44569f167874",
+            "ui_swish",
+            "ac1462c2a9b2f2dabad04d61cbbb8dd90f62e1e5f285d77897f82d433c239bee",
+
+--- live retail run (2026-11-02) ---
+Launch: Lutris game `starcraft-direct` (direct script generated with `lutris -b`):
+  umu-run .../x86/StarCraft.exe -launch (Proton/UMU, prefix ~/Games/battlenet)
+Window: 3440x1440 fullscreen, remastered CEF menu (content 2560x1440 at x=440).
+Input: compositor-level uinput mouse (python-evdev, ID_INPUT_MOUSE=1), KWin
+activated the game through its Scripting DBus interface. This drove the real
+client: Options, Sound tab, Collections, and Select Game Type all opened.
+Screenshots: docs/retail-live/{options-sound,collections,select-game-type}.png.
+
+Audio: the StarCraft stream was routed to a null sink (`gc_retail`) and
+recorded with `pw-record --target gc_retail.monitor`. Music was disabled via
+CSettings.json (music=0, sfx=100) for a clean capture.
+
+Result: the CEF UI cues are NOT present in the captured stream. RMS around a
+Collections cell click (4.343 s) was 528 before / 339 during / 338 after, and
+around the Ok click (6.144 s) 236 / 175 / 169: no transient at either. Local
+normalized cross-correlation of the recording against the retail
+mouseover/mousedown2/swishin WAVs stayed <= 0.4 with no consistent lag or
+time-scale. The legacy music/ambience plays, but the CEF UI audio path is
+silent in this Proton/CEF setup, so a waveform A/B of the UI cues cannot be
+obtained here.
+
+What the original DOES define (shipped CEF bundle, `webui/dist/*.js`):
+  handleButtonHover -> sendMessage("PlaySound",{id:"GLUSND_MOUSE_OVER"})
+  handleMouseClick  -> sendMessage("PlaySound",{id:"GLUSND_MOUSE_DOWN"})
+  sound id enum: ... GLUSND_SWISH_LOCK:171, GLUSND_SWISH_IN:172,
+  GLUSND_SWISH_OUT:173 ...
+matching ui_move <- sound/glue/mouseover.wav, ui_click <-
+sound/glue/mousedown2.wav, ui_swish <- sound/glue/swishin.wav (hashes in
+tests/retail.rs).
+
+Manual step to finish the waveform A/B: run the client where CEF UI audio is
+audible (native Windows, or a Wine/Proton build whose CEF host outputs audio),
+confirm a hover/click is audible, and record that output device. On this
+machine the CEF host emits no UI audio at all, so no recording can contain it.
