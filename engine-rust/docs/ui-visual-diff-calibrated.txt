@@ -1,28 +1,30 @@
 ref      screen                mean   >30 px status
-130804   episode              15.59   16.00% FAIL
-130840   episode              15.36   15.93% FAIL
-130757   episode              15.04   15.64% FAIL
-130750   episode              14.95   15.61% FAIL
-130832   episode              14.88   15.34% FAIL
-130824   episode              14.79   15.33% FAIL
-130744   episode              13.77   14.21% FAIL
-131132   mission              13.29   14.65% FAIL
-115959   hotkeys-terran-scv-move-unbound    1.13    0.91% PASS
+130840   episode-expansion-hover-zerg    3.74    3.22% PASS
+130804   episode-hover-protoss    3.30    2.55% PASS
+130757   episode-hover-zerg    3.24    2.57% PASS
+131132   mission               3.11    2.69% PASS
+130832   episode-expansion-hover-terran    2.91    2.15% PASS
+130750   episode-hover-terran    2.88    2.18% PASS
+130824   episode-expansion-hover-protoss    2.76    2.11% PASS
+130744   episode               2.27    1.56% PASS
+115959   hotkeys-terran-scv-move-unbound    1.12    0.90% PASS
 120018   hotkeys-reset-dialog    1.08    0.50% PASS
-115943   hotkeys-terran-scv-move    1.07    0.81% PASS
-120111   hotkeys-protoss-probe    1.03    0.77% PASS
-115935   hotkeys-terran-scv    0.99    0.73% PASS
-115929   hotkeys-terran-scv    0.96    0.70% PASS
-120045   hotkeys-terran-cc     0.88    0.66% PASS
-120106   hotkeys-zerg-larva-cards    0.85    0.60% PASS
-120032   hotkeys-terran-marine    0.82    0.58% PASS
-115917   hotkeys-terran        0.79    0.51% PASS
-120053   hotkeys-protoss       0.78    0.52% PASS
-120059   hotkeys-zerg          0.77    0.49% PASS
-130637   menu                  0.00    0.00% PASS
-130704   menu-hover-single     0.00    0.00% PASS
-130712   menu-hover-multi      0.00    0.00% PASS
-130926   menu-hover-exit       0.00    0.00% PASS
+115943   hotkeys-terran-scv-move    1.07    0.79% PASS
+120111   hotkeys-protoss-probe    1.02    0.76% PASS
+115935   hotkeys-terran-scv    0.98    0.71% PASS
+115929   hotkeys-terran-scv    0.95    0.68% PASS
+120045   hotkeys-terran-cc     0.88    0.64% PASS
+120106   hotkeys-zerg-larva-cards    0.85    0.58% PASS
+120032   hotkeys-terran-marine    0.81    0.56% PASS
+115917   hotkeys-terran        0.79    0.50% PASS
+120053   hotkeys-protoss       0.78    0.51% PASS
+120059   hotkeys-zerg          0.77    0.47% PASS
+130727   gametype              0.28    0.08% PASS
+131116   gametype              0.28    0.06% PASS
+130926   menu-hover-exit       0.24    0.23% PASS
+130637   menu                  0.10    0.08% PASS
+130712   menu-hover-multi      0.09    0.08% PASS
+130704   menu-hover-single     0.09    0.06% PASS
 130734   registry              0.00    0.00% PASS
 130933   options-speed         0.00    0.00% PASS
 130938   options-sound         0.00    0.00% PASS
@@ -40,7 +42,5 @@ ref      screen                mean   >30 px status
 130907   lobby                 0.00    0.00% PASS
 134831   lobby                 0.00    0.00% PASS
 134843   lobby                 0.00    0.00% PASS
-130727   gametype              0.00    0.00% PASS
-131116   gametype              0.00    0.00% PASS
 
-visual gate: 35/43 screens (mean <= 8.0, outliers <= 8.0%)
+visual gate: 43/43 screens (mean <= 8.0, outliers <= 8.0%)

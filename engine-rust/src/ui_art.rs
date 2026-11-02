@@ -646,6 +646,13 @@ pub struct GlueArt {
     /// Episode-select console plates (`glucmpgn.ui.json` ids 1 and 3).
     pub campaign_botl: Option<DdsImage>,
     pub campaign_botr: Option<DdsImage>,
+    /// Edge-anchored `palcs` backdrop halves behind the episode screen
+    /// (each 320x480 SD, shipped as 1280x1920 HD art).
+    pub campaign_backl: Option<DdsImage>,
+    pub campaign_backr: Option<DdsImage>,
+    /// Mission-history modal (`glue/campaign/phist.dds`): the whole frame,
+    /// list box and Ok/Cancel buttons in one shipped plate.
+    pub campaign_hist: Option<DdsImage>,
     /// Campaign side rails framing the episode-select screen.
     pub campaign_topl: Option<DdsImage>,
     pub campaign_topr: Option<DdsImage>,
@@ -678,6 +685,9 @@ impl GlueArt {
             palmm_backdrop: load_dds(root, "glue/palmm/backgnd.dds"),
             campaign_botl: load_dds(root, "glue/campaign/pbotl.dds"),
             campaign_botr: load_dds(root, "glue/campaign/pbotr.dds"),
+            campaign_backl: load_dds(root, "glue/palcs/backgndl.dds"),
+            campaign_backr: load_dds(root, "glue/palcs/backgndr.dds"),
+            campaign_hist: load_dds(root, "glue/campaign/phist.dds"),
             campaign_topl: load_dds(root, "glue/campaign/ptopl.dds"),
             campaign_topr: load_dds(root, "glue/campaign/ptopr.dds"),
             create_map: load_dds(root, "glue/create/plistmap.dds"),

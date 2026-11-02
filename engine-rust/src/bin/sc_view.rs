@@ -640,6 +640,23 @@ impl MenuLayers {
     }
 }
 
+/// The three episode-select slots of `glucmpgn`/`gluexpcmpgn`: a faded
+/// portrait, the spinning disk hologram and the mouse-over variant, all
+/// streamed from the shipped `glue/campaign` clips.
+#[derive(Default)]
+struct CampaignSlotClips {
+    portrait: Option<MenuClip>,
+    disk: Option<MenuClip>,
+    on: Option<MenuClip>,
+}
+
+/// Layer set for one campaign set (original or Brood War).
+#[derive(Default)]
+struct CampaignLayers {
+    expansion: bool,
+    slots: [CampaignSlotClips; 3],
+}
+
 /// LAN lobby UI state (menu screen `Lan`).
 struct LanUi {
     listener: Option<Lobby>,
@@ -849,6 +866,14 @@ struct App {
     lan: LanUi,
     /// Remastered menu space layers (loaded once from the install).
     menu_layers: Option<MenuLayers>,
+    /// Streamed episode-select art (built lazily; one campaign set at a time).
+    campaign_layers: Option<CampaignLayers>,
+    /// Slot under the pointer on the episode screen (drives the `On` clip).
+    episode_hover: Option<usize>,
+    /// `--menu-at` / `--menu-phase` pins, shared with the campaign clips so
+    /// headless captures are deterministic.
+    menu_at: Option<f32>,
+    menu_phases: std::collections::HashMap<String, f32>,
     /// Cached terrain minimap for the Create screen: (map index, 128x128 RGB).
     lobby_preview: Option<(usize, Vec<u32>)>,
     /// Hotkeys browser: hovered/selected unit and the icon rectangles drawn
@@ -898,7 +923,6 @@ struct App {
     /// Episode-select art: first frame of `glue/campaign/{terr,zerg,prot}.webm`
     /// keyed by race (0 terran, 1 zerg, 2 protoss). Decoded with alpha so the
     /// characters sit on the black plate instead of a grey box.
-    campaign_frames: std::collections::HashMap<(u8, bool), Option<galaxycraft::video::RgbaFrame>>,
     /// Parsed credit entries (name, style) from the shipped credits bundle.
     credits: Vec<(String, u8)>,
     /// Collections thumbnails, decoded on demand from the shipped images.
@@ -1381,39 +1405,6 @@ fn parse_credits(src: &str) -> Vec<(String, u8)> {
 
 /// Crop a decoded frame to its non-transparent bounding box so the visible
 /// art can be fitted to a measured on-screen rectangle.
-fn crop_to_alpha(fr: &galaxycraft::video::RgbaFrame) -> galaxycraft::video::RgbaFrame {
-    let (w, h) = (fr.width as usize, fr.height as usize);
-    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
-    for y in 0..h {
-        for x in 0..w {
-            if fr.rgba[(y * w + x) * 4 + 3] > 8 {
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x);
-                y1 = y1.max(y);
-            }
-        }
-    }
-    if x1 <= x0 || y1 <= y0 {
-        return fr.clone();
-    }
-    let nw = x1 - x0 + 1;
-    let nh = y1 - y0 + 1;
-    let mut out = vec![0u8; nw * nh * 4];
-    for y in 0..nh {
-        let src = ((y0 + y) * w + x0) * 4;
-        out[y * nw * 4..(y + 1) * nw * 4].copy_from_slice(&fr.rgba[src..src + nw * 4]);
-    }
-    galaxycraft::video::RgbaFrame {
-        width: nw as u32,
-        height: nh as u32,
-        rgba: out,
-    }
-}
-
-/// Apply the measured per-state correction layer for a deterministic
-/// capture.  Active with `GC_CALIBRATED_CAPTURE=<reference-id>`; unknown keys
-/// (e.g. in-game shots) are ignored.
 fn apply_capture_correction(fb: &mut Framebuffer) {
     if std::env::var_os("GC_PROFILE").is_some() {
         eprintln!("calibration: call");
@@ -2205,20 +2196,6 @@ fn css_panel3_rounded(
 }
 
 /// Retail CEF button plate: transparent black, #6c0000 border, green text.
-fn css_button(fb: &mut Framebuffer, r: (i32, i32, i32, i32)) {
-    let (x, y, w, h) = r;
-    for yy in y..y + h {
-        for xx in x..x + w {
-            let c = fb.get(xx, yy);
-            fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 150));
-        }
-    }
-    fb.rect_outline(x, y, w, h, CSS_INNER);
-    fb.rect_outline(x + 1, y + 1, w - 2, h - 2, CSS_INNER);
-}
-
-/// Dim the whole content box behind a web panel.  The retail CEF screens
-/// darken the 3D backdrop instead of showing it at menu brightness.
 fn dim_screen(fb: &mut Framebuffer, cx: i32, cw: i32, ch: i32, alpha: u8) {
     for y in 0..ch {
         for x in 0..cw {
@@ -2249,28 +2226,6 @@ fn draw_art_border(
 }
 
 /// Ellipse outline of the given thickness, used for the episode rings.
-fn draw_ellipse_ring(fb: &mut Framebuffer, cx: i32, cy: i32, rx: i32, ry: i32, t: i32, color: Rgb) {
-    if rx <= 0 || ry <= 0 {
-        return;
-    }
-    let steps = (rx.max(ry) * 8).max(64);
-    for k in 0..steps {
-        let a = k as f32 / steps as f32 * std::f32::consts::TAU;
-        for d in 0..t {
-            let x = cx + ((rx + d) as f32 * a.cos()) as i32;
-            let y = cy + ((ry + d) as f32 * a.sin()) as i32;
-            fb.put(x, y, color);
-        }
-    }
-}
-
-/// Nearest-neighbour scale blit: logical world frame -> window at `x0`.
-/// Draw a decoded RGB24 movie frame centred in `fb`, keeping its aspect.
-///
-/// The retail client never crops a cinematic: 16:9 movies fill a 16:9 window
-/// edge to edge and get pillarboxed on an ultrawide desktop (the references
-/// show the 2560x1440 content box inside 3440x1440), while a 4:3 window
-/// letterboxes them.  Contain-fit reproduces exactly that.
 fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     if frame.width == 0 || frame.height == 0 {
         return;
@@ -2863,6 +2818,10 @@ fn main() {
         net: None,
         lan: LanUi::default(),
         menu_layers,
+        campaign_layers: None,
+        episode_hover: None,
+        menu_at,
+        menu_phases,
         lobby_preview: None,
         hotkey_hover: None,
         hotkey_sel: None,
@@ -2886,7 +2845,6 @@ fn main() {
         cursor_art: cursor_art.clone(),
         cursor_started: Instant::now(),
         portraits: std::collections::HashMap::new(),
-        campaign_frames: std::collections::HashMap::new(),
         credits: Vec::new(),
         thumbs: std::collections::HashMap::new(),
         hotkey_icons: std::collections::HashMap::new(),
@@ -3060,18 +3018,37 @@ fn main() {
                 app.gametype_hover = (shot_screen == "gametype-hover-expansion").then_some(1);
                 app.draw_menu(&mut fb);
             }
-            "episode" | "episode-expansion" => {
+            "episode"
+            | "episode-hover-zerg"
+            | "episode-hover-terran"
+            | "episode-hover-protoss"
+            | "episode-expansion-hover-zerg"
+            | "episode-expansion-hover-terran"
+            | "episode-expansion-hover-protoss" => {
+                let screen = shot_screen.as_str();
                 app.intro = false;
                 app.menu = true;
                 app.menu_screen = MenuScreen::Episode;
-                app.episode_sel =
-                    galaxycraft::menu::episode_start(shot_screen == "episode-expansion");
+                let expansion = screen.contains("expansion");
+                app.episode_sel = galaxycraft::menu::episode_start(expansion);
+                // Slot order differs per campaign set: original is
+                // Zerg/Terran/Protoss, Brood War is Terran/Protoss/Zerg.
+                app.episode_hover = if screen.ends_with("hover-zerg") {
+                    Some(if expansion { 2 } else { 0 })
+                } else if screen.ends_with("hover-terran") {
+                    Some(if expansion { 0 } else { 1 })
+                } else if screen.ends_with("hover-protoss") {
+                    Some(if expansion { 1 } else { 2 })
+                } else {
+                    None
+                };
                 app.draw_menu(&mut fb);
             }
             "mission" => {
                 app.intro = false;
                 app.menu = true;
                 app.menu_screen = MenuScreen::Mission { episode: 1 };
+                app.episode_hover = None;
                 app.draw_menu(&mut fb);
             }
             "lobby" | "create" => {
@@ -4621,50 +4598,6 @@ impl App {
     }
 
     /// First frame of the episode-select art for a race, with alpha.
-    fn campaign_frame(
-        &mut self,
-        race: u8,
-        selected: bool,
-    ) -> Option<galaxycraft::video::RgbaFrame> {
-        let key = (race, selected);
-        if let Some(hit) = self.campaign_frames.get(&key) {
-            return hit.clone();
-        }
-        let decoded = (|| {
-            let install = self.install.as_ref()?;
-            let name = match race {
-                1 => "zerg",
-                2 => "prot",
-                _ => "terr",
-            };
-            // The first second of the campaign clip is the cut-out hero
-            // portrait (reference 130744); later frames animate the button
-            // plate, so seek to 1 s.
-            let file = format!("glue/campaign/{name}.webm");
-            let bytes = install.read_by_path(&file).ok()?;
-            let info = galaxycraft::video::parse_webm(&bytes).ok()?;
-            if let Some(frame) = galaxycraft::video::decode_rgba_frame_at(&bytes, &info, 1.0, 640) {
-                if frame.has_alpha() {
-                    return Some(crop_to_alpha(&frame));
-                }
-            }
-            // No alpha in this clip: fall back to the RGB decode, opaque.
-            galaxycraft::video::decode_frame_at(&bytes, &info, Some(0.3), 320).map(|f| {
-                let mut rgba = Vec::with_capacity(f.rgb.len() / 3 * 4);
-                for px in f.rgb.as_chunks::<3>().0 {
-                    rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-                }
-                galaxycraft::video::RgbaFrame {
-                    width: f.width,
-                    height: f.height,
-                    rgba,
-                }
-            })
-        })();
-        self.campaign_frames.insert(key, decoded.clone());
-        decoded
-    }
-
     /// One Collections thumbnail, decoded from the shipped image.
     fn thumb(&mut self, name: &str, w: i32, h: i32) -> Option<PosterFrame> {
         let key = format!("{name}@{w}x{h}");
@@ -5141,36 +5074,58 @@ impl App {
                 return;
             }
             MenuScreen::Episode => {
-                // Mouse: the four bottom command plates measured in
-                // `draw_episode` (content-relative 2560x1440 rects).
+                // Mouse: the three episode slots and the four shipped command
+                // controls (`glucmpgn` ids 8/7/6/5/10/11/9).
                 if let Some((mx, my)) = window
                     .get_unscaled_mouse_pos(MouseMode::Clamp)
                     .map(|(x, y)| (x as i32, y as i32))
                 {
                     let (cx, cy, cw, ch) = self.content_box;
-                    let hit = |x: f32, y: f32, w: f32, h: f32| {
-                        let kx = cw as f32 / 2560.0;
-                        let ky = ch as f32 / 1440.0;
-                        mx >= cx + (x * kx) as i32
-                            && mx < cx + ((x + w) * kx) as i32
-                            && my >= cy + (y * ky) as i32
-                            && my < cy + ((y + h) * ky) as i32
+                    let (scale, ox) = galaxycraft::menu::campaign_scale(cw, ch);
+                    let expansion = self.episode_sel >= 3;
+                    let slots: &[galaxycraft::menu::CampaignSlot] = if expansion {
+                        &galaxycraft::menu::CAMPAIGN_X_SLOTS
+                    } else {
+                        &galaxycraft::menu::CAMPAIGN_SLOTS
                     };
+                    let inside = |r: (f32, f32, f32, f32)| {
+                        let (x, y, w, h) = galaxycraft::menu::campaign_rect(r, scale, ox, cx, cy);
+                        mx >= x && mx < x + w && my >= y && my < y + h
+                    };
+                    let slot = slots.iter().position(|s| inside(s.button));
+                    self.episode_hover = slot;
                     if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
                         self.mouse_was_down = true;
-                        if hit(971.0, 1065.0, 648.0, 118.0) {
-                            self.menu_screen = MenuScreen::SavedGames;
-                            self.play("ui_click");
-                        } else if hit(1001.0, 1201.0, 606.0, 83.0) {
-                            self.menu_screen = MenuScreen::Lobby {
-                                map: Some(self.map_index),
+                        if let Some(idx) = slot {
+                            // Clicking a race selects that episode and opens
+                            // its mission list (reference 131132).
+                            self.episode_sel = if expansion {
+                                [4usize, 3, 5][idx]
+                            } else {
+                                [1usize, 0, 2][idx]
                             };
-                            self.play("ui_click");
-                        } else if hit(1037.0, 1291.0, 581.0, 101.0) {
-                            self.menu_screen = MenuScreen::Replays;
-                            self.play("ui_click");
-                        } else if hit(1700.0, 1201.0, 428.0, 81.0) {
-                            self.menu_screen = MenuScreen::Main;
+                            self.menu_screen = MenuScreen::Mission {
+                                episode: (self.episode_sel + 1) as u8,
+                            };
+                            self.mission_sel = 0;
+                            self.play("ui_swish");
+                        } else if galaxycraft::menu::CAMPAIGN_BUTTONS
+                            .iter()
+                            .any(|b| inside(b.rect))
+                        {
+                            let which = galaxycraft::menu::CAMPAIGN_BUTTONS
+                                .iter()
+                                .position(|b| inside(b.rect));
+                            match which {
+                                Some(0) => self.menu_screen = MenuScreen::SavedGames,
+                                Some(1) => {
+                                    self.menu_screen = MenuScreen::Lobby {
+                                        map: Some(self.map_index),
+                                    }
+                                }
+                                Some(2) => self.menu_screen = MenuScreen::Replays,
+                                _ => self.menu_screen = MenuScreen::Main,
+                            }
                             self.play("ui_click");
                         }
                         return;
@@ -9913,217 +9868,350 @@ impl App {
     /// Load Saved / Play Custom / Load Replay / Cancel buttons.
     /// Ring centres and button rects are measured on screenshot #6 at
     /// 3440x1440 and expressed as fractions of the 2560x1440 content box.
+    /// Retail episode select (`glucmpgn` / `gluexpcmpgn`, dialog
+    /// `RaceSelection`): the two `palcs` backdrop halves anchored to the
+    /// content-box edges, the console plates, three FLCBTN slots with their
+    /// animated disk/portrait/mouse-over clips, the measured labels and the
+    /// four command buttons drawn as text centred in their shipped rects.
     fn draw_episode(&mut self, fb: &mut Framebuffer) {
-        let (scale, _uox, _uoy) = self.ui_metrics(fb);
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        // Retail episode select sits on the dark front-end backdrop with the
-        // title frame and the dimmed menu entries still visible (reference
-        // 130744/130824); only the centre is darkened for the portraits.
-        self.draw_menu_backdrop_plain(fb);
-        for y in 0..ch {
-            for x in 0..cw {
-                let c = fb.get(cx + x, y);
-                fb.put(cx + x, y, c.blend(Rgb::new(0, 0, 0), 236));
-            }
+        use galaxycraft::menu::{CampaignSlot, LabelAlign};
+        let (cx, cy, cw, ch) = Self::content_rect(fb);
+        let (scale, oxf) = galaxycraft::menu::campaign_scale(cw, ch);
+        let ox = oxf as i32;
+        let expansion = self.episode_sel >= 3;
+        let slots: &[CampaignSlot] = if expansion {
+            &galaxycraft::menu::CAMPAIGN_X_SLOTS
+        } else {
+            &galaxycraft::menu::CAMPAIGN_SLOTS
+        };
+        // The campaign screen is black between the shipped art pieces.
+        for y in cy..cy + ch {
+            fb.rect(cx, y, cw, 1, Rgb::new(0, 0, 0));
         }
-        // Campaign frame: the shipped side rails carry the corner brackets
-        // and the yellow hazard trim; the centre stays black.
+        // Screen-pixel scale of the 2560x1440 reference measurements.
+        let k = ch as f32 / 1440.0;
+        let pw = |w: f32| (w * k).round().max(1.0) as i32;
         if let Some(glue) = &self.glue {
-            if let Some(art) = &glue.campaign_topl {
-                let w = (ch as f32 * art.width as f32 / art.height as f32) as i32;
-                art.draw_scaled(fb, cx, 0, w.max(1), ch);
+            // `palcs` backdrop: each 320x480 SD half ships as 1280x1920 HD
+            // art drawn at 0.75 (960x1440) and anchored to its screen edge
+            // (matched at 0.99 against capture 130744).
+            if let Some(art) = &glue.campaign_backl {
+                art.draw_scaled(fb, cx, cy, pw(960.0), ch);
             }
-            if let Some(art) = &glue.campaign_topr {
-                let w = (ch as f32 * art.width as f32 / art.height as f32) as i32;
-                art.draw_scaled(fb, cx + cw - w.max(1), 0, w.max(1), ch);
+            if let Some(art) = &glue.campaign_backr {
+                // The right half is anchored 3 px inside the content edge
+                // (measured: best match at x=1597 of 2560, residual 0.37).
+                let inset = (3.0 * k).round() as i32;
+                art.draw_scaled(fb, cx + cw - pw(960.0) - inset, cy, pw(960.0), ch);
             }
-            // Shipped bottom console plates (`glucmpgn` ids 1 and 3), at
-            // their native HD size: `pbotl` 2260x472, `pbotr` 2136x280.
+            // Console plates: the 4x art is drawn at scale/4 and anchored to
+            // its shipped control rect (`glucmpgn` ids 1/3).  `pBotL` carries
+            // `RC_ANCHOR_TOPRIGHT`, so its right edge sits on the control's
+            // right edge (x = 320+3*436 - 1695 = -66; ORB affine measured
+            // tx -66.0, ty 1054.8, scale 0.7507).  `pBotR` grows to the right
+            // from x = 320+3*217 = 971 (measured tx 969.0).
+            let art_k = scale / 4.0;
             if let Some(art) = &glue.campaign_botl {
-                art.draw_scaled(fb, cx, (ch as f32 * 0.6722) as i32, 2260, 472);
+                let w = (art.width as f32 * art_k).round() as i32;
+                let h = (art.height as f32 * art_k).round() as i32;
+                let x = ox + (scale * 436.0).round() as i32 - w;
+                let y = cy + (scale * 352.0).round() as i32;
+                art.draw_scaled(fb, x, y, w, h);
             }
             if let Some(art) = &glue.campaign_botr {
-                art.draw_scaled(fb, cx + 304, (ch as f32 * 0.7500) as i32, 2136, 280);
+                let w = (art.width as f32 * art_k).round() as i32;
+                let h = (art.height as f32 * art_k).round() as i32;
+                let x = ox + (scale * 217.0).round() as i32;
+                let y = cy + (scale * 370.0).round() as i32;
+                art.draw_scaled(fb, x, y, w, h);
             }
         }
-        let expansion = self.episode_sel >= 3;
-        // (race index for the art, race label, episode label)
-        let slots: [(u8, &str, &str); 3] = if expansion {
-            [
-                (2, "Protoss", "Episode IV"),
-                (0, "Terran", "Episode V"),
-                (1, "Zerg", "Episode VI"),
-            ]
-        } else {
-            [
-                (1, "Zerg", "Episode II"),
-                (0, "Terran", "Episode I"),
-                (2, "Protoss", "Episode III"),
-            ]
-        };
-        // Measured on reference 130744: ring centres (641,979), (1264,711),
-        // (1930,967) at 2560x1440, r 186x112.
-        // Episode order on screen: Zerg II, Terran I, Protoss III (original);
-        // Protoss IV, Terran V, Zerg VI (Brood War).
+        // Which slot carries the keyboard selection (retail opens on the
+        // episode chosen in `Select Game Type`).
         let selected_slot = if expansion {
             self.episode_sel.saturating_sub(3).min(2)
         } else {
             [1usize, 0, 2][self.episode_sel % 3]
         };
-        let ring_cx = [0.2504f32, 0.4938, 0.7539];
-        let ring_cy = [0.6800f32, 0.4940, 0.6720];
-        let rx = (cw as f32 * 0.0727) as i32;
-        let ring_ry = [0.0823f32, 0.0753, 0.0757];
-        let frames: Vec<Option<galaxycraft::video::RgbaFrame>> = slots
-            .iter()
-            .map(|(race, _, _)| self.campaign_frame(*race, true))
-            .collect();
-        for (i, frame) in frames.iter().enumerate() {
-            let selected = selected_slot == i;
-            let ry = (ch as f32 * ring_ry[i]) as i32;
-            let ccx = cx + (cw as f32 * ring_cx[i]) as i32;
-            let ccy = (ch as f32 * ring_cy[i]) as i32;
-            // Portrait sits on the ring, bottom edge on the ring apex.
-            if let Some(fr) = frame {
-                // Measured on the reference: each portrait's visible height
-                // (bottom edge on the ring apex) differs by race.
-                let h = (ch as f32 * [0.385, 0.425, 0.395][i]) as i32;
-                let w = ((h as f32) * fr.width as f32 / fr.height as f32) as i32;
-                let x = ccx - w / 2;
-                let y = ccy - ry - h;
-                draw_poster_rgba(fb, fr, (x, y, w, h), if selected { 0.0 } else { 0.45 });
+        self.ensure_campaign_layers(expansion);
+        let hover = self.episode_hover;
+        for (i, slot) in slots.iter().enumerate() {
+            let rect =
+                |r: (f32, f32, f32, f32)| galaxycraft::menu::campaign_rect(r, scale, oxf, cx, cy);
+            let portrait = rect((
+                slot.button.0 + slot.portrait.0,
+                slot.button.1 + slot.portrait.1,
+                slot.portrait.2,
+                slot.portrait.3,
+            ));
+            let disk = rect((
+                slot.button.0 + slot.disk.0,
+                slot.button.1 + slot.disk.1,
+                slot.disk.2,
+                slot.disk.3,
+            ));
+            let on = rect((
+                slot.button.0 + slot.on.0,
+                slot.button.1 + slot.on.1,
+                slot.on.2,
+                slot.on.3,
+            ));
+            if let Some(layers) = &mut self.campaign_layers {
+                let clips = &mut layers.slots[i];
+                // Child order from the shipped dialog: disk, portrait, On.
+                if let Some(clip) = clips.disk.as_mut() {
+                    if let Some(frame) = clip.frame() {
+                        draw_poster_rgba(fb, frame, (disk.0, disk.1, disk.2, disk.3), 0.0);
+                    }
+                }
+                if let Some(clip) = clips.portrait.as_mut() {
+                    if let Some(frame) = clip.frame() {
+                        // `FLC_FADED` keeps the idle portrait at ~0.25 opacity;
+                        // the hovered slot fades all the way in (measured gain
+                        // 0.97 on 130750/130757/130804) and the `On` clip adds
+                        // the glow.
+                        let dim = if hover == Some(i) {
+                            0.0
+                        } else {
+                            1.0 - galaxycraft::menu::CAMPAIGN_PORTRAIT_IDLE_ALPHA
+                        };
+                        draw_poster_rgba(
+                            fb,
+                            frame,
+                            (portrait.0, portrait.1, portrait.2, portrait.3),
+                            dim,
+                        );
+                    }
+                }
+                if hover == Some(i) {
+                    if let Some(clip) = clips.on.as_mut() {
+                        if let Some(frame) = clip.frame() {
+                            draw_poster_rgba(fb, frame, (on.0, on.1, on.2, on.3), 0.0);
+                        }
+                    }
+                }
             }
-            // Ellipse ring: purple with a dim halo.
-            let ring = if selected {
-                Rgb::new(225, 130, 255)
+            // Labels: race (bright hotkey cap + regular rest) and episode
+            // (lavender), centred on the measured ink centres.
+            let (label_x, label_y) = slot.label;
+            let hovered = hover == Some(i);
+            let race_color = if hovered || selected_slot == i {
+                Rgb::new(196, 255, 124)
             } else {
-                Rgb::new(150, 70, 190)
+                Rgb::new(102, 227, 53)
             };
-            draw_ellipse_ring(fb, ccx, ccy, rx, ry, 2, ring);
-            draw_ellipse_ring(
+            let race_bright = Rgb::new(208, 255, 131);
+            self.draw_campaign_label(
                 fb,
-                ccx,
-                ccy,
-                rx + 3,
-                ry + 2,
-                1,
-                ring.blend(Rgb::new(0, 0, 0), 130),
+                slot.race,
+                label_x,
+                label_y,
+                slot.label_width.0,
+                16.0,
+                race_bright,
+                race_color,
+                scale,
+                ox,
+                cy,
             );
-            // Labels (retail face, 16 UI px, green race / grey episode).
-            let label_y = ccy + ry + (ch as f32 * 0.012) as i32;
-            let name = slots[i].1;
-            let color = if selected {
-                Rgb::new(150, 255, 150)
-            } else {
-                Rgb::new(90, 205, 90)
-            };
-            let px = 16.0 * scale;
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
-                    fb,
-                    ccx,
-                    label_y,
-                    name,
-                    px,
-                    1.0,
-                    color,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-                font.draw_centered(
-                    fb,
-                    ccx,
-                    label_y + (px * 1.05) as i32,
-                    slots[i].2,
-                    px,
-                    1.0,
-                    Rgb::new(205, 205, 215),
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-                let w = name.chars().count() as i32 * 8 * big;
-                fb.text(ccx - w / 2, label_y, name, color, big);
-                let epi = slots[i].2;
-                let w = epi.chars().count() as i32 * 8 * big;
-                fb.text(
-                    ccx - w / 2,
-                    label_y + 8 * big + 4,
-                    epi,
-                    Rgb::new(205, 205, 215),
-                    big,
-                );
-            }
+            self.draw_hd_text(
+                fb,
+                slot.episode,
+                label_x,
+                label_y + 21.0,
+                LabelAlign::Center,
+                slot.label_width.1,
+                16.0,
+                scale,
+                ox,
+                cy,
+                Rgb::new(162, 177, 245),
+                false,
+            );
         }
-        // Bottom command buttons measured on the 2560x1440 reference.
-        let kx = cw as f32 / 2560.0;
-        let ky = ch as f32 / 1440.0;
-        for (label, x, y, w, h) in [
-            ("Load Saved", 971.0, 1065.0, 648.0, 118.0),
-            ("Play Custom", 1001.0, 1201.0, 606.0, 83.0),
-            ("Load Replay", 1037.0, 1291.0, 581.0, 101.0),
-            ("Cancel", 1700.0, 1201.0, 428.0, 81.0),
-        ] {
-            let bx = cx + (x * kx) as i32;
-            let by = (y * ky) as i32;
-            let bw = (w * kx) as i32;
-            let bh = (h * ky) as i32;
-            for yy in by..by + bh {
-                let t = (yy - by) as f32 / bh.max(1) as f32;
-                let c = Rgb::new(
-                    (14.0 + 12.0 * t) as u8,
-                    (12.0 + 10.0 * t) as u8,
-                    (9.0 + 7.0 * t) as u8,
-                );
-                fb.rect(bx, yy, bw, 1, c);
-            }
-            fb.rect_outline(bx, by, bw, bh, Rgb::new(110, 92, 46));
-            fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(96, 18, 18));
-            let px = 11.0 * scale;
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
-                    fb,
-                    bx + bw / 2,
-                    by + (bh as f32 * 0.20) as i32,
-                    label,
-                    px,
-                    0.6,
-                    Rgb::new(150, 245, 150),
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                let big = (scale.round() as i32).clamp(1, 2);
-                let tw = label.chars().count() as i32 * 8 * big;
-                fb.text(
-                    bx + (bw - tw) / 2,
-                    by + (bh - 8 * big) / 2,
-                    label,
-                    Rgb::new(150, 245, 150),
-                    big,
-                );
-            }
+        // Bottom command buttons: text centred in the shipped control rects
+        // (measured ink centre and cap line).
+        for button in galaxycraft::menu::CAMPAIGN_BUTTONS {
+            let center = button.rect.0 + button.rect.2 / 2.0;
+            let top = button.rect.1 + button.rect.3 / 2.0 - 5.7;
+            self.draw_campaign_label(
+                fb,
+                button.label,
+                center,
+                top,
+                button.ink_width,
+                16.0,
+                Rgb::new(208, 255, 131),
+                Rgb::new(102, 227, 53),
+                scale,
+                ox,
+                cy,
+            );
         }
     }
 
+    /// Two-tone retail label: first glyph (the hotkey cap) uses the bright
+    /// Extended face, the rest the regular face, both centred on `center_x`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_campaign_label(
+        &mut self,
+        fb: &mut Framebuffer,
+        text: &str,
+        center_x: f32,
+        top: f32,
+        width: f32,
+        font_ui: f32,
+        bright: Rgb,
+        normal: Rgb,
+        scale: f32,
+        ox: i32,
+        oy: i32,
+    ) {
+        use galaxycraft::menu::LabelAlign;
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return;
+        };
+        let rest = chars.as_str();
+        let first_string = first.to_string();
+        let advance = self.hd_advance_ui_at(&first_string, scale, true, font_ui);
+        let left = center_x - width / 2.0;
+        self.draw_hd_text(
+            fb,
+            &first_string,
+            left,
+            top,
+            LabelAlign::Left,
+            1.0,
+            font_ui,
+            scale,
+            ox,
+            oy,
+            bright,
+            true,
+        );
+        if !rest.is_empty() {
+            self.draw_hd_text(
+                fb,
+                rest,
+                left + advance,
+                top,
+                LabelAlign::Left,
+                (width - advance).max(1.0),
+                font_ui,
+                scale,
+                ox,
+                oy,
+                normal,
+                true,
+            );
+        }
+    }
+
+    /// [`Self::hd_advance_ui`] with an explicit em size.
+    fn hd_advance_ui_at(&mut self, text: &str, scale: f32, hover_face: bool, font_ui: f32) -> f32 {
+        let px = (font_ui * scale).max(7.0);
+        let use_hover = hover_face && self.ui_font_hover.is_some();
+        let font = if use_hover {
+            self.ui_font_hover.as_mut()
+        } else {
+            self.ui_font.as_mut()
+        };
+        font.map(|f| f.measure(text, px, 0.0) as f32 / scale)
+            .unwrap_or(text.chars().count() as f32 * 8.0)
+    }
+
+    /// Build the streamed campaign clips for the active campaign set.  The
+    /// clips are the shipped `glue/campaign` WebMs consumed at the same
+    /// 10.5 fps the retail glue player uses for every front-end loop.
+    fn ensure_campaign_layers(&mut self, expansion: bool) {
+        if self
+            .campaign_layers
+            .as_ref()
+            .is_some_and(|layers| layers.expansion == expansion)
+        {
+            return;
+        }
+        let dir = if expansion { "expcampaign" } else { "campaign" };
+        let slots: &[galaxycraft::menu::CampaignSlot] = if expansion {
+            &galaxycraft::menu::CAMPAIGN_X_SLOTS
+        } else {
+            &galaxycraft::menu::CAMPAIGN_SLOTS
+        };
+        let root = self.assets_root.clone();
+        let frozen = self.menu_at.is_some() || !self.menu_phases.is_empty();
+        let at = self.menu_at.unwrap_or(0.0);
+        let open = |stem: &str| {
+            let path = root.join(format!("videos/glue/{dir}/{stem}.webm"));
+            let start = self.menu_phases.get(stem).copied().unwrap_or(at);
+            MenuClip::open_at(path, start, frozen)
+        };
+        let mut layers = CampaignLayers {
+            expansion,
+            ..CampaignLayers::default()
+        };
+        for (i, slot) in slots.iter().enumerate() {
+            layers.slots[i] = CampaignSlotClips {
+                portrait: open(slot.art),
+                disk: open(&format!("disk{}", slot.art)),
+                on: open(&format!("{}on", slot.art)),
+            };
+        }
+        self.campaign_layers = Some(layers);
+    }
+
+    /// Retail `Select starting mission` modal (`glue/campaign/phist.dds`):
+    /// the shipped plate already carries the metal frame, the list box and
+    /// the Ok/Cancel buttons; only the title and the mission rows are text.
     fn draw_mission(&mut self, fb: &mut Framebuffer) {
-        // Episode select stays behind the modal (reference 131132).
+        // Episode select stays behind the modal (reference 131132): the
+        // retail client does not dim it (measured gain 1.000).
         self.draw_episode(fb);
-        let (scale, ox, oy) = self.ui_metrics(fb);
-        let (_mcx, _mcy, cw, ch) = Self::content_rect(fb);
-        let rect = galaxycraft::ui::UiRect::new(132, 153, 374, 269).scaled(scale, ox, oy);
-        for yy in rect.y..rect.y + rect.h {
-            for xx in rect.x..rect.x + rect.w {
-                let c = fb.get(xx, yy);
-                fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 235));
+        use galaxycraft::menu::LabelAlign;
+        let (cx, cy, _cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let px = |x: f32| cx + (x * k).round() as i32;
+        let py = |y: f32| cy + (y * k).round() as i32;
+        let pw = |w: f32| (w * k).round().max(1.0) as i32;
+        let mut has_plate = false;
+        // The mission-history popup is centred in the content box
+        // (measured (708,342) for the 1140x753 plate at 2560x1440).
+        let popup_w = pw(1140.0);
+        let popup_h = pw(753.0);
+        let popup_x = px(708.0);
+        let popup_y = py(342.0);
+        if let Some(glue) = &self.glue {
+            if let Some(art) = &glue.campaign_hist {
+                art.draw_scaled(fb, popup_x, popup_y, popup_w, popup_h);
+                has_plate = true;
             }
         }
-        fb.rect_outline(rect.x, rect.y, rect.w, rect.h, CSS_INNER);
-        let inset = (21.0 * scale / 3.0) as i32;
-        fb.rect_outline(
-            rect.x + inset,
-            rect.y + inset,
-            rect.w - inset * 2,
-            rect.h - inset * 2,
-            CSS_INNER,
+        if !has_plate {
+            fb.rect(
+                px(708.0),
+                py(342.0),
+                pw(1140.0),
+                pw(753.0),
+                Rgb::new(8, 6, 6),
+            );
+            fb.rect_outline(px(708.0), py(342.0), pw(1140.0), pw(753.0), CSS_INNER);
+        }
+        // Title ink measured at (746..1086, 386..414) on the reference.
+        let (scale, oxf) = galaxycraft::menu::campaign_scale(_cw, ch);
+        let ox = oxf as i32;
+        self.draw_hd_text(
+            fb,
+            "Select starting mission:",
+            (746.0 - 320.0) / 3.0,
+            386.0 / 3.0,
+            LabelAlign::Left,
+            341.0 / 3.0,
+            11.0,
+            scale,
+            ox,
+            cy,
+            Rgb::new(162, 177, 245),
+            false,
         );
         let ep = (self.episode_sel + 1) as u8;
         let mut lines: Vec<String> = Vec::new();
@@ -10157,70 +10245,46 @@ impl App {
         if lines.is_empty() {
             lines.push("(no missions)".to_string());
         }
-        let px = 10.0 * scale;
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_top(
+        // Mission rows: ink top 478 and a 57 px pitch at 2560x1440.
+        for (i, line) in lines.iter().take(8).enumerate() {
+            let top = (478.0 + i as f32 * 57.0) / 3.0;
+            let _sel = i == self.mission_sel.min(lines.len().saturating_sub(1));
+            let color = Rgb::new(102, 227, 53);
+            // Retail rows sit at the natural 16 UI px advance (measured
+            // 558 px for row 1); the old label path compressed them.
+            let natural = self.hd_advance_ui(line, scale, false);
+            self.draw_hd_text(
                 fb,
-                rect.x + (cw as f32 * 0.008) as i32,
-                rect.y + (ch as f32 * 0.010) as i32,
-                "Select starting mission:",
-                9.5 * scale,
-                0.4,
-                Rgb::new(200, 200, 210),
-                Some(Rgb::new(0, 0, 0)),
-            );
-        } else {
-            fb.text(
-                rect.x + 10,
-                rect.y + 8,
-                "Select starting mission:",
-                Rgb::new(220, 220, 225),
-                1,
+                line,
+                (751.0 - 320.0) / 3.0,
+                top,
+                LabelAlign::Left,
+                natural,
+                16.0,
+                scale,
+                ox,
+                cy,
+                color,
+                false,
             );
         }
-        let row_h = (ch as f32 * 0.0350) as i32;
-        for (i, line) in lines.iter().take(11).enumerate() {
-            let y = rect.y + (ch as f32 * 0.0520) as i32 + i as i32 * row_h;
-            let sel = i == self.mission_sel.min(lines.len().saturating_sub(1));
-            if sel {
-                fb.rect(rect.x + 6, y - 1, rect.w - 12, row_h, Rgb::new(40, 8, 8));
-            }
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_top(
-                    fb,
-                    rect.x + 12,
-                    y,
-                    line,
-                    px,
-                    0.3,
-                    if sel { CSS_GREEN_HI } else { CSS_GREEN },
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                fb.text(rect.x + 12, y, line, CSS_GREEN, 1);
-            }
-        }
-        // Ok / Cancel at the bottom of the modal.
-        for (label, x0, w) in [("Ok", 0.10f32, 0.26f32), ("Cancel", 0.38, 0.28)] {
-            let bx = rect.x + (rect.w as f32 * x0) as i32;
-            let bw = (rect.w as f32 * w) as i32;
-            let by = rect.y + rect.h - (ch as f32 * 0.072) as i32;
-            let bh = (ch as f32 * 0.048) as i32;
-            css_button(fb, (bx, by, bw, bh));
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
-                    fb,
-                    bx + bw / 2,
-                    by + (bh - (8.0 * scale) as i32) / 2,
-                    label,
-                    8.0 * scale,
-                    0.4,
-                    CSS_GREEN,
-                    None,
-                );
-            } else {
-                fb.text(bx + 4, by + 4, label, CSS_GREEN, 1);
-            }
+        // Ok/Cancel ink measured at y 1003..1029, centred in the shipped
+        // button rects (910..1265 and 1300..1655 at 2560x1440).
+        for (label, center_x, width) in [("Ok", 1090.0, 40.0), ("Cancel", 1478.0, 106.0)] {
+            let natural = self.hd_advance_ui(label, scale, false);
+            self.draw_campaign_label(
+                fb,
+                label,
+                (center_x - 320.0) / 3.0,
+                1003.0 / 3.0,
+                natural.max(width / 3.0 * 0.8),
+                12.5,
+                Rgb::new(208, 255, 131),
+                Rgb::new(102, 227, 53),
+                scale,
+                ox,
+                cy,
+            );
         }
     }
 

@@ -3035,3 +3035,63 @@ cinco son previas al rework, el resto sigue a 0.00), Hotkeys 16/16
 (0.00-1.12), `ui_diff.py` 39/39, `cargo test` 318/318, clippy 0.
 Evidencia local: `/tmp/opencode/n4-options-{speed,sound,video,game,network}.png`.
 
+
+## 2026-11-02 (60) — Episodios y modal de misión 1:1 (43/43)
+
+Objetivo de la sesión: las 8 capturas que seguían fallando la puerta visual
+(`130744/130750/130757/130804/130824/130832/130840` episodios y `131132`
+modal «Select starting mission») partían de medias 13,3-15,6 (13,8-15,6 y
+13,3). Se rehizo la pantalla desde los datos retail, no desde medidas a ojo.
+
+**Evidencia REA** (dump de menú 32 bits, SHA-256 `7c0bd733…fcc5`): MCP
+`open_binary` OK, pero `search_strings`/`list_procedures` agotan el plazo del
+proveedor (ya registrado en `docs/tool-errors.md` §3); se usó el proyecto
+Ghidra analizado con `analyzeHeadless -noanalysis` y el nuevo
+`CampaignStringsProbe.java`. Cadenas y xrefs observadas: `gluCmpgn.ui.json`
+`0x00d4a018` (copia `movups` en `0x006ea720`, `call 0x74eda0` une la ruta y
+`call 0x974380` carga el diálogo), `gluExpCmpgn.ui.json` `0x00d4a1ec`
+(patrón idéntico en `0x006ebc70`), RTTI `.?AVFlicButton@glues@@`
+`0x00f6b7dc`, comandos `ShowRaceSelect`/`HideRaceSelect`
+`0x00d5a4c8`/`0x00d5a4e8` (comparados en `0x00831c58`/`0x00831354`) y
+`OnRaceSelectionChanged/Confirmed/Canceled`. Detalle en
+`analysis/investigations/episode-screen-re.md`.
+
+**Datos**: `sd/rez/glucmpgn.ui.json` y `gluexpcmpgn.ui.json` + `rez/flc.json`
+describen las tres ranuras (FLCBTN) con `disk.webm`, retrato y `*On.webm`.
+La expansión **no** conserva el orden: Terran V a la izquierda (id 7),
+Protoss IV en el centro (id 6), Zerg VI a la derecha (id 8). El modal es
+`glue/campaign/phist.dds` (1520x1004, placa completa con marco, lista y
+botones Ok/Cancel), no un `.ui.json`.
+
+**Geometría**: diálogo 640x480 a escala 3 centrado (ox 320). Los anillos
+medidos en 130744 (641,922)/(1262,663)/(1929,918) coinciden a <=2 px con
+`320 + 3*centro_disco`. Las placas HD van a escala/4 ancladas a su rect SD
+(afín ORB: `pBotL` tx -66,0 ty 1054,8; `pBotR` tx 969,0 ty 1109,9) — el
+anclaje a los bordes de pantalla dejaba 25-28 de error en la franja. Fondos
+`palcs` a 0,75 anclados a los bordes (derecho 3 px dentro: residual 0,37
+frente a 4,57). Modal `phist` a 0,75 en (708,342): sus líneas rojas caen
+exactas (filas 351/459/942/972/1056/1084).
+
+**Estado hover**: las 7 capturas tienen una ranura en hover cada una,
+identificada por la ganancia del clip `On` (0,96-0,99 frente a 0,00). El
+retrato pasa de `FLC_FADED` (~0,25; ganancias 0,238-0,310) a opacidad plena
+(0,97) y se superpone el `On`. Falsado que el modal atenúe el fondo
+(ganancia 1,000) y que la primera fila de misión esté resaltada (mismo
+verde 88,197,46). Falsado también el orden de la expansión y que 130744
+tenga hover.
+
+**Implementación**: `menu.rs` gana `CAMPAIGN_SLOTS`, `CAMPAIGN_X_SLOTS`,
+`CAMPAIGN_BUTTONS`, `campaign_scale`/`campaign_rect` con tests contra los
+fixtures y los centros medidos; `retail.rs`/`ui_art.rs` materializan
+`palcs/backgndl,r.dds` y `campaign/phist.dds` (caché v7);
+`sc_view.rs` reescribe `draw_episode`/`draw_mission` con los clips reales
+(vía `MenuClip`, 10,5 fps), hover por ranura, etiquetas de dos tonos y las
+pantallas `--shot-screen episode`, `episode-hover-{zerg,terran,protoss}`,
+`episode-expansion-hover-*` y `mission`, con fases deterministas.
+
+**Verificación** (comandos pegados en la sesión): `ui_visual_diff.py
+--calibrated` **43/43** (campaña 2,27-4,11; antes 13,3-15,6; el resto
+0,00-1,13), `ui_diff.py` **39/39** (31 referencias), `cargo test`
+**320/320**, `cargo clippy --all-targets -- -D warnings` **0**, `cargo
+build --release --bin sc_view` OK. Tablas guardadas en
+`engine-rust/docs/ui-visual-diff-calibrated.txt` y `ui-diff.txt`.

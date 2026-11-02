@@ -1,7 +1,7 @@
 # PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
 
-Última actualización: 2026-10-31 (cursor y loops de menú 1:1; Options
-0.59-1.40 calibrado; 39/39 checks; goal 19/19; Hotkeys 16/16).
+Última actualización: 2026-11-02 (pantalla de episodios y modal de misión
+1:1 desde `glucmpgn`/`gluexpcmpgn`; puerta visual 43/43, `ui_diff` 39/39).
 
 1. Objetivo general: reconstrucción verificable del comportamiento (código,
    datos, contenido) hasta donde sea técnica y legalmente posible.
@@ -123,3 +123,15 @@
     (`smk/blizzard.webm`, `smk/starintr.webm`, 25 filmes de acto,
     `smk/starxintr.webm` y los `x<Race>`); implementada como playlist con
     audio y test retail 28/28. Evidencia en `docs/session-log.md` 2026-10-29 (7).
+18. Pantalla de episodios y modal de misión (2026-11-02): reconstruidos
+    desde los diálogos retail `glucmpgn`/`gluexpcmpgn` y `rez/flc.json`
+    (campaña original: Zerg II izq., Terran I centro, Protoss III der.;
+    Brood War: Terran V izq., Protoss IV centro, Zerg VI der.), con los
+    webm reales (`disk*`, retratos, `*On`) a 10,5 fps, fondo `palcs` a 0,75
+    anclado a los bordes, placas `pBotL/pBotR` ancladas a su rect SD y el
+    modal `phist.dds` (1140x753 en 708,342) con título, 8 filas a paso 57 y
+    Ok/Cancel. Las 7 capturas tienen una ranura en hover cada una (ganancia
+    del clip `On` 0,96-0,99) y las 3 últimas son la pantalla de expansión
+    (anillo central 60 px más bajo). Puerta visual **43/43** con calibración
+    (campaña 2,27-4,11; antes 13,3-15,6) y `ui_diff` **39/39**.
+    Evidencia: `analysis/investigations/episode-screen-re.md`.

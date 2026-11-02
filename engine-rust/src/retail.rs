@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v6 (consoles, menus, cinematics, fonts, ui layouts, campaign console)\n";
+            b"galaxycraft retail cache v7 (consoles, menus, cinematics, fonts, ui layouts, campaign console + palcs backdrop + phist popup)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1081,12 +1081,16 @@ pub const GLUE_ART: &[&str] = &[
     // Front-end space backdrop (planet + red nebula) used behind the menu,
     // options, hotkeys and collections screens.
     "glue/palmm/backgnd.dds",
-    // Episode-select console plates (`glucmpgn.ui.json` ids 1/3) and the
-    // side rails that frame the black campaign screen.
+    // Episode-select console plates (`glucmpgn.ui.json` ids 1/3), the
+    // edge-anchored `palcs` backdrop halves and the mission-history popup
+    // (`phist.dds` carries the modal frame, list box and Ok/Cancel buttons).
     "glue/campaign/pbotl.dds",
     "glue/campaign/pbotr.dds",
     "glue/campaign/ptopl.dds",
     "glue/campaign/ptopr.dds",
+    "glue/campaign/phist.dds",
+    "glue/palcs/backgndl.dds",
+    "glue/palcs/backgndr.dds",
     // Create-game chrome: map-list plate, player slots, map-info column and
     // the shared two-button holder.
     "glue/create/plistmap.dds",

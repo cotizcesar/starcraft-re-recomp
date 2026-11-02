@@ -319,6 +319,176 @@ pub const FLC_RECTS: [FlcRect; 6] = [
     ("exiton", (5.0, 0.0, 176.0, 160.0)),
 ];
 
+/// One episode-select FLC button, transcribed from the shipped
+/// `glucmpgn.ui.json` / `gluexpcmpgn.ui.json` dialogs (640x480 UI space) and
+/// their `rez/flc.json` clip rectangles (relative to the button origin).
+///
+/// `button` is the FLCBTN control rect; `portrait` the race clip; `on` the
+/// mouse-over variant; `disk` the spinning hologram loop.  `idle` is the
+/// `FLC_FADED` opacity the retail client keeps the portrait at until the
+/// slot is hovered (measured 0.238-0.264 on captures 130744/130750).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CampaignSlot {
+    /// FLCBTN control rect (x, y, w, h) in dialog space.
+    pub button: (f32, f32, f32, f32),
+    /// Video family stem (`terr`, `zerg`, `prot`, `xterr`, ...).
+    pub art: &'static str,
+    pub portrait: (f32, f32, f32, f32),
+    pub on: (f32, f32, f32, f32),
+    pub disk: (f32, f32, f32, f32),
+    pub race: &'static str,
+    pub episode: &'static str,
+    /// Centre of the two labels in dialog space (measured ink centres on the
+    /// 2560x1440 references, converted back to 640x480).
+    pub label: (f32, f32),
+    /// Measured ink widths of the race and episode labels (dialog pixels).
+    pub label_width: (f32, f32),
+}
+
+/// Club portrait opacity before hover (the `FLC_FADED` state).
+pub const CAMPAIGN_PORTRAIT_IDLE_ALPHA: f32 = 0.25;
+
+/// Original-campaign slots: Zerg (left), Terran (centre), Protoss (right),
+/// exactly as `glucmpgn.ui.json` places ids 8, 7 and 6.
+pub const CAMPAIGN_SLOTS: [CampaignSlot; 3] = [
+    CampaignSlot {
+        button: (5.0, 41.0, 220.0, 330.0),
+        art: "zerg",
+        portrait: (10.0, 64.0, 196.0, 220.0),
+        on: (10.0, -26.0, 196.0, 220.0),
+        disk: (28.0, 237.0, 148.0, 60.0),
+        race: "Zerg",
+        episode: "Episode II",
+        label: (113.33, 335.33),
+        label_width: (44.67, 84.67),
+    },
+    CampaignSlot {
+        button: (162.0, 4.0, 356.0, 278.0),
+        art: "terr",
+        portrait: (40.0, 36.0, 232.0, 208.0),
+        on: (42.0, 0.0, 232.0, 208.0),
+        disk: (78.0, 188.0, 148.0, 60.0),
+        race: "Terran",
+        episode: "Episode I",
+        label: (318.33, 245.33),
+        label_width: (62.33, 80.67),
+    },
+    CampaignSlot {
+        button: (391.0, 7.0, 238.0, 364.0),
+        art: "prot",
+        portrait: (40.0, 102.0, 208.0, 212.0),
+        on: (16.0, 6.0, 180.0, 212.0),
+        disk: (71.0, 270.0, 148.0, 60.0),
+        race: "Protoss",
+        episode: "Episode III",
+        label: (540.0, 328.33),
+        label_width: (77.0, 89.0),
+    },
+];
+
+/// Brood War slots from `gluexpcmpgn.ui.json`: the shipped dialog swaps the
+/// screens — Terran V on the left (id 7), Protoss IV in the centre (id 6) and
+/// Zerg VI on the right (id 8).  The measured rings on captures 130832/130840
+/// place the disks at (643,922), (1258,723) and (1930,919) exactly as this
+/// table predicts.
+pub const CAMPAIGN_X_SLOTS: [CampaignSlot; 3] = [
+    CampaignSlot {
+        button: (5.0, 41.0, 240.0, 330.0),
+        art: "xterr",
+        portrait: (15.0, 27.0, 180.0, 252.0),
+        on: (26.0, 26.0, 180.0, 252.0),
+        disk: (28.0, 237.0, 148.0, 60.0),
+        race: "Terran",
+        episode: "Episode V",
+        label: (123.17, 335.33),
+        label_width: (62.67, 90.67),
+    },
+    CampaignSlot {
+        button: (220.0, 4.0, 356.0, 297.0),
+        art: "xprot",
+        portrait: (8.0, 10.0, 180.0, 240.0),
+        on: (40.0, 10.0, 180.0, 240.0),
+        disk: (20.0, 208.0, 148.0, 60.0),
+        race: "Protoss",
+        episode: "Episode IV",
+        label: (327.33, 260.33),
+        label_width: (77.0, 94.67),
+    },
+    CampaignSlot {
+        button: (391.0, 7.0, 238.0, 364.0),
+        art: "xzerg",
+        portrait: (30.0, 30.0, 204.0, 280.0),
+        on: (16.0, 20.0, 240.0, 280.0),
+        disk: (71.0, 270.0, 148.0, 60.0),
+        race: "Zerg",
+        episode: "Episode VI",
+        label: (539.17, 328.33),
+        label_width: (44.67, 93.67),
+    },
+];
+
+/// The four bottom command buttons of the episode screen (`glucmpgn` ids 5,
+/// 10, 11 and 9): label, dialog rect and the measured ink width in dialog
+/// pixels (320/349/334/185 screen px on capture 130744).  Retail centres the
+/// text in the control (`FB_VTEXTCENTER | FB_HTEXTCENTER`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CampaignButton {
+    pub label: &'static str,
+    pub rect: (f32, f32, f32, f32),
+    /// Measured ink width in dialog pixels (320/349/334/185 screen px on
+    /// capture 130744).
+    pub ink_width: f32,
+}
+
+pub const CAMPAIGN_BUTTONS: [CampaignButton; 4] = [
+    CampaignButton {
+        label: "Load Saved",
+        rect: (243.0, 368.0, 189.0, 20.0),
+        ink_width: 106.7,
+    },
+    CampaignButton {
+        label: "Play Custom",
+        rect: (226.0, 404.0, 206.0, 20.0),
+        ink_width: 116.3,
+    },
+    CampaignButton {
+        label: "Load Replay",
+        rect: (238.0, 443.0, 194.0, 20.0),
+        ink_width: 111.3,
+    },
+    CampaignButton {
+        label: "Cancel",
+        rect: (470.0, 404.0, 158.0, 20.0),
+        ink_width: 61.7,
+    },
+];
+
+/// Dialog geometry of the campaign screen: a 640x480 dialog centred in the
+/// 16:9 content box and scaled with its height (at 2560x1440 that is x=320,
+/// scale 3).  The measured ring centres (641/1262/1929 on capture 130744)
+/// match `x0 + 3 * disk_centre` to 1-2 px.
+pub fn campaign_scale(content_width: i32, content_height: i32) -> (f32, f32) {
+    let scale = content_height.max(1) as f32 / 480.0;
+    let ox = ((content_width as f32 - 640.0 * scale) / 2.0).round();
+    (scale, ox)
+}
+
+/// Screen rectangle of a dialog-space rect at the given content box.
+pub fn campaign_rect(
+    rect: (f32, f32, f32, f32),
+    scale: f32,
+    ox: f32,
+    cx: i32,
+    cy: i32,
+) -> (i32, i32, i32, i32) {
+    (
+        cx + (ox + rect.0 * scale).round() as i32,
+        cy + (rect.1 * scale).round() as i32,
+        (rect.2 * scale).round() as i32,
+        (rect.3 * scale).round() as i32,
+    )
+}
+
 pub const MAIN_LABELS: [MainLabel; 8] = [
     MainLabel {
         idx: 0,
@@ -590,6 +760,115 @@ mod tests {
                 (got[0], got[1], got[2], got[3]),
                 expect,
                 "{name} rectangle must match the shipped flc.json"
+            );
+        }
+    }
+
+    #[test]
+    fn campaign_slots_match_the_shipped_dialogs_and_flc_json() {
+        // Control ids that carry each slot in the shipped dialogs.
+        let original_ids = [8i32, 7, 6];
+        let expansion_ids = [7i32, 6, 8];
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ui/glucmpgn.ui.json"),
+        )
+        .expect("glucmpgn fixture");
+        let dialog = crate::ui::UiDialog::parse(text.as_bytes()).expect("valid dialog");
+        for (slot, id) in CAMPAIGN_SLOTS.iter().zip(original_ids) {
+            let c = dialog.control(id).expect("control id");
+            assert_eq!(
+                (
+                    c.abs.x as f32,
+                    c.abs.y as f32,
+                    c.abs.w as f32,
+                    c.abs.h as f32
+                ),
+                slot.button,
+                "glucmpgn control {id} must match the slot button"
+            );
+        }
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("fixtures/ui/gluexpcmpgn.ui.json"),
+        )
+        .expect("gluexpcmpgn fixture");
+        let dialog = crate::ui::UiDialog::parse(text.as_bytes()).expect("valid dialog");
+        for (slot, id) in CAMPAIGN_X_SLOTS.iter().zip(expansion_ids) {
+            let c = dialog.control(id).expect("control id");
+            assert_eq!(
+                (
+                    c.abs.x as f32,
+                    c.abs.y as f32,
+                    c.abs.w as f32,
+                    c.abs.h as f32
+                ),
+                slot.button,
+                "gluexpcmpgn control {id} must match the slot button"
+            );
+        }
+        // Clip rectangles are the shipped `rez/flc.json` ones.
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ui/flc.json"),
+        )
+        .expect("flc.json fixture");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+        let flc = value.get("flc").and_then(|v| v.as_object()).expect("flc");
+        let lookup = |stem: &str| -> (f32, f32, f32, f32) {
+            let (_, rect) = flc
+                .iter()
+                .find(|(k, _)| k.to_ascii_lowercase().ends_with(&format!("\\{stem}.webm")))
+                .unwrap_or_else(|| panic!("{stem}.webm in flc.json"));
+            let a: Vec<f32> = rect
+                .as_array()
+                .expect("rect")
+                .iter()
+                .map(|v| v.as_f64().expect("number") as f32)
+                .collect();
+            (a[0], a[1], a[2], a[3])
+        };
+        for slot in CAMPAIGN_SLOTS.iter().chain(CAMPAIGN_X_SLOTS.iter()) {
+            let prefix = slot.art;
+            let disk = format!("disk{prefix}");
+            let on = format!("{prefix}on");
+            assert_eq!(lookup(prefix), slot.portrait, "{} portrait", slot.art);
+            assert_eq!(lookup(&on), slot.on, "{} mouse-over", slot.art);
+            assert_eq!(lookup(&disk), slot.disk, "{} disk", slot.art);
+        }
+    }
+
+    #[test]
+    fn campaign_layout_reproduces_the_measured_ring_centres() {
+        // Capture 130744 at 2560x1440: disk centres measured at
+        // (641,922), (1262,663) and (1929,918) (purple ring clusters).
+        let (scale, ox) = campaign_scale(2560, 1440);
+        assert_eq!((scale, ox), (3.0, 320.0));
+        let want = [(641, 922), (1262, 663), (1929, 918)];
+        for (slot, want) in CAMPAIGN_SLOTS.iter().zip(want) {
+            let disk = (
+                slot.button.0 + slot.disk.0,
+                slot.button.1 + slot.disk.1,
+                slot.disk.2,
+                slot.disk.3,
+            );
+            let (x, y, w, h) = campaign_rect(disk, scale, ox, 0, 0);
+            let (cx, cy) = (x + w / 2, y + h / 2);
+            assert!(
+                (cx - want.0).abs() <= 2 && (cy - want.1).abs() <= 3,
+                "{} disk centre ({cx},{cy}) vs measured ({},{})",
+                slot.art,
+                want.0,
+                want.1
+            );
+        }
+        // The command text centres on the shipped control rects (measured
+        // ink centres on 130744: 1330, 1304, 1325 and 1964).
+        let want_buttons = [1330, 1304, 1325, 1964];
+        for (button, want) in CAMPAIGN_BUTTONS.iter().zip(want_buttons) {
+            let (x, _, w, _) = campaign_rect(button.rect, scale, ox, 0, 0);
+            assert!(
+                (x + w / 2 - want).abs() <= 4,
+                "button centre {} vs measured {want}",
+                x + w / 2
             );
         }
     }

@@ -59,6 +59,17 @@ PHASES = {
             "exiton": 6.4125,
         },
     ),
+    # Campaign screens: the disks, portraits and mouse-over clips are loop
+    # animations; each capture pinned the phase measured by sweeping all 36
+    # disk frames (1/15 s) and the portrait/On loops.
+    "episode": (2.0, {"zerg": 0.6667, "terr": 4.2667, "prot": 4.2}),
+    "episode-hover-terran": (0.0, {"terron": 0.3333}),
+    "episode-hover-zerg": (2.3333, {"zergon": 0.0667}),
+    "episode-hover-protoss": (2.0667, {"proton": 1.4}),
+    "episode-expansion-hover-protoss": (1.8, {"xproton": 0.6}),
+    "episode-expansion-hover-terran": (0.0667, {"xterron": 0.0667}),
+    "episode-expansion-hover-zerg": (0.0667, {"xzergon": 0.0667}),
+    "mission": (2.3333, {}),
 }
 
 GOAL = {
@@ -94,13 +105,15 @@ SCREENS = {
     "134843": "lobby",
     "130727": "gametype",
     "131116": "gametype",
+    # The seven campaign captures hover a different slot each: original is
+    # Zerg/Terran/Protoss, Brood War is Terran/Protoss/Zerg.
     "130744": "episode",
-    "130750": "episode",
-    "130757": "episode",
-    "130804": "episode",
-    "130824": "episode",
-    "130832": "episode",
-    "130840": "episode",
+    "130750": "episode-hover-terran",
+    "130757": "episode-hover-zerg",
+    "130804": "episode-hover-protoss",
+    "130824": "episode-expansion-hover-protoss",
+    "130832": "episode-expansion-hover-terran",
+    "130840": "episode-expansion-hover-zerg",
     # 2026-10-31 retail captures: other units, rebind states and the
     # restore-defaults modal (same 2560x1440 content crop at 3440x1440).
     "115917": "hotkeys-terran",
