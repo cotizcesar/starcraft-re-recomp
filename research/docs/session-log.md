@@ -3240,6 +3240,10 @@ La política de sonidos se apoya en los ficheros retail ya fijados por
 SHA-256 en `tests/retail.rs` (mismo test que corre con `SC_INSTALL`):
 `ui_move` ← `sound/glue/mouseover.wav`, `ui_click` ←
 `sound/glue/mousedown2.wav`, `ui_swish` ← `sound/glue/swishin.wav`.
+El walkthrough carga del install 2.578 samples de `mouseover`, 19.805 de
+`mousedown2` y 49.223 de `swishin`, y lo registra en `sounds.tsv`: cada
+evento del log usa una muestra retail realmente cargada, no un nombre
+simbólico.
 
 Verificación: `menu_walkthrough.py` **PASS** (105 pasos; tabla en
 `engine-rust/docs/menu-walkthrough.txt`), `ui_visual_diff.py` **43/43**

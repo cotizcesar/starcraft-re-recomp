@@ -187,6 +187,19 @@ def main() -> int:
         fail(f"sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
     rows = parse_tsv(outdir / "walk.tsv")
 
+    bank = {}
+    for line in (outdir / "sounds.tsv").read_text().splitlines()[1:]:
+        cue, samples = line.split("\t")
+        bank[cue] = int(samples)
+    for cue in CUE_PATHS:
+        if bank.get(cue, 0) <= 0:
+            fail(f"cue {cue} did not load a retail sample ({bank})")
+    print(
+        "PASS sound bank: "
+        + ", ".join(f"{cue}={bank[cue]} samples" for cue in CUE_PATHS)
+        + " loaded from the retail install"
+    )
+
     # ---- 1. transitions -------------------------------------------------
     transitions = []
     prev = rows[0]["screen"]

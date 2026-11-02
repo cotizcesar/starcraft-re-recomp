@@ -2435,6 +2435,14 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     let dir = std::env::var("GC_WALK_DIR").unwrap_or_else(|_| "/tmp/opencode/walk".into());
     let _ = std::fs::create_dir_all(&dir);
     let mut log = String::from("step\taction\tscreen\tsounds\tstate\n");
+    let mut bank_log = String::from("cue\tloaded_samples\n");
+    for cue in ["ui_move", "ui_click", "ui_swish"] {
+        let samples = app.sounds.get(cue).map(|s| s.len()).unwrap_or(0);
+        bank_log.push_str(&format!("{cue}\t{samples}\n"));
+    }
+    if let Err(e) = std::fs::write(format!("{dir}/sounds.tsv"), &bank_log) {
+        eprintln!("sounds.tsv write failed: {e}");
+    }
     let mut mouse: Option<(i32, i32)> = None;
     let mut seen = app.sound_log.len();
     // One frame per screen change (plus the Lobby popup hover frame) keeps

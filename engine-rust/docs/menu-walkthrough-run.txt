@@ -1,3 +1,4 @@
+PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples loaded from the retail install
 PASS transitions: 23 screen changes, each with ui_swish
      Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Main
 PASS sounds: ui_swish on 23 screen changes, ui_click on 28 presses, ui_move on 43 pointer entries
