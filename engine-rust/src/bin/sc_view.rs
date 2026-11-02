@@ -693,6 +693,7 @@ enum MenuHit {
     Ok,
     Cancel,
     Restore,
+    Delete,
     Row(usize),
     Tab(usize),
     Cell(usize),
@@ -5318,6 +5319,13 @@ impl App {
                             self.save_sel = 0;
                             self.play("ui_swish");
                         }
+                        Some(MenuHit::Delete) => {
+                            if let Some(path) = list.get(self.save_sel) {
+                                let _ = std::fs::remove_file(path);
+                                self.save_sel = self.save_sel.saturating_sub(1);
+                                self.play("ui_click");
+                            }
+                        }
                         Some(MenuHit::Row(i)) if i != self.save_sel && i < list.len().max(1) => {
                             self.save_sel = i;
                             self.play("ui_click");
@@ -9045,6 +9053,8 @@ impl App {
                     Some(MenuHit::Ok)
                 } else if inside(rect(0.668, 0.856, 0.830, 0.926)) {
                     Some(MenuHit::Cancel)
+                } else if inside(rect(0.173, 0.674, 0.301, 0.744)) {
+                    Some(MenuHit::Delete)
                 } else {
                     row_of(rows, 10).map(MenuHit::Row)
                 }

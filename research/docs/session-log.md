@@ -3171,7 +3171,8 @@ bajo el cursor con las tablas medidas en `menu.rs` (`MISSION_BUTTONS`,
 hover/click. Se añadió clic a Misión (filas + Ok/Cancel), Saved/Replays
 (filas + Ok/Cancel), Lobby (Ok/Cancel), Options (5 pestañas + Restore + Ok,
 y Enter→Ok), Collections (11 celdas + Ok/EQUIP; la celda seleccionada
-cambia la miniatura/título del panel derecho) y Credits/Intro (click).
+cambia la miniatura/título del panel derecho), Saved (filas + Ok/Cancel +
+Delete) y Credits/Intro (click).
 Options gana además Restore to Default real (`GameOptions::default()`).
 
 **Frames**: test `campaign_clips_use_the_same_retail_10_5_fps_timeline`
