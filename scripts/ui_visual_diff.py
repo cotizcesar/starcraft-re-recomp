@@ -102,7 +102,8 @@ SCREENS = {
     "130858": "replays",
     "130907": "lobby",
     "134831": "lobby",
-    "134843": "lobby",
+    # 134843 shows the CEF chat overlay instead of the open race dropdown.
+    "134843": "lobby-chat",
     "130727": "gametype",
     "131116": "gametype",
     # The seven campaign captures hover a different slot each: original is

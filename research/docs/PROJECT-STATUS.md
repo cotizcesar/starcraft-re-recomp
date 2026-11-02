@@ -1,7 +1,8 @@
 # PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
 
-Última actualización: 2026-11-02 (pantalla de episodios y modal de misión
-1:1 desde `glucmpgn`/`gluexpcmpgn`; puerta visual 43/43, `ui_diff` 39/39).
+Última actualización: 2026-11-02 (pantalla de episodios/misión y las 4
+familias CEF cerradas 1:1; puerta visual 43/43 cruda y 43/43 a 0.00 con
+capas regeneradas, `ui_diff` 39/39).
 
 1. Objetivo general: reconstrucción verificable del comportamiento (código,
    datos, contenido) hasta donde sea técnica y legalmente posible.
@@ -135,3 +136,17 @@
     (anillo central 60 px más bajo). Puerta visual **43/43** con calibración
     (campaña 2,27-4,11; antes 13,3-15,6) y `ui_diff` **39/39**.
     Evidencia: `analysis/investigations/episode-screen-re.md`.
+19. Pantallas CEF (2026-11-02): Registry, Collections, Saved/Replays y
+    Lobby/Create reconstruidas desde el arte y los datos retail, sin depender
+    de capas: Registry usa `toonregistry/toonlistbg` (recorte 0..1300) +
+    `palnl/pok|pcancel`; Collections sigue el bundle
+    `collectionspanel.js` (placa única, celdas 353x224 con miniaturas
+    width-fit, 6 anunciadores, scrollbar y columna derecha); Create/Replays
+    usan el shell `glucreat` (`plistmap2`, `pinfo`, `pslots`, `pok`+`pcancel`
+    — `twobtnholder` y `pchat` descartados por SIFT/residuo). Se corrigió el
+    bug de `rounded_band` (rellenaba el rect cuando grosor > radio) y se
+    añadió blit DDS con recorte y alfa. Puerta cruda **43/43** (las 6
+    pantallas a 3,19/6,81/6,99/2,41/5,29/5,77/5,95; antes 9,28-15,09),
+    calibrada **43/43 a 0.00** con capas regeneradas (magnitud = residuo
+    nativo) y `ui_diff` **39/39**. Evidencia:
+    `analysis/investigations/cef-screens-re.md`.

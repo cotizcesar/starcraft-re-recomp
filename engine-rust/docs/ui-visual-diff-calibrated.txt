@@ -41,6 +41,6 @@ ref      screen                mean   >30 px status
 130858   replays               0.00    0.00% PASS
 130907   lobby                 0.00    0.00% PASS
 134831   lobby                 0.00    0.00% PASS
-134843   lobby                 0.00    0.00% PASS
+134843   lobby-chat            0.00    0.00% PASS
 
 visual gate: 43/43 screens (mean <= 8.0, outliers <= 8.0%)

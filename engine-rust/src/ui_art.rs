@@ -658,9 +658,20 @@ pub struct GlueArt {
     pub campaign_topr: Option<DdsImage>,
     /// Create-game chrome plates (map list, slots, map info, buttons).
     pub create_map: Option<DdsImage>,
+    pub create_map2: Option<DdsImage>,
+    pub create_map_tall: Option<DdsImage>,
     pub create_slots: Option<DdsImage>,
     pub create_info: Option<DdsImage>,
     pub create_buttons: Option<DdsImage>,
+    /// Chat plate under the Create/Replay list (`glue/chatroom/pchat.dds`).
+    pub create_chat: Option<DdsImage>,
+    /// Toon Registry backdrop, profile list plate and popup.
+    pub registry_backdrop: Option<DdsImage>,
+    pub registry_list: Option<DdsImage>,
+    pub registry_popup: Option<DdsImage>,
+    /// Shared `palnl` Ok/Cancel plates.
+    pub palnl_ok: Option<DdsImage>,
+    pub palnl_cancel: Option<DdsImage>,
     /// Credits panel frame (`glue/battlenet/credits_a.dds`).
     pub credits_frame: Option<DdsImage>,
     /// Metal-room backdrop behind the credits (`glue/battlenet/backgnd.dds`).
@@ -691,9 +702,17 @@ impl GlueArt {
             campaign_topl: load_dds(root, "glue/campaign/ptopl.dds"),
             campaign_topr: load_dds(root, "glue/campaign/ptopr.dds"),
             create_map: load_dds(root, "glue/create/plistmap.dds"),
+            create_map2: load_dds(root, "glue/create/plistmap2.dds"),
+            create_map_tall: load_dds(root, "glue/create/plistmaptall.dds"),
             create_slots: load_dds(root, "glue/create/pslots.dds"),
             create_info: load_dds(root, "glue/create/pinfo.dds"),
             create_buttons: load_dds(root, "glue/create/twobtnholder.dds"),
+            create_chat: load_dds(root, "glue/chatroom/pchat.dds"),
+            registry_backdrop: load_dds(root, "glue/battlenet/toonregistry/backgnd.dds"),
+            registry_list: load_dds(root, "glue/battlenet/toonregistry/toonlistbg.dds"),
+            registry_popup: load_dds(root, "glue/battlenet/toonregistry/popopup.dds"),
+            palnl_ok: load_dds(root, "glue/palnl/pok.dds"),
+            palnl_cancel: load_dds(root, "glue/palnl/pcancel.dds"),
             credits_frame: load_dds(root, "glue/battlenet/credits_a.dds"),
             credits_backdrop: load_dds(root, "glue/battlenet/backgnd.dds"),
             menu: load_ui(root, "glumain"),

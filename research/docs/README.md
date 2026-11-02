@@ -29,6 +29,7 @@ es histórico (citado por el session-log, no usar como referencia).
 | Datos completos de Hotkeys (220 acciones, 88 unidades) | `hotkeys-data.md` |
 | Hallazgos de heap en partida | `heap-ingame-findings.md` |
 | RE de episodios + modal de misión (1:1, 43/43) | `../analysis/investigations/episode-screen-re.md` |
+| RE de las pantallas CEF (Registry/Collections/Saved/Replays/Lobby, 43/43) | `../analysis/investigations/cef-screens-re.md` |
 | Decisiones con fecha | `decision-log.md` |
 | Preguntas abiertas | `unresolved-questions.md` |
 | Motor C eliminado (histórico) | `rea-evidence-c.md`, `salvage-sc-cpp.md`, `../SALVAGED.md`, `../re-c.bundle` |

@@ -3,13 +3,13 @@ ref      screen            check  reference                      rendered       
 130704   menu-hover-single panel  (1555, 199, 2172, 814)         (1556, 199, 2173, 816)         2      PASS
 130712   menu-hover-multi  panel  (1555, 199, 2172, 814)         (1556, 199, 2173, 816)         2      PASS
 130926   menu-hover-exit   panel  (1555, 199, 2172, 814)         (1556, 199, 2173, 816)         2      PASS
-130734   registry          panel  (1383, 247, 1384, 955)         (1383, 247, 1384, 955)         0      PASS
+130734   registry          panel  (1383, 247, 1384, 955)         (1384, 246, 1385, 953)         2      PASS
 130933   options-speed     panel  (521, 180, 2041, 1143)         (521, 180, 2041, 1143)         0      PASS
 130938   options-sound     panel  (521, 180, 2041, 1143)         (521, 180, 2041, 1143)         0      PASS
 130942   options-video     panel  (521, 180, 2041, 1143)         (521, 180, 2041, 1143)         0      PASS
 130949   options-game      panel  (521, 180, 2041, 1143)         (521, 180, 2041, 1143)         0      PASS
 130954   options-network   panel  (521, 180, 2041, 1143)         (521, 180, 2041, 1143)         0      PASS
-131005   collections       panel  (368, 82, 2194, 1194)          (369, 82, 2194, 1194)          1      PASS
+131005   collections       panel  (368, 82, 2194, 1194)          (368, 82, 2194, 1194)          0      PASS
 131015   hotkeys-terran    panel  (360, 48, 2196, 1250)          (360, 48, 2196, 1250)          0      PASS
 131026   hotkeys-terran-scv panel  (360, 48, 2196, 1250)          (360, 48, 2196, 1250)          0      PASS
 131037   hotkeys-protoss-probe panel  (360, 48, 2196, 1250)          (360, 48, 2196, 1250)          0      PASS
@@ -17,20 +17,20 @@ ref      screen            check  reference                      rendered       
 131101   credits           panel  (733, 1361, 1883, 1362)        (732, 1361, 1881, 1362)        2      PASS
 131132   mission           panel  (717, 459, 1839, 1265)         (717, 459, 1838, 1265)         1      PASS
 130848   saved             right  1387                           1386                           1      PASS
-130858   replays           right  1394                           1396                           2      PASS
-130907   replays           right  1394                           1396                           2      PASS
-134831   lobby             right  1533                           1535                           2      PASS
-134843   lobby             right  1533                           1535                           2      PASS
+130858   replays           right  1394                           1390                           4      PASS
+130907   replays           right  1394                           1390                           4      PASS
+134831   lobby             right  1533                           1533                           0      PASS
+134843   lobby             right  1533                           1533                           0      PASS
 130727   gametype          right  1802                           1802                           0      PASS
 131116   gametype          right  1802                           1802                           0      PASS
 130933   options-speed     text/green [486, 580, 672, 766]           [485, 578, 671, 764]           2      PASS
 130933   options-speed     text/white [346, 499, 652]                [346, 499, 652]                0      PASS
 131015   hotkeys-terran    text/green [71]                           [71]                           0      PASS
 131015   hotkeys-terran    text/white [187]                          [187]                          0      PASS
-131005   collections       text/white [121, 216, 299]                [120, 216, 297]                1      PASS
+131005   collections       text/white [121, 216, 299]                [121, 216, 299]                0      PASS
 130848   saved             text/white [220]                          [220]                          0      PASS
-130858   replays           text/green [406, 463, 520, 570]           [406, 463, 520]                0      PASS
-134831   lobby             text/green [105, 147, 406, 463]           [105, 147, 295, 329]           0      PASS
+130858   replays           text/green [406, 463, 520, 570]           [406, 463, 520, 577]           0      PASS
+134831   lobby             text/green [105, 147, 406, 463]           [105, 147, 402, 459]           0      PASS
 130744   episode           rings  [(641, 983), (1264, 723), (1930, 978)] [(644, 981), (1265, 723), (1931, 978)] 3      PASS
 130750   episode-hover-terran rings  [(643, 981), (1263, 724), (1930, 978)] [(645, 981), (1266, 723), (1932, 978)] 3      PASS
 130757   episode-hover-zerg rings  [(642, 981), (1262, 725), (1931, 978)] [(645, 981), (1266, 723), (1932, 978)] 4      PASS

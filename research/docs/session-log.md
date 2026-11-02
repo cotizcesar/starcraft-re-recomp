@@ -3095,3 +3095,50 @@ pantallas `--shot-screen episode`, `episode-hover-{zerg,terran,protoss}`,
 **320/320**, `cargo clippy --all-targets -- -D warnings` **0**, `cargo
 build --release --bin sc_view` OK. Tablas guardadas en
 `engine-rust/docs/ui-visual-diff-calibrated.txt` y `ui-diff.txt`.
+
+## 2026-11-02 (61) — Pantallas CEF cerradas 1:1 (43/43 crudo)
+
+Objetivo: quitar la dependencia de capas de calibración en las 6 capturas
+CEF que seguían en 9-15 de media cruda (`130734` Registry, `131005`
+Collections, `130848` Saved, `130858` Replays, `130907/134831/134843`
+Lobby/Create). Medición paralela con 4 agentes (specs en `/tmp/opencode/`,
+fuera de git) usando SIFT + RANSAC por pieza, correlación enmascarada por
+alfa y proyecciones de tinta sobre el content box 2560x1440.
+
+**Registry**: fondo `palnl/backgnd` (no el de `toonregistry`), placa
+`toonregistry/toonlistbg` 2022x1440 a 0.7468 en (-97,-5) recortando las
+filas 0..1300, Ok/Cancel con `palnl/pok|pcancel`, bays New ID/Delete con
+relleno 75 % y borde #840000, título ext #C6DAFF y filas x507 baseline
+348/405. El DDS tiene alfa con zonas transparentes blancas: se añadió
+`draw_dds_crop_scaled` (bilineal + alfa + recorte); sin él la placa salía
+blanca/negra. 9.28 → **3.19**.
+
+**Collections**: se siguió el CSS del bundle `collectionspanel.js`: una placa
+357..2205 x 71..1207 al 50 % (antes dos placas y 90 %), frame0/frame1 con
+hairlines, separadores #474747, celdas 353x224 en x411/787/1161 y filas
+274/595/916/1158 con miniaturas **width-fit** 347x239 en +(3,3) recortadas
+(antes estiradas 349x215), 6 anunciadores en 2 filas, scrollbar, título ext
+y contadores a la derecha en x1513. 11.22 → **6.81**.  De paso se encontró
+un bug de `rounded_band`: su SDF devuelve -r en todo el interior, así que
+con grosor > radio rellenaba el rectángulo entero (pintaba el panel de
+#331f1f/#6c0000); se sustituyó por contornos rectos.
+
+**Create/Lobby y Replays**: el shell es `glucreat` con `plistmap2` (-21,0),
+`pinfo` (1519,0), `pslots` (-57,855) y **pok+pcancel** (1627,1006)/
+(1734,1068); `twobtnholder` y `pchat*` descartados por SIFT (residuo 67.6 y
+0 inliers). Título "Create" #C6DAFF en (443,220), carpeta actual con icono
+abierto 48x33, lista a y=406+57i (mapas x555 #5CED30, seleccionado
+#DAFF8C; Replays 3 carpetas x565 + LastReplay.rep x556), info de replay con
+Map/Date/Length/File Name en 243/285/327/366 y Players 601/651/687, y
+Ok/Cancel con tinta en (1882,1165)/(1898,1273). 134843 es el popup
+"Game Type" (estado `lobby-chat` en el arnés). 14.21-15.09 → **5.29-5.95**;
+Replays 11.86 → **2.41**.
+
+**Verificación**: `ui_visual_diff.py` crudo **43/43** (las 6 pantallas a
+3.19/6.81/6.99/2.41/5.29/5.77/5.95; antes 9.28-15.09), `--calibrated`
+**43/43** con las 6 a **0.00** y capas regeneradas cuya magnitud es
+exactamente el residuo nativo; `ui_diff.py` **39/39** (31 referencias);
+`cargo test` **320/320**; `clippy --all-targets -- -D warnings` **0**;
+`cargo build --release --bin sc_view` OK. Tablas en
+`engine-rust/docs/ui-visual-diff-raw.txt` y `ui-visual-diff-calibrated.txt`.
+Evidencia: `analysis/investigations/cef-screens-re.md`.

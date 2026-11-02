@@ -1986,29 +1986,6 @@ fn opt_input(
         Rgb::new(170, 170, 176),
     );
 }
-
-fn css_panel(fb: &mut Framebuffer, r: (i32, i32, i32, i32), alpha: u8) {
-    let (x, y, w, h) = r;
-    for yy in y..y + h {
-        for xx in x..x + w {
-            let c = fb.get(xx, yy);
-            fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), alpha));
-        }
-    }
-    for t in 0..2 {
-        fb.rect_outline(x + t, y + t, w - t * 2, h - t * 2, CSS_OUTER);
-        fb.rect_outline(
-            x + 3 + t,
-            y + 3 + t,
-            w - (3 + t) * 2,
-            h - (3 + t) * 2,
-            CSS_INNER,
-        );
-    }
-}
-
-/// Alpha-black fill used by the CEF plates (their `rgba(0,0,0,.9)`
-/// background composites with the animated space painting).
 fn fill_alpha_rect(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, alpha: u8) {
     for yy in y..y + h {
         for xx in x..x + w {
@@ -2204,28 +2181,57 @@ fn dim_screen(fb: &mut Framebuffer, cx: i32, cw: i32, ch: i32, alpha: u8) {
         }
     }
 }
-
-/// Draw a shipped plate so that one of its internal red hairlines lands on a
-/// measured destination rectangle.  The retail glue art was authored at a
-/// different scale than the 2560x1440 content box; matching the frame line
-/// (rather than stretching the image to the panel bounds) keeps the metal
-/// trim, bevels and corner brackets in the right place.
-fn draw_art_border(
+/// Bilinear, alpha-blended blit of a source rectangle of a DDS into a
+/// destination rect.  Used by the Toon Registry plate, whose shipped art
+/// bakes bottom plates the retail screen does not draw (source rows 0..1300).
+#[allow(clippy::too_many_arguments)]
+fn draw_dds_crop_scaled(
     fb: &mut Framebuffer,
     art: &galaxycraft::dds::DdsImage,
-    src: (f32, f32, f32, f32),
+    src: (i32, i32, i32, i32),
     dst: (i32, i32, i32, i32),
 ) {
-    let fx = dst.2 as f32 / src.2.max(1.0);
-    let fy = dst.3 as f32 / src.3.max(1.0);
-    let x = dst.0 - (src.0 * fx).round() as i32;
-    let y = dst.1 - (src.1 * fy).round() as i32;
-    let w = (art.width as f32 * fx).round() as i32;
-    let h = (art.height as f32 * fy).round() as i32;
-    art.draw_scaled(fb, x, y, w, h);
+    let (sx0, sy0, sw, sh) = src;
+    let (dx, dy, dw, dh) = dst;
+    if sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 || art.width == 0 || art.height == 0 {
+        return;
+    }
+    for y in 0..dh {
+        let fy = (y as f32 + 0.5) * sh as f32 / dh as f32 - 0.5;
+        let y0 = fy.floor() as i32;
+        let y1 = (y0 + 1).min(sh - 1);
+        let ty = (fy - y0 as f32).clamp(0.0, 1.0);
+        for x in 0..dw {
+            let fx = (x as f32 + 0.5) * sw as f32 / dw as f32 - 0.5;
+            let x0 = fx.floor() as i32;
+            let x1 = (x0 + 1).min(sw - 1);
+            let tx = (fx - x0 as f32).clamp(0.0, 1.0);
+            let p = |px: i32, py: i32| {
+                let ax = (sx0 + px).clamp(0, art.width as i32 - 1) as usize;
+                let ay = (sy0 + py).clamp(0, art.height as i32 - 1) as usize;
+                art.pixel(ax, ay)
+            };
+            let (p00, p10, p01, p11) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+            let mix = |shift: u32| -> u32 {
+                let c = |q: u32| ((q >> shift) & 0xff) as f32;
+                let top = c(p00) * (1.0 - tx) + c(p10) * tx;
+                let bot = c(p01) * (1.0 - tx) + c(p11) * tx;
+                (top * (1.0 - ty) + bot * ty).round().clamp(0.0, 255.0) as u32
+            };
+            let a = mix(24);
+            if a == 0 {
+                continue;
+            }
+            let c = fb.get(dx + x, dy + y);
+            fb.put(
+                dx + x,
+                dy + y,
+                c.blend(Rgb::new(mix(16) as u8, mix(8) as u8, mix(0) as u8), a as u8),
+            );
+        }
+    }
 }
 
-/// Ellipse outline of the given thickness, used for the episode rings.
 fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     if frame.width == 0 || frame.height == 0 {
         return;
@@ -3051,7 +3057,7 @@ fn main() {
                 app.episode_hover = None;
                 app.draw_menu(&mut fb);
             }
-            "lobby" | "create" => {
+            "lobby" | "create" | "lobby-chat" => {
                 app.intro = false;
                 app.menu = true;
                 if app.campaign_len < app.maps.len() {
@@ -9679,83 +9685,129 @@ impl App {
         art.draw_scaled(fb, cx, 0, cw, ch);
     }
 
+    /// Retail Toon Registry, rebuilt from the shipped `toonlistbg` plate and
+    /// the 1:1 geometry measured on capture 130734: list plate at
+    /// (-97,-5) scale 0.748 (source rows 0..1300), Ok/Cancel classic plates,
+    /// New ID / Delete bays and the profile list text.
     fn draw_registry(&mut self, fb: &mut Framebuffer) {
         self.draw_moon_backdrop(fb);
-        // Measured on reference #5 (Registry at 3440x1440): the title sits on
-        // the backdrop at (0.191, 0.142), the list is a red-bordered dark panel
-        // from (0.1813, 0.1639) to (0.5469, 0.6764), the New ID / Delete pair
-        // runs along its bottom edge (y 0.694..0.743) and Ok / Cancel sit at
-        // the lower right.  The earlier pass reused the Create screen's panel,
-        // which put the whole screen ~330 px left and ~210 px up.
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let green = Rgb::new(120, 235, 120);
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let atx = |f: f32| cx + (cw as f32 * f) as i32;
-        let aty = |f: f32| (ch as f32 * f) as i32;
-        fb.text(
-            atx(0.191),
-            aty(0.142),
-            "Registry",
-            Rgb::new(210, 210, 215),
-            big,
-        );
-        let (px, py) = (atx(0.2000), aty(0.1701));
-        let (pw, ph) = (
-            (cw as f32 * (0.5423 - 0.2000)) as i32,
-            (ch as f32 * (0.6667 - 0.1701)) as i32,
-        );
-        css_panel(fb, (px, py, pw, ph), 230);
-        let mut ly = aty(0.229);
-        let step = aty(0.049);
-        let n = self.profiles.len();
-        for (i, name) in self.profiles.clone().iter().enumerate() {
-            if i >= 6 {
-                break;
+        let (cx, _cy, _cw, ch) = Self::content_rect(fb);
+        let (scale, uox, uoy) = self.ui_metrics(fb);
+        use galaxycraft::menu::LabelAlign;
+        let k = ch as f32 / 1440.0;
+        let u = |v: f32| (v - 320.0) / 3.0;
+        let w3 = |v: f32| v / 3.0;
+        let sx = |x: f32| cx + (x * k).round() as i32;
+        let sy = |y: f32| (y * k).round() as i32;
+        let sw = |w: f32| (w * k).round().max(1.0) as i32;
+        let pale = Rgb::new(0xc6, 0xda, 0xff);
+        let select_green = Rgb::new(0xda, 0xff, 0x8c);
+        // Profile list plate (`toonlistbg`), scaled 0.7468 and clipped to the
+        // shipped source rows 0..1300 (the baked bottom plates are not drawn).
+        if let Some(art) = self.glue.as_ref().and_then(|g| g.registry_list.as_ref()) {
+            draw_dds_crop_scaled(
+                fb,
+                art,
+                (0, 0, 2022, 1300),
+                (sx(-97.0), sy(-5.0), sw(1510.0), sw(971.0)),
+            );
+        }
+        // Classic Ok/Cancel plates (same files and placement as Create).
+        if let Some(art) = self.glue.as_ref().and_then(|g| g.palnl_ok.as_ref()) {
+            art.draw_scaled(fb, sx(1627.0), sy(1006.0), sw(1062.0), sw(214.0));
+        }
+        if let Some(art) = self.glue.as_ref().and_then(|g| g.palnl_cancel.as_ref()) {
+            art.draw_scaled(fb, sx(1734.0), sy(1068.0), sw(940.0), sw(273.0));
+        }
+        // New ID / Delete bays: black 75 % fill, #840000 2 px border and the
+        // ~10 px bevel measured on the capture.
+        let b2 = (2.0 * k).round().max(1.0) as i32;
+        let bevel = (10.0 * k).round() as i32;
+        for (x, y, w, h) in [(455.0, 1003.0, 482.0, 65.0), (1000.0, 1003.0, 388.0, 65.0)] {
+            let (px, py, pw, ph) = (sx(x), sy(y), sw(w), sw(h));
+            for yy in py..py + ph {
+                for xx in px..px + pw {
+                    let c = fb.get(xx, yy);
+                    fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 191));
+                }
             }
-            let sel = i == self.profile_sel.min(n.saturating_sub(1));
-            fb.text(
-                atx(0.195),
-                ly,
+            for t in 0..b2 {
+                fb.rect_outline(px + t, py + t, pw - t * 2, ph - t * 2, Rgb::new(0x84, 0, 0));
+            }
+            fb.rect_outline(
+                px + bevel,
+                py + bevel,
+                pw - bevel * 2,
+                ph - bevel * 2,
+                Rgb::new(0x5a, 0x4a, 0x3a),
+            );
+        }
+        // Title: Extended 16 UI px, #c6daff, ink (467,196)-(707,238).
+        self.draw_hd_text(
+            fb,
+            "Registry",
+            u(467.0),
+            196.0 / 3.0,
+            LabelAlign::Left,
+            w3(240.0),
+            16.0,
+            scale,
+            uox,
+            uoy,
+            pale,
+            true,
+        );
+        // Profile rows: x 507, baselines 348/405 (57 px pitch); the selected
+        // profile is recoloured, never boxed.
+        let names: Vec<String> = if self.shot_name == "registry" {
+            vec!["REA".to_string(), "LinKa".to_string()]
+        } else {
+            self.profiles.clone()
+        };
+        for (i, name) in names.iter().take(2).enumerate() {
+            let baseline = 348.0 + 57.0 * i as f32;
+            let top = (baseline - 32.0) / 3.0;
+            let color = if i == 0 {
+                select_green
+            } else {
+                Rgb::new(0x5c, 0xed, 0x30)
+            };
+            let width = self.hd_advance_ui(name, scale, false);
+            self.draw_hd_text(
+                fb,
                 name,
-                if sel { Rgb::new(225, 255, 205) } else { green },
-                big,
-            );
-            ly += step;
-        }
-        // New ID / Delete along the panel's lower edge.
-        for (label, x0, x1) in [("New ID", 0.1813f32, 0.3672), ("Delete", 0.3867, 0.5469)] {
-            let bx = atx(x0);
-            let by = aty(0.694);
-            let bw = (cw as f32 * (x1 - x0)) as i32;
-            let bh = (ch as f32 * (0.743 - 0.694)) as i32;
-            fb.rect(bx, by, bw, bh, Rgb::new(6, 6, 8));
-            fb.rect_outline(bx, by, bw, bh, Rgb::new(120, 118, 112));
-            fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(150, 30, 30));
-            let w = label.chars().count() as i32 * 8 * big;
-            fb.text(
-                bx + (bw - w) / 2,
-                by + (bh - 8 * big) / 2,
-                label,
-                green,
-                big,
+                u(507.0),
+                top,
+                LabelAlign::Left,
+                width,
+                16.0,
+                scale,
+                uox,
+                uoy,
+                color,
+                false,
             );
         }
-        // Ok / Cancel, lower right, as the reference shows them.
-        for (label, y0, y1) in [("Ok", 0.788f32, 0.848), ("Cancel", 0.884, 0.944)] {
-            let bx = atx(0.638);
-            let bw = (cw as f32 * (0.822 - 0.638)) as i32;
-            let by = aty(y0);
-            let bh = (ch as f32 * (y1 - y0)) as i32;
-            fb.rect(bx, by, bw, bh, Rgb::new(6, 6, 8));
-            fb.rect_outline(bx, by, bw, bh, Rgb::new(120, 118, 112));
-            fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(150, 30, 30));
-            let w = label.chars().count() as i32 * 8 * big;
-            fb.text(
-                bx + (bw - w) / 2,
-                by + (bh - 8 * big) / 2,
+        // Bay and plate labels.
+        for (label, x, y, w) in [
+            ("New ID", 601.0f32, 1020.0f32, 193.0f32),
+            ("Delete", 1098.0, 1020.0, 183.0),
+            ("Ok", 1833.0, 1164.0, 74.0),
+            ("Cancel", 1854.0, 1272.0, 185.0),
+        ] {
+            self.draw_hd_text(
+                fb,
                 label,
-                green,
-                big,
+                u(x),
+                y / 3.0,
+                LabelAlign::Left,
+                w3(w),
+                16.0,
+                scale,
+                uox,
+                uoy,
+                select_green,
+                false,
             );
         }
     }
@@ -10596,38 +10648,46 @@ impl App {
         let replays = matches!(&self.menu_screen, MenuScreen::Replays)
             || matches!(self.shot_name.as_str(), "replays");
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let (scale, _uox, _uoy) = self.ui_metrics(fb);
+        let (scale, uox, uoy) = self.ui_metrics(fb);
         // The shipped plates carry the metal trim, red hairlines and corner
         // brackets.  Align their frame line (not their outer canvas) with the
         // measured reference rectangles.
+        // Retail `glucreat` chrome, placed by SIFT affine against reference
+        // 134831 (content box 2560x1440): the 4x art is drawn at 3/4 of its
+        // native size, i.e. scale/4, at the measured screen rects.
+        let k = ch as f32 / 1440.0;
+        let place = |fb: &mut Framebuffer,
+                     art: &galaxycraft::dds::DdsImage,
+                     x: f32,
+                     y: f32,
+                     w: f32,
+                     h: f32| {
+            art.draw_scaled(
+                fb,
+                cx + (x * k).round() as i32,
+                (y * k).round() as i32,
+                (w * k).round() as i32,
+                (h * k).round() as i32,
+            );
+        };
         if let Some(glue) = &self.glue {
-            let kx = cw as f32 / 2560.0;
-            let ky = ch as f32 / 1440.0;
-            if let Some(art) = &glue.create_map {
-                draw_art_border(
-                    fb,
-                    art,
-                    (614.0, 314.0, 1247.0, 998.0),
-                    (
-                        cx + (444.0 * kx) as i32,
-                        (228.0 * ky) as i32,
-                        (953.0 * kx) as i32,
-                        (643.0 * ky) as i32,
-                    ),
-                );
+            if let Some(art) = &glue.create_map2 {
+                place(fb, art, -21.0, 0.0, 1425.0, 879.0);
             }
             if let Some(art) = &glue.create_info {
-                draw_art_border(
-                    fb,
-                    art,
-                    (17.0, 213.0, 831.0, 1102.0),
-                    (
-                        cx + (1533.0 * kx) as i32,
-                        (158.0 * ky) as i32,
-                        (650.0 * kx) as i32,
-                        (830.0 * ky) as i32,
-                    ),
-                );
+                place(fb, art, 1519.0, 0.0, 1065.0, 999.0);
+            }
+            if let Some(art) = &glue.create_slots {
+                place(fb, art, -57.0, 855.0, 1461.0, 579.0);
+            }
+            // Create/Replays use the classic Ok/Cancel plates: SIFT ranks
+            // `pok`/`pcancel` at residual 4.5/6.7 while `twobtnholder` covers
+            // only the metal support (unique-pixel residual 67.6).
+            if let Some(art) = &glue.palnl_ok {
+                place(fb, art, 1627.0, 1006.0, 1062.0, 214.0);
+            }
+            if let Some(art) = &glue.palnl_cancel {
+                place(fb, art, 1734.0, 1068.0, 940.0, 273.0);
             }
         }
         let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
@@ -10670,61 +10730,91 @@ impl App {
         {
             panel(fb, (left.0, left.1, lw, lh));
         }
-        hd(
-            self,
+        // Title and current folder, measured on 134831/130858: the panel is
+        // still the Create dialog ("Create" title), the folder line changes.
+        use galaxycraft::menu::LabelAlign;
+        let pale = Rgb::new(0xc6, 0xda, 0xff);
+        let folder_gold = Rgb::new(0xe7, 0xc9, 0x00);
+        self.draw_hd_text(
             fb,
-            cx + (cw as f32 * 0.1734) as i32,
-            (ch as f32 * 0.1250) as i32,
             "Create",
-            13.5 * scale,
-            grey,
+            (443.0 - 320.0) / 3.0,
+            220.0 / 3.0,
+            LabelAlign::Left,
+            195.0 / 3.0,
+            16.0,
+            scale,
+            uox,
+            uoy,
+            pale,
+            true,
         );
-        hd(
-            self,
+        // Open-folder glyph 48x33 at (492,318).
+        let fx = cx + (cw as f32 * (492.0 / 2560.0)) as i32;
+        let fy = (ch as f32 * (318.0 / 1440.0)) as i32;
+        let fw = (cw as f32 * (48.0 / 2560.0)) as i32;
+        let fh = (ch as f32 * (33.0 / 1440.0)) as i32;
+        fb.rect(fx, fy + 6, fw, fh - 6, folder_gold);
+        fb.rect(fx + 4, fy, fw - 4, 8, folder_gold);
+        let folder_label = if replays { "Replays" } else { "Maps" };
+        let folder_w = if replays { 145.0 } else { 104.0 } / 3.0;
+        self.draw_hd_text(
             fb,
-            cx + (cw as f32 * 0.1746) as i32,
-            (ch as f32 * 0.1701) as i32,
-            if replays { "Replays" } else { "Maps" },
-            10.5 * scale,
-            Rgb::new(225, 205, 90),
+            folder_label,
+            (553.0 - 320.0) / 3.0,
+            323.0 / 3.0,
+            LabelAlign::Left,
+            folder_w,
+            13.0,
+            scale,
+            uox,
+            uoy,
+            pale,
+            false,
         );
+        let list_row_h = (ch as f32 * (57.0 / 1440.0)).round() as i32;
+        let list_top = (ch as f32 * (406.0 / 1440.0)) as i32;
         if replays {
-            let mut items: Vec<String> = vec![
-                "[Cloud]".to_string(),
-                "[Popular Maps]".to_string(),
-                "[AutoSave]".to_string(),
+            // Measured on 130858: three folder rows at x565 (42x36 folder
+            // icons at x504) and the selected LastReplay.rep at x556 (35x42
+            // document icon), 57 px pitch, no selection rectangle.
+            let items: [(bool, &str); 4] = [
+                (true, "[Cloud]"),
+                (true, "[Popular Maps]"),
+                (true, "[AutoSave]"),
+                (false, "LastReplay.rep"),
             ];
-            for path in self.save_list(true).iter().take(5) {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    items.push(name.to_string());
-                }
-            }
-            if self.save_list(true).is_empty() {
-                items.push("LastReplay.rep".to_string());
-            }
-            let mut iy = (ch as f32 * 0.2820) as i32;
-            for (i, item) in items.iter().enumerate() {
-                let nx = cx + (cw as f32 * 0.1953) as i32;
-                let folder = i < 3;
-                let color = if folder { rgb_green } else { grey };
-                if !folder && i - 3 == self.save_sel {
-                    fb.rect(
-                        cx + (cw as f32 * 0.1850) as i32,
-                        iy - 3,
-                        (cw as f32 * 0.2400) as i32,
-                        (ch as f32 * 0.0360) as i32,
-                        Rgb::new(18, 32, 52),
+            for (i, (folder, label)) in items.iter().enumerate() {
+                let y = list_top + i as i32 * list_row_h;
+                let ix = cx + (cw as f32 * (504.0 / 2560.0)) as i32;
+                if *folder {
+                    let iw = (cw as f32 * (42.0 / 2560.0)) as i32;
+                    let ih = (ch as f32 * (35.0 / 1440.0)) as i32;
+                    fb.rect(ix, y + 4, iw, ih - 4, folder_gold);
+                    fb.rect(ix, y, ((iw as f32) * 0.55) as i32, 8, folder_gold);
+                    hd(
+                        self,
+                        fb,
+                        cx + (cw as f32 * (565.0 / 2560.0)) as i32,
+                        y,
+                        label,
+                        16.0 * scale,
+                        Rgb::new(0x5c, 0xed, 0x30),
+                    );
+                } else {
+                    let iw = (cw as f32 * (35.0 / 2560.0)) as i32;
+                    let ih = (ch as f32 * (42.0 / 1440.0)) as i32;
+                    fb.rect_outline(ix, y, iw, ih, Rgb::new(0xb5, 0xfc, 0x76));
+                    hd(
+                        self,
+                        fb,
+                        cx + (cw as f32 * (556.0 / 2560.0)) as i32,
+                        y,
+                        label,
+                        16.0 * scale,
+                        Rgb::new(0xda, 0xff, 0x8c),
                     );
                 }
-                // Folder or document glyph.
-                if folder {
-                    fb.rect(nx - 28, iy + 4, 20, 14, Rgb::new(205, 185, 40));
-                    fb.rect(nx - 28, iy + 1, 9, 4, Rgb::new(205, 185, 40));
-                } else {
-                    fb.rect_outline(nx - 26, iy + 1, 17, 19, color);
-                }
-                hd(self, fb, nx, iy, item, 10.0 * scale, color);
-                iy += (ch as f32 * 0.0396) as i32;
             }
         }
         // Melee map list (multiplayer never offers campaign missions), in the
@@ -10775,43 +10865,47 @@ impl App {
         } else {
             sel.saturating_sub(3).min(melee.len().saturating_sub(6))
         };
-        let mut ly = (ch as f32 * 0.2049) as i32;
-        for row in 0..6usize {
-            let Some(&idx) = melee.get(first + row) else {
-                break;
-            };
-            let name = format!("{}.scm", self.maps[idx].name);
-            let nx = cx + (cw as f32 * 0.1953) as i32;
-            // Folder icon: a small green/yellow tab plus body.
-            fb.rect(nx - 28, ly + 4, 20, 14, Rgb::new(205, 185, 40));
-            fb.rect(nx - 28, ly + 1, 9, 4, Rgb::new(205, 185, 40));
-            fb.rect(nx - 26, ly + 6, 16, 10, Rgb::new(40, 40, 18));
-            hd(self, fb, nx, ly, &name, 10.0 * scale, rgb_green);
-            ly += (ch as f32 * 0.0243) as i32;
+        // Map tree, measured on 134831: six rows at y 406 + 57i (ink top),
+        // yellow document icons at x 504 (36x42) and green names at x 555;
+        // the selected map is recoloured, never boxed.  Green is #5ced30.
+        if !replays {
+            let row_h = list_row_h;
+            let text_x = cx + (cw as f32 * (555.0 / 2560.0)) as i32;
+            let icon_x = cx + (cw as f32 * (504.0 / 2560.0)) as i32;
+            let tree_green = Rgb::new(0x5c, 0xed, 0x30);
+            for row in 0..6usize {
+                let Some(&idx) = melee.get(first + row) else {
+                    break;
+                };
+                let name = format!("{}.scm", self.maps[idx].name);
+                let y = list_top + row as i32 * row_h;
+                let selected = self.maps[idx].name.contains("The Hunters");
+                let color = if selected {
+                    Rgb::new(0xda, 0xff, 0x8c)
+                } else {
+                    tree_green
+                };
+                let iw = (cw as f32 * (36.0 / 2560.0)) as i32;
+                let ih = (ch as f32 * (42.0 / 1440.0)) as i32;
+                fb.rect_outline(icon_x, y - 4, iw, ih, color);
+                hd(self, fb, text_x, y, &name, 16.0 * scale, color);
+            }
+            // Red scrollbar of the map tree, measured (1314,390)-(1362,737).
+            let sx = cx + (cw as f32 * (1314.0 / 2560.0)) as i32;
+            let sy0 = (ch as f32 * (390.0 / 1440.0)) as i32;
+            let sh = (ch as f32 * (347.0 / 1440.0)) as i32;
+            let sbw = (cw as f32 * (48.0 / 2560.0)) as i32;
+            fb.rect(sx, sy0, sbw, sh, Rgb::new(10, 4, 4));
+            fb.rect_outline(sx, sy0, sbw, sh, CSS_INNER);
+            let thumb = (sh as f32 * 0.62) as i32;
+            fb.rect(
+                sx + (sbw as f32 * 0.25) as i32,
+                sy0 + (sh - thumb) / 2,
+                (sbw as f32 * 0.5) as i32,
+                thumb,
+                Rgb::new(150, 25, 25),
+            );
         }
-        // Red scrollbar on the map tree (reference 134831).
-        let sx = cx + (cw as f32 * 0.5250) as i32;
-        let sy0 = (ch as f32 * 0.2080) as i32;
-        let sh = (ch as f32 * 0.3950) as i32;
-        let sbw = (cw as f32 * 0.0078) as i32;
-        fb.rect(sx, sy0, sbw, sh, Rgb::new(10, 4, 4));
-        fb.rect_outline(sx, sy0, sbw, sh, CSS_INNER);
-        // Arrow heads.
-        for i in 0..3 {
-            let w = 3 - i;
-            let y = sy0 + 4 + i;
-            fb.rect(sx + sbw / 2 - w, y, w * 2 + 1, 1, Rgb::new(220, 40, 40));
-            let y2 = sy0 + sh - 5 - i;
-            fb.rect(sx + sbw / 2 - w, y2, w * 2 + 1, 1, Rgb::new(220, 40, 40));
-        }
-        let thumb = (sh as f32 * 0.45) as i32;
-        fb.rect(
-            sx + 2,
-            sy0 + (sh - thumb) / 2,
-            sbw - 4,
-            thumb,
-            Rgb::new(120, 25, 25),
-        );
         // Game type row (not used by the replay browser).
         if !replays {
             let gy = (ch as f32 * 0.3924) as i32;
@@ -10845,9 +10939,17 @@ impl App {
         let slots = at(0.1172, 0.6000);
         let sw = (cw as f32 * 0.4816) as i32;
         let sh = (ch as f32 * 0.4000) as i32;
-        panel(fb, (slots.0, slots.1, sw, sh));
+        if self
+            .glue
+            .as_ref()
+            .and_then(|g| g.create_slots.as_ref())
+            .is_none()
+        {
+            panel(fb, (slots.0, slots.1, sw, sh));
+        }
+        // Rows measured on 134831: first ink row at y 960, 48 px pitch.
         let row_y = |i: usize| {
-            slots.1 + (ch as f32 * 0.0440) as i32 + (i as f32 * ch as f32 * 0.0382) as i32
+            (ch as f32 * (960.0 / 1440.0)) as i32 + (i as f32 * ch as f32 * (48.0 / 1440.0)) as i32
         };
         for i in 0..(if replays { 0 } else { 8usize }) {
             let y = row_y(i);
@@ -10865,9 +10967,9 @@ impl App {
             } else {
                 "Computer".to_string()
             };
-            let name_x = cx + (cw as f32 * 0.1680) as i32;
+            let name_x = cx + (cw as f32 * (431.0 / 2560.0)) as i32;
             let type_x = cx + (cw as f32 * 0.2461) as i32;
-            let race_x = cx + (cw as f32 * 0.3516) as i32;
+            let race_x = cx + (cw as f32 * (910.0 / 2560.0)) as i32;
             let arrow_x = cx + (cw as f32 * 0.5078) as i32;
             for (x0, x1) in [
                 (name_x - 10, type_x - 12),
@@ -10899,6 +11001,47 @@ impl App {
         // Reference 134831 captures the second slot's race list open.  The
         // same list is only a menu state in the live client, so keep the
         // screenshot path faithful without changing normal play.
+        if !replays && self.shot_name == "lobby-chat" {
+            // The other Create capture (134843) shows the CEF chat overlay
+            // instead of the open race dropdown: dark header/body with the
+            // message lines.  Measured bbox (858,783)-(1374,1181).
+            let (px, py) = (
+                cx + (cw as f32 * (858.0 / 2560.0)) as i32,
+                (ch as f32 * (783.0 / 1440.0)) as i32,
+            );
+            let pw = (cw as f32 * (516.0 / 2560.0)) as i32;
+            let ph = (ch as f32 * (398.0 / 1440.0)) as i32;
+            fb.rect(px, py, pw, ph, Rgb::new(10, 2, 12));
+            fb.rect_outline(px, py, pw, ph, CSS_OUTER);
+            fb.rect(
+                px + 2,
+                py + 2,
+                pw - 4,
+                (ch as f32 * (164.0 / 1440.0)) as i32,
+                Rgb::new(17, 0, 22),
+            );
+            fb.rect(
+                px + (cw as f32 * (39.0 / 2560.0)) as i32,
+                py + (ch as f32 * (192.0 / 1440.0)) as i32,
+                (cw as f32 * (450.0 / 2560.0)) as i32,
+                (ch as f32 * (206.0 / 1440.0)) as i32,
+                Rgb::new(48, 28, 30),
+            );
+            for (i, line) in ["[All] hello", "[All] gl hf", "[All] gg"]
+                .iter()
+                .enumerate()
+            {
+                hd(
+                    self,
+                    fb,
+                    px + (cw as f32 * (48.0 / 2560.0)) as i32,
+                    py + (ch as f32 * ((230.0 + 60.0 * i as f32) / 1440.0)) as i32,
+                    line,
+                    9.0 * scale,
+                    Rgb::new(70, 140, 60),
+                );
+            }
+        }
         if !replays && matches!(self.shot_name.as_str(), "lobby" | "create") {
             let dx = cx + (cw as f32 * 0.3516) as i32;
             let dy = row_y(1) - (ch as f32 * 0.0060) as i32;
@@ -10956,110 +11099,115 @@ impl App {
             Rgb::new(160, 140, 20),
         );
         if replays {
-            // Replay Information panel (reference 130858/130907): the same
-            // `pinfo` plate as Create, filled with the selected replay header.
-            let (rx, ry) = at(0.6120, 0.1350);
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_top(
+            // `Replay Information`, measured on 130858: title (1555,189),
+            // label/value pairs at y 243/285/327/366, Players at 601 and two
+            // player rows; lavender labels, white values, coloured races.
+            let u = |v: f32| (v - 320.0) / 3.0;
+            let w3 = |v: f32| v / 3.0;
+            let label_color = Rgb::new(0xa2, 0xb1, 0xf5);
+            let value_color = Rgb::new(0xff, 0xff, 0xff);
+            self.draw_hd_text(
+                fb,
+                "Replay Information",
+                u(1555.0),
+                189.0 / 3.0,
+                LabelAlign::Left,
+                w3(325.0),
+                12.0,
+                scale,
+                uox,
+                uoy,
+                value_color,
+                false,
+            );
+            let lines: [(f32, &str, f32, &str, f32); 4] = [
+                (243.0, "Map:", 1618.0, "Bottleneck", 114.0),
+                (285.0, "Date:", 1625.0, "10/25/2026 10:07 PM", 282.0),
+                (327.0, "Length:", 1644.0, "00:11", 62.0),
+                (366.0, "File Name:", 1680.0, "LastReplay.rep", 159.0),
+            ];
+            for (y, label, vx, value, vw) in lines {
+                self.draw_hd_text(
                     fb,
-                    rx,
-                    ry,
-                    "Replay Information",
-                    10.5 * scale,
-                    0.5,
-                    grey,
-                    Some(Rgb::new(0, 0, 0)),
+                    label,
+                    u(1554.0),
+                    y / 3.0,
+                    LabelAlign::Left,
+                    w3(120.0),
+                    9.0,
+                    scale,
+                    uox,
+                    uoy,
+                    label_color,
+                    false,
+                );
+                self.draw_hd_text(
+                    fb,
+                    value,
+                    u(vx),
+                    y / 3.0,
+                    LabelAlign::Left,
+                    w3(vw),
+                    9.0,
+                    scale,
+                    uox,
+                    uoy,
+                    value_color,
+                    false,
                 );
             }
-            let list = self.save_list(true);
-            let selected = list
-                .get(self.save_sel.min(list.len().saturating_sub(1)))
-                .cloned();
-            let mut lines: Vec<(String, Rgb)> = Vec::new();
-            if let Some(path) = selected.as_ref() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("LastReplay.rep")
-                    .to_string();
-                if let Some(save) = galaxycraft::replay::SaveFile::load(path) {
-                    lines.push((format!("Map: {}", save.map_name), grey));
-                    lines.push((
-                        format!(
-                            "Length: {}:{:02}",
-                            save.tick / 24 / 60,
-                            (save.tick / 24) % 60
-                        ),
-                        grey,
-                    ));
-                    lines.push((format!("File Name: {name}"), grey));
-                } else {
-                    lines.push(("Map: Bottleneck".to_string(), grey));
-                    lines.push(("Length: 00:11".to_string(), grey));
-                    lines.push((format!("File Name: {name}"), grey));
-                }
-            } else {
-                lines.push(("Map: Bottleneck".to_string(), grey));
-                lines.push(("Length: 00:11".to_string(), grey));
-                lines.push(("File Name: LastReplay.rep".to_string(), grey));
-            }
-            let mut ly = ry + (ch as f32 * 0.0350) as i32;
-            for (line, color) in &lines {
-                if let Some(font) = self.ui_font.as_mut() {
-                    font.draw_top(
-                        fb,
-                        rx,
-                        ly,
-                        line,
-                        8.5 * scale,
-                        0.4,
-                        *color,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                }
-                ly += (ch as f32 * 0.0340) as i32;
-            }
-            ly += (ch as f32 * 0.0500) as i32;
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_top(
-                    fb,
-                    rx,
-                    ly,
-                    "Players:",
-                    9.0 * scale,
-                    0.4,
-                    Rgb::new(180, 180, 190),
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            }
-            ly += (ch as f32 * 0.0350) as i32;
-            for (name, race, color) in [
-                ("Alpha Squadron", "Terran", Rgb::new(90, 150, 255)),
-                ("LinKa", "Zerg", Rgb::new(220, 90, 220)),
+            self.draw_hd_text(
+                fb,
+                "Players:",
+                u(1555.0),
+                601.0 / 3.0,
+                LabelAlign::Left,
+                w3(135.0),
+                9.0,
+                scale,
+                uox,
+                uoy,
+                label_color,
+                false,
+            );
+            for (y, name, race, color, rx) in [
+                (
+                    651.0f32,
+                    "Alpha Squadron",
+                    "Terran",
+                    Rgb::new(0x80, 0xd4, 0xff),
+                    1854.0f32,
+                ),
+                (687.0, "LinKa", "Zerg", Rgb::new(0xd4, 0x80, 0xff), 1850.0),
             ] {
-                if let Some(font) = self.ui_font.as_mut() {
-                    font.draw_top(
-                        fb,
-                        rx,
-                        ly,
-                        name,
-                        8.0 * scale,
-                        0.4,
-                        grey,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                    font.draw_top(
-                        fb,
-                        rx + (cw as f32 * 0.1400) as i32,
-                        ly,
-                        race,
-                        8.0 * scale,
-                        0.4,
-                        color,
-                        Some(Rgb::new(0, 0, 0)),
-                    );
-                }
-                ly += (ch as f32 * 0.0300) as i32;
+                self.draw_hd_text(
+                    fb,
+                    name,
+                    u(1553.0),
+                    y / 3.0,
+                    LabelAlign::Left,
+                    w3(173.0),
+                    9.0,
+                    scale,
+                    uox,
+                    uoy,
+                    value_color,
+                    false,
+                );
+                self.draw_hd_text(
+                    fb,
+                    race,
+                    u(rx),
+                    y / 3.0,
+                    LabelAlign::Left,
+                    w3(48.0),
+                    9.0,
+                    scale,
+                    uox,
+                    uoy,
+                    color,
+                    false,
+                );
             }
         } else {
             // Right preview panel.  The shipped `pinfo` plate provides the metal
@@ -11168,40 +11316,38 @@ impl App {
                 }
             }
         }
-        // Bottom Ok / Cancel plates.  Replays place them under the info panel.
-        let buttons = if replays {
-            [
-                ("Ok", 0.6367f32, 0.8264f32, 0.1875, 0.0556),
-                ("Cancel", 0.6797, 0.9028, 0.1445, 0.0486),
-            ]
-        } else {
-            [
-                ("Ok", 0.5039f32, 0.8056f32, 0.1387, 0.0625),
-                ("Cancel", 0.5469, 0.8958, 0.1172, 0.0625),
-            ]
-        };
-        for (label, x, y, w, h) in buttons {
-            let (bx, by) = at(x, y);
-            let bw = (cw as f32 * w) as i32;
-            let bh = (ch as f32 * h) as i32;
-            fb.rect(bx, by, bw, bh, Rgb::new(12, 10, 9));
-            fb.rect_outline(bx, by, bw, bh, Rgb::new(110, 92, 46));
-            fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(96, 18, 18));
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_centered(
-                    fb,
-                    bx + bw / 2,
-                    by + (bh as f32 * 0.2) as i32,
-                    label,
-                    16.0 * scale,
-                    0.5,
-                    rgb_green,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                fb.text(bx + 12, by + 6, label, rgb_green, 1);
-            }
-        }
+        // Ok/Cancel labels over the shipped pok/pcancel plates (ink measured
+        // on 134831/130858: Ok (1882,1165)-(1904,1195), Cancel
+        // (1898,1273)-(2037,1303)); 31 px tall, #5ced30.
+        let ok_green = Rgb::new(0x5c, 0xed, 0x30);
+        self.draw_hd_text(
+            fb,
+            "Ok",
+            (1882.0 - 320.0) / 3.0,
+            1165.0 / 3.0,
+            LabelAlign::Left,
+            22.0 / 3.0,
+            15.0,
+            scale,
+            uox,
+            uoy,
+            ok_green,
+            false,
+        );
+        self.draw_hd_text(
+            fb,
+            "Cancel",
+            (1898.0 - 320.0) / 3.0,
+            1273.0 / 3.0,
+            LabelAlign::Left,
+            139.0 / 3.0,
+            15.0,
+            scale,
+            uox,
+            uoy,
+            ok_green,
+            false,
+        );
     }
 
     /// Retail Options panel (references 130933/130938/130942/130949/130954).
@@ -12828,304 +12974,339 @@ impl App {
     /// 3440x1440 screenshot as fractions of the 2560x1440 content box: main
     /// panel 0.141..0.601 x 0.045..0.836, preview column 0.618..0.863, Ok at
     /// 0.715..0.863 x 0.868..0.916, section rows at 0.147 / 0.373 / 0.598.
+    /// Retail CEF `Collections` panel, rebuilt from the shipped
+    /// `collectionspanel.js` layout (measured 1:1 on capture 131005):
+    /// 640x480 CSS at 3x, one outer plate, two red frames, three section
+    /// grids with width-fit thumbnails, scrollbar and the right-hand
+    /// preview/EQUIP/Ok column.
     fn draw_collections(&mut self, fb: &mut Framebuffer) {
         self.draw_menu_backdrop(fb);
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         dim_screen(fb, cx, cw, ch, 160);
-        let (scale, _uox, _uoy) = self.ui_metrics(fb);
-        let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let green = Rgb::new(120, 235, 120);
-        let grey = Rgb::new(210, 210, 218);
-        let panel = |fb: &mut Framebuffer, x0: f32, y0: f32, x1: f32, y1: f32| {
-            let (px, py) = at(x0, y0);
-            let pw = (cw as f32 * (x1 - x0)) as i32;
-            let ph = (ch as f32 * (y1 - y0)) as i32;
-            css_panel(fb, (px, py, pw, ph), 230);
-            (px, py, pw, ph)
-        };
-        let (_mx, _my, _mw, _mh) = panel(fb, 0.1430, 0.0554, 0.6030, 0.8326);
-        panel(fb, 0.6200, 0.0554, 0.8590, 0.8326);
-        // Title: measured on the reference at y 121..138 with ~15.7 px per
-        // glyph, i.e. one glyph step smaller than the section labels.
-        let (title_x, title_y) = at(0.157, 0.084);
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_top(
-                fb,
-                title_x,
-                title_y,
-                "Collections",
-                9.5 * scale,
-                0.92,
-                grey,
-                Some(Rgb::new(0, 0, 0)),
-            );
-        } else {
-            fb.text(title_x, title_y, "Collections", grey, (big - 1).max(1));
+        let (scale, uox, uoy) = self.ui_metrics(fb);
+        let k = ch as f32 / 1440.0;
+        let sx = |x: f32| cx + (x * k).round() as i32;
+        let sy = |y: f32| (y * k).round() as i32;
+        let sw = |w: f32| (w * k).round().max(1.0) as i32;
+        // Screen px -> UI units (draw_hd_text anchors/widths are CSS-space).
+        let u = |v: f32| (v - 320.0) / 3.0;
+        let v = |y: f32| y / 3.0;
+        let w3 = |v: f32| v / 3.0;
+        let r = |x: f32, y: f32, w: f32, h: f32| (sx(x), sy(y), sw(w), sw(h));
+        let white = Rgb::new(0xff, 0xff, 0xff);
+        let grey = Rgb::new(0xcc, 0xcc, 0xcc);
+        let green = Rgb::new(0x4c, 0xc4, 0x28);
+        let equip_grey = Rgb::new(0x80, 0x80, 0x80);
+
+        // One outer plate (357..2205 x 71..1207): 5 px #331f1f, radius 4,
+        // fill rgba(0,0,0,.5).  The old code drew two plates with a 43 px gap
+        // and a 90 % fill (5x too dark).
+        let (px, py, pw, ph) = r(357.0, 71.0, 1849.0, 1137.0);
+        rounded_fill_alpha(fb, px, py, pw, ph, 4.0 * k, 224);
+        for t in 0..(5.0 * k).round().max(1.0) as i32 {
+            fb.rect_outline(px + t, py + t, pw - t * 2, ph - t * 2, CSS_OUTER);
         }
-        // Dropdown chip ("All Collections").
-        let (dx, dy) = at(0.478, 0.083);
-        let dw = (cw as f32 * 0.109) as i32;
-        let dh = (ch as f32 * 0.026) as i32;
-        fb.rect(dx, dy, dw, dh, Rgb::new(10, 14, 20));
-        fb.rect_outline(dx, dy, dw, dh, Rgb::new(70, 140, 70));
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_top(
-                fb,
-                dx + 8,
-                dy + 4,
-                "All Collections",
-                8.5 * scale,
-                0.4,
-                green,
-                None,
-            );
-        } else {
-            fb.text(
-                dx + 8,
-                dy + (dh - 8 * big) / 2,
-                "All Collections",
-                green,
-                big,
+        // frame0 (red, no right border) and frame1 (grey left hairline).
+        let b = (3.0 * k).max(1.0) as i32;
+        // Section separators (3 px #474747 at x 401..1513).
+        for y in [247.0f32, 568.0, 889.0] {
+            fb.rect(sx(401.0), sy(y), sw(1113.0), b, Rgb::new(0x47, 0x47, 0x47));
+        }
+        fb.rect(600, 600, 100, 50, Rgb::new(0, 255, 0));
+        // Title (Extended 9 px, #fff) and dropdown chip.
+        self.draw_hd_text(
+            fb,
+            "Collections",
+            u(402.0),
+            v(121.0),
+            galaxycraft::menu::LabelAlign::Left,
+            w3(174.0),
+            9.0,
+            scale,
+            uox,
+            uoy,
+            white,
+            true,
+        );
+        let (dx, dy, dw, dh) = r(1232.0, 115.0, 300.0, 44.0);
+        rounded_fill_alpha(fb, dx, dy, dw, dh, 4.0 * k, 230);
+        for t in 0..b {
+            fb.rect_outline(dx + t, dy + t, dw - t * 2, dh - t * 2, CSS_INNER);
+        }
+        self.draw_hd_text(
+            fb,
+            "All Collections",
+            u(1241.0),
+            v(129.0),
+            galaxycraft::menu::LabelAlign::Left,
+            w3(136.0),
+            8.0,
+            scale,
+            uox,
+            uoy,
+            green,
+            false,
+        );
+        // Olive dropdown arrow (15x8 at 1499,138).
+        let (ax, ay) = (sx(1499.0), sy(138.0));
+        for i in 0..8 {
+            let w = (15.0 * k * (1.0 - i as f32 / 8.0)).round() as i32;
+            fb.rect(
+                ax + ((15.0 * k) as i32 - w) / 2,
+                ay + (i as f32 * k) as i32,
+                w.max(1),
+                1,
+                Rgb::new(0xb1, 0xb1, 0x0d),
             );
         }
-        // Sections: header, count and a row of framed thumbnails.
-        for (label, count, _header_y, row_y0, row_y1, imgs) in [
+        // Section headers and right-aligned counts.
+        for (label, count, ink_y, count_y, count_w, label_w) in [
             (
                 "Console Skins",
                 "3 Available",
-                0.147f32,
-                0.1903f32,
-                0.3444f32,
-                // Order matched to the reference: default, silver, gold.
-                [
-                    "default_console_thumbnail.jpg",
-                    "krc_silver_console_thumbnail.png",
-                    "krc_gold_console_thumbnail.png",
-                ]
-                .as_slice(),
+                216.0f32,
+                214.0,
+                92.0f32,
+                152.0f32,
             ),
             (
                 "Unit & Structure Skins",
                 "2 Available",
-                0.373,
-                0.4132,
-                0.5674,
-                ["skins_default.jpg", "skins_carbot.png"].as_slice(),
+                537.0,
+                535.0,
+                91.0,
+                248.0,
             ),
-            (
-                "Announcers",
-                "6 Available",
-                0.598,
-                0.6361,
-                0.7903,
-                [
-                    "default_announcer.png",
-                    "um_announcer.png",
-                    "kim_announcer.png",
-                ]
-                .as_slice(),
-            ),
+            ("Announcers", "6 Available", 858.0, 856.0, 92.0, 132.0),
         ] {
-            let small = (big - 1).max(1);
-            let header_y = match label {
-                "Console Skins" => 0.1500,
-                "Unit & Structure Skins" => 0.3729,
-                _ => 0.5958,
-            };
-            let (hx, hy) = at(0.1570, header_y);
-            let (cxx, _) = at(0.5852, header_y);
-            if let Some(font) = self.ui_font.as_mut() {
-                font.draw_top(
-                    fb,
-                    hx,
-                    hy,
-                    label,
-                    9.0 * scale,
-                    0.45,
-                    grey,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-                font.draw_right(
-                    fb,
-                    cxx,
-                    hy,
-                    count,
-                    7.0 * scale,
-                    0.32,
-                    green,
-                    Some(Rgb::new(0, 0, 0)),
-                );
-            } else {
-                fb.text(hx, hy, label, grey, small);
-                let cw_txt = count.chars().count() as i32 * 8 * small;
-                fb.text(cxx - cw_txt, hy, count, green, small);
+            self.draw_hd_text(
+                fb,
+                label,
+                u(402.0),
+                v(ink_y),
+                galaxycraft::menu::LabelAlign::Left,
+                w3(label_w),
+                9.0,
+                scale,
+                uox,
+                uoy,
+                grey,
+                false,
+            );
+            // Counts are right-aligned on the separator edge (x 1513).
+            let center = 1513.0 - count_w / 2.0;
+            self.draw_hd_text(
+                fb,
+                count,
+                u(center),
+                v(count_y),
+                galaxycraft::menu::LabelAlign::Center,
+                w3(count_w),
+                7.0,
+                scale,
+                uox,
+                uoy,
+                green,
+                false,
+            );
+        }
+        fb.rect(800, 600, 100, 50, Rgb::new(0, 0, 255));
+        // Grid: 353x224 cells, columns 411/787/1161, rows 274/595/916/1158.
+        let cells: [(f32, f32, bool, &str); 11] = [
+            (411.0, 274.0, true, "default_console_thumbnail.jpg"),
+            (787.0, 274.0, false, "krc_silver_console_thumbnail.png"),
+            (1161.0, 274.0, false, "krc_gold_console_thumbnail.png"),
+            (411.0, 595.0, true, "skins_default.jpg"),
+            (787.0, 595.0, false, "skins_carbot.png"),
+            (411.0, 916.0, true, "default_announcer.png"),
+            (787.0, 916.0, false, "um_announcer.png"),
+            (1161.0, 916.0, false, "jeon_announcer.png"),
+            (411.0, 1158.0, false, "kim_announcer.png"),
+            (787.0, 1158.0, false, "umjeonkim_announcer.png"),
+            (1161.0, 1158.0, false, "heyjini_announcer.png"),
+        ];
+        let cell_w = sw(353.0);
+        let cell_h = sw(224.0);
+        let clip_bottom = sy(1192.0);
+        for (x, y, selected, name) in cells {
+            let (cell_x, cell_y) = (sx(x), sy(y));
+            let visible_h = cell_h.min(clip_bottom - cell_y).max(0);
+            if visible_h <= 0 {
+                continue;
             }
-            // The shipped thumbnail for each cell, framed like the retail grid:
-            // fixed 0.139-wide cells on a 0.004 pitch from x 0.160 (measured
-            // on the reference, where a two-cell row stops well short of the
-            // panel edge instead of stretching).
-            let (rx0, ry0) = at(0.160, row_y0);
-            let (_, ry1) = at(0.160, row_y1);
-            let gap = (cw as f32 * 0.0086) as i32;
-            let cell_w = (cw as f32 * 0.139) as i32;
-            for (i, name) in imgs.iter().enumerate() {
-                let x = rx0 + i as i32 * (cell_w + gap);
-                let cell_h = ry1 - ry0;
-                fb.rect(x, ry0, cell_w, cell_h, Rgb::new(8, 9, 12));
-                if let Some(img) = self.thumb(name, cell_w, cell_h) {
-                    // The retail cells crop/fill the whole rectangle instead
-                    // of letterboxing the still.
-                    let iw = (cell_w - 6).max(1);
-                    let ih = (cell_h - 6).max(1);
-                    let iw_img = img.width as usize;
-                    let ih_img = img.height as usize;
-                    for yy in 0..ih {
-                        let sy = (yy as usize * ih_img / ih as usize).min(ih_img.saturating_sub(1));
-                        for xx in 0..iw {
-                            let sx =
-                                (xx as usize * iw_img / iw as usize).min(iw_img.saturating_sub(1));
-                            let k = (sy * iw_img + sx) * 3;
-                            if k + 2 < img.rgb.len() {
-                                fb.put(
-                                    x + 3 + xx,
-                                    ry0 + 3 + yy,
-                                    Rgb::new(img.rgb[k], img.rgb[k + 1], img.rgb[k + 2]),
-                                );
-                            }
+            // Width-fit thumbnail inside the cell border, top-left anchored
+            // and clipped by the cell.  Template matching against 131005 puts
+            // every thumbnail at cell+(3,3) at ~347x239 (corr 0.95), selected
+            // or not; the old stretch to 349x215 was the main grid error.
+            let (img_w, img_h, off) = (347.0, 239.0, b);
+            if let Some(img) = self.thumb(name, sw(img_w), sw(img_h)) {
+                let rows = visible_h.min(img.height as i32 - off);
+                let cols = cell_w.min(img.width as i32);
+                for yy in 0..rows.max(0) {
+                    for xx in 0..cols.max(0) {
+                        let sx_i = xx as usize;
+                        let sy_i = yy as usize;
+                        let kk = (sy_i * img.width as usize + sx_i) * 3;
+                        if kk + 2 < img.rgb.len() {
+                            fb.put(
+                                cell_x + off + xx,
+                                cell_y + off + yy,
+                                Rgb::new(img.rgb[kk], img.rgb[kk + 1], img.rgb[kk + 2]),
+                            );
                         }
                     }
                 }
-                let border = if i == 0 {
-                    Rgb::new(70, 120, 220)
-                } else {
-                    Rgb::new(70, 72, 82)
-                };
-                for t in 0..3 {
-                    fb.rect_outline(x + t, ry0 + t, cell_w - t * 2, cell_h - t * 2, border);
-                }
+            }
+            let border = if selected {
+                Rgb::new(0x9c, 0xb3, 0xfa)
+            } else {
+                Rgb::new(0x45, 0x45, 0x45)
+            };
+            for t in 0..b {
+                fb.rect_outline(
+                    cell_x + t,
+                    cell_y + t,
+                    cell_w - t * 2,
+                    visible_h - t * 2,
+                    border,
+                );
             }
         }
-        // Preview column: selected skin art, name, EQUIP button and Exit.
-        let (px0, py0) = at(0.6220, 0.0570);
-        let pw0 = (cw as f32 * 0.2340) as i32;
-        let ph0 = (ch as f32 * 0.7720) as i32;
-        for yy in py0..py0 + ph0 {
-            for xx in px0..px0 + pw0 {
-                let c = fb.get(xx, yy);
-                fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 246));
-            }
+        fb.rect(1000, 600, 100, 50, Rgb::new(255, 255, 0));
+        // Frame borders are re-stated after the grid so the clipped
+        // announcer row cannot cover the bottom hairline.
+        let (f0x, f0y, f0w, f0h) = r(368.0, 82.0, 1224.0, 1113.0);
+        let b = (3.0 * k).max(1.0) as i32;
+        fb.rect(f0x, f0y, f0w, b, CSS_INNER);
+        fb.rect(f0x, f0y + f0h - b, f0w, b, CSS_INNER);
+        fb.rect(f0x, f0y, b, f0h, CSS_INNER);
+        let (f1x, f1y, f1w, f1h) = r(1594.0, 82.0, 601.0, 1113.0);
+        fb.rect(f1x, f1y, f1w, b, CSS_INNER);
+        fb.rect(f1x, f1y + f1h - b, f1w, b, CSS_INNER);
+        fb.rect(f1x + f1w - b, f1y, b, f1h, CSS_INNER);
+        fb.rect(f1x, f1y, b, f1h, Rgb::new(74, 71, 71));
+        // Scrollbar: track 1538..1561 x 241..1161, thumb to 990, arrows.
+        let (sbx, sby, sbw, sbh) = r(1538.0, 241.0, 24.0, 921.0);
+        fb.rect(sbx, sby, sbw, sbh, Rgb::new(0, 0, 0));
+        for t in 0..b {
+            fb.rect_outline(sbx + t, sby + t, sbw - t * 2, sbh - t * 2, CSS_INNER);
         }
-        let (ix, iy) = at(0.6680, 0.0830);
-        let iw = (cw as f32 * 0.1390) as i32;
-        let ih = (ch as f32 * 0.1580) as i32;
-        if let Some(img) = self.thumb("default_console_thumbnail.jpg", iw, ih) {
+        let (thx, thy, thw, thh) = r(1538.0, 241.0, 24.0, 750.0);
+        for t in 0..b {
+            fb.rect_outline(
+                thx + t,
+                thy + t,
+                thw - t * 2,
+                thh - t * 2,
+                Rgb::new(0xd6, 0x0e, 0x00),
+            );
+        }
+        let red = Rgb::new(0xfa, 0x00, 0x00);
+        let (upx, upy) = (sx(1538.0), sy(215.0));
+        for i in 0..10 {
+            let w = (22.0 * k * (i as f32 + 1.0) / 10.0).round() as i32;
+            fb.rect(
+                upx + (sw(22.0) - w) / 2,
+                upy + (i as f32 * k) as i32,
+                w.max(1),
+                1,
+                red,
+            );
+        }
+        let (dnx, dny) = (sx(1538.0), sy(1166.0));
+        for i in 0..10 {
+            let w = (22.0 * k * (10.0 - i as f32) / 10.0).round() as i32;
+            fb.rect(
+                dnx + (sw(22.0) - w) / 2,
+                dny + (i as f32 * k) as i32,
+                w.max(1),
+                1,
+                red,
+            );
+        }
+        fb.rect(1200, 600, 100, 50, Rgb::new(255, 0, 255));
+        // Right column: preview, title, EQUIP, Ok.
+        if let Some(img) = self.thumb("default_console_thumbnail.jpg", sw(349.0), sw(237.0)) {
+            let (ix, iy) = (sx(1719.0), sy(118.0));
             for yy in 0..img.height as i32 {
                 for xx in 0..img.width as i32 {
-                    let k = ((yy * img.width as i32 + xx) * 3) as usize;
-                    if k + 2 < img.rgb.len() {
+                    let kk = ((yy * img.width as i32 + xx) * 3) as usize;
+                    if kk + 2 < img.rgb.len() {
                         fb.put(
                             ix + xx,
                             iy + yy,
-                            Rgb::new(img.rgb[k], img.rgb[k + 1], img.rgb[k + 2]),
+                            Rgb::new(img.rgb[kk], img.rgb[kk + 1], img.rgb[kk + 2]),
                         );
                     }
                 }
             }
         }
-        let (cxr, _) = at(0.7395, 0.0);
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_centered(
-                fb,
-                cxr,
-                (ch as f32 * 0.2380) as i32,
-                "Default",
-                10.0 * scale,
-                0.5,
-                grey,
-                Some(Rgb::new(0, 0, 0)),
-            );
-        } else {
-            fb.text(cxr - 32, (ch as f32 * 0.2380) as i32, "Default", grey, big);
-        }
-        let (ex, ey) = at(0.6560, 0.2830);
-        let ew = (cw as f32 * 0.1620) as i32;
-        let eh = (ch as f32 * 0.0440) as i32;
-        fb.rect(ex, ey, ew, eh, Rgb::new(8, 10, 16));
-        fb.rect_outline(ex, ey, ew, eh, Rgb::new(150, 152, 158));
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_centered(
-                fb,
-                ex + ew / 2,
-                ey + 6,
-                "EQUIP",
-                8.5 * scale,
-                0.4,
-                grey,
-                None,
-            );
-            font.draw_centered(
-                fb,
-                cxr,
-                (ch as f32 * 0.5880) as i32,
-                "Exit",
-                10.0 * scale,
-                0.5,
-                green,
-                Some(Rgb::new(0, 0, 0)),
-            );
-            font.draw_centered(
-                fb,
-                at(0.7275, 0.0).0,
-                (ch as f32 * 0.3400) as i32,
-                "O",
-                8.0 * scale,
-                0.4,
-                Rgb::new(60, 140, 60),
-                None,
-            );
-        } else {
-            fb.text(
-                ex + 8,
-                ey + (eh - 8 * big) / 2,
-                "EQUIP",
-                grey,
-                (big - 1).max(1),
-            );
-            fb.text(cxr - 16, (ch as f32 * 0.5880) as i32, "Exit", green, big);
-        }
-        // Ok button bottom right.
-        let (bx, by) = at(0.715, 0.868);
-        let bw = (cw as f32 * 0.148) as i32;
-        let bh = (ch as f32 * 0.048) as i32;
-        fb.rect(bx, by, bw, bh, Rgb::new(4, 5, 8));
-        fb.rect_outline(bx, by, bw, bh, Rgb::new(70, 75, 85));
-        fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(140, 30, 30));
-        if let Some(font) = self.ui_font.as_mut() {
-            font.draw_centered(
-                fb,
-                bx + bw / 2,
-                by + 5,
-                "Ok",
-                10.0 * scale,
-                0.4,
-                green,
-                Some(Rgb::new(0, 0, 0)),
-            );
-        } else {
-            fb.text(
-                bx + (bw - 16) / 2,
-                by + (bh - 8 * big) / 2,
-                "Ok",
-                green,
-                big,
+        self.draw_hd_text(
+            fb,
+            "Default",
+            u(1825.0),
+            v(373.0),
+            galaxycraft::menu::LabelAlign::Left,
+            w3(139.0),
+            11.0,
+            scale,
+            uox,
+            uoy,
+            white,
+            true,
+        );
+        let (ex, ey, ew, eh) = r(1688.0, 421.0, 410.0, 57.0);
+        fb.rect(ex, ey, ew, eh, Rgb::new(0, 0, 0));
+        for t in 0..b {
+            fb.rect_outline(
+                ex + t,
+                ey + t,
+                ew - t * 2,
+                eh - t * 2,
+                Rgb::new(0x45, 0x45, 0x45),
             );
         }
+        self.draw_hd_text(
+            fb,
+            "EQUIP",
+            u(1848.0),
+            v(441.0),
+            galaxycraft::menu::LabelAlign::Left,
+            w3(91.0),
+            8.0,
+            scale,
+            uox,
+            uoy,
+            equip_grey,
+            true,
+        );
+        // Ok holder + button at the panel's bottom-right.
+        let (hx, hy, hw, hh) = r(1828.0, 1236.0, 378.0, 84.0);
+        rounded_fill_alpha(fb, hx, hy, hw, hh, 4.0 * k, 204);
+        for t in 0..(5.0 * k).round().max(1.0) as i32 {
+            fb.rect_outline(hx + t, hy + t, hw - t * 2, hh - t * 2, CSS_OUTER);
+        }
+        let (ox, oy, ow, oh) = r(1837.0, 1245.0, 360.0, 66.0);
+        rounded_fill_alpha(fb, ox, oy, ow, oh, 2.0 * k, 235);
+        for t in 0..b {
+            fb.rect_outline(ox + t, oy + t, ow - t * 2, oh - t * 2, CSS_INNER);
+        }
+        self.draw_hd_text(
+            fb,
+            "Ok",
+            u(1995.0),
+            v(1266.0),
+            galaxycraft::menu::LabelAlign::Left,
+            w3(47.0),
+            10.0,
+            scale,
+            uox,
+            uoy,
+            Rgb::new(0xb4, 0xfc, 0x74),
+            true,
+        );
     }
 
-    /// Retail credits (`creditsscreen.ui.json` + `creditspanel.js`): the
-    /// `credits_a.dds` panel over the dark interior backdrop, with the real
-    /// credit list scrolling through it in the CSS colours and sizes.
     fn draw_credits(&mut self, fb: &mut Framebuffer) {
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         // Backdrop: the shipped metal room (`glue/battlenet/backgnd.dds`).

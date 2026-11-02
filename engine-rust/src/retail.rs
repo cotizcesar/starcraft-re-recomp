@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v7 (consoles, menus, cinematics, fonts, ui layouts, campaign console + palcs backdrop + phist popup)\n";
+            b"galaxycraft retail cache v8 (consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1091,12 +1091,22 @@ pub const GLUE_ART: &[&str] = &[
     "glue/campaign/phist.dds",
     "glue/palcs/backgndl.dds",
     "glue/palcs/backgndr.dds",
-    // Create-game chrome: map-list plate, player slots, map-info column and
-    // the shared two-button holder.
+    // Create-game chrome: map-list plate, player slots, map-info column,
+    // the shared two-button holder and the chat plate.
     "glue/create/plistmap.dds",
+    "glue/create/plistmap2.dds",
+    "glue/create/plistmaptall.dds",
     "glue/create/pslots.dds",
     "glue/create/pinfo.dds",
     "glue/create/twobtnholder.dds",
+    "glue/chatroom/pchat.dds",
+    // Toon Registry: backdrop, profile list plate and its popup.
+    "glue/battlenet/toonregistry/backgnd.dds",
+    "glue/battlenet/toonregistry/toonlistbg.dds",
+    "glue/battlenet/toonregistry/popopup.dds",
+    // Shared `palnl` Ok/Cancel plates (classic dialogs).
+    "glue/palnl/pok.dds",
+    "glue/palnl/pcancel.dds",
     // Credits panel frame (`creditsscreen.ui.json` id 2).
     "glue/battlenet/credits_a.dds",
     // Metal-room backdrop the credits scroll over.

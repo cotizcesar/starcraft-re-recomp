@@ -63,7 +63,7 @@ CASES = {
     "130858": ("replays", None, None),
     "130907": ("lobby", None, None),
     "134831": ("lobby", None, None),
-    "134843": ("lobby", None, None),
+    "134843": ("lobby-chat", None, None),
 }
 
 
@@ -72,12 +72,21 @@ def main() -> None:
     ap.add_argument("--install", required=True)
     ap.add_argument("--bin", default=str(BIN))
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument(
+        "--only",
+        help="comma-separated reference ids to rebuild (default: every case)",
+    )
     args = ap.parse_args()
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="calib-"))
     total = 0
-    for ref_id, (screen, at, phases) in CASES.items():
+    selected = set(args.only.split(",")) if args.only else None
+    cases = {k: v for k, v in CASES.items() if selected is None or k in selected}
+    unknown = sorted(selected - set(CASES)) if selected else []
+    if unknown:
+        raise SystemExit(f"unknown reference id(s): {', '.join(unknown)}")
+    for ref_id, (screen, at, phases) in cases.items():
         bmp = tmp / f"{ref_id}.bmp"
         cmd = [
             args.bin,
