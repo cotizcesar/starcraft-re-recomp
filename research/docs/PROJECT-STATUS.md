@@ -221,3 +221,9 @@ capas regeneradas, `ui_diff` 39/39).
     panel. Las cinco pestañas quedan 1:1 (calibrado 0,00; crudo 5,20–6,26),
     puerta 43/43, `ui_diff` 39/39, tests 332/332, clippy 0.
     Evidencia: `docs/session-log.md` 2026-11-02 (68).
+27. Options 1:1 en vivo (2026-11-02): app fullscreen 3440x1440 (content
+    2560x1440 en x=440), Options/Speed abierto en vivo; el content box contra
+    `130933` da media 5,53 (panel 4,88), igual que la puerta headless (5,49).
+    Las cinco pestañas siguen a 0,00 calibrado y el guard de ventana ancha
+    pasa. Objetivo de Options cerrado. Evidencia: `docs/session-log.md`
+    2026-11-02 (69).

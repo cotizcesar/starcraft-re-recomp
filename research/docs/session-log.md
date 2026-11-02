@@ -3403,3 +3403,24 @@ Verificación de las cinco pestañas contra las capturas retail:
 **calibrado 0,00** en las cinco; puerta 43/43 crudo y calibrado; `ui_diff`
 39/39; `cargo test` 332/332; clippy 0. La app viva se relanzó con el binario
 corregido (`sc_view`, PID en `/tmp/opencode/sc_view.pid`).
+
+## 2026-11-02 (69) — Options 1:1 en vivo, fullscreen 3440x1440
+
+La app se lanzó a 2560x1440 y se puso fullscreen con KWin (`wmctrl -b
+add,fullscreen`): cliente 3440x1440, content box 2560x1440 en x=440, exactamente
+el espacio de las capturas retail. Navegando con teclado (Escape → Main, una
+pulsación Down desde la selección Multiplayer) se abrió **Options/Speed** en
+vivo y se capturó `docs/retail-live/options-live-3440x1440.png`.
+
+Comparación del content box (2560x1440) contra `130933`:
+- frame completo: media **5.53**, outliers 3.37 %;
+- panel de Options (357..2205 x 71..1207): media **4.88**, outliers 3.77 %.
+
+Es el mismo residuo que la puerta headless (5.49): el render vivo es el
+verificado. Las cinco pestañas siguen a **0.00 calibrado** y el guard de
+ventana ancha (3440x1362) pasa en las cinco. La app queda abierta en
+Options/Speed fullscreen para inspección.
+
+Queda cerrado el objetivo de Options 1:1: las cinco capturas de referencia
+están cubiertas, el layout no se rompe al maximizar y la evidencia en vivo
+coincide con la puerta.
