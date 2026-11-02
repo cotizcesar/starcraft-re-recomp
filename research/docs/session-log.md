@@ -3381,3 +3381,25 @@ Cambios:
 Verificación: walkthrough **PASS** (129 pasos; 23 transiciones con
 `ui_click`, 57 pulsaciones, 47 hovers), `ui_visual_diff` **43/43** crudo y
 calibrado, `ui_diff` **39/39**, `cargo test` **332/332**, clippy 0.
+
+## 2026-11-02 (68) — Regresión del menú Options en ventanas anchas
+
+El usuario reportó el menú Options roto en la ventana viva (3440x1362). La
+causa: en `draw_options` varios **tamaños** usaban `dx()` (que suma el offset
+`cx` del content box) en vez de `dxw()` (ancho puro). En 16:9 `cx=0` y la
+puerta no lo veía; al maximizar la ventana (`cx=509`) el ancho de columna y
+los checkboxes crecían con `cx`: la columna derecha se salía del panel y los
+checkboxes se dibujaban como círculos gigantes.
+
+Corregido:
+- `col_w = dxw(516.0)` (antes `dx`), 14 tamaños de checkbox `dxw(29.0)`,
+  radios `dxw(36.0)` y el input APM `dxw(75.0)`.
+- Regresión cubierta en `menu_walkthrough.py`: renderiza las cinco pestañas a
+  3440x1362 y exige que no haya píxeles brillantes fuera del panel
+  (x>2445); las cinco pasan.
+
+Verificación de las cinco pestañas contra las capturas retail:
+`options-speed/sound/video/game/network` → crudo 5,49/5,55/5,81/6,26/5,20,
+**calibrado 0,00** en las cinco; puerta 43/43 crudo y calibrado; `ui_diff`
+39/39; `cargo test` 332/332; clippy 0. La app viva se relanzó con el binario
+corregido (`sc_view`, PID en `/tmp/opencode/sc_view.pid`).

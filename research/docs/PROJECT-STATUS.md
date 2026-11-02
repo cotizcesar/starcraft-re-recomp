@@ -212,3 +212,12 @@ capas regeneradas, `ui_diff` 39/39).
     transición y ningún swish. Tests 332/332, puertas 43/43 crudo y
     calibrado, `ui_diff` 39/39. Evidencia: `docs/session-log.md`
     2026-11-02 (67).
+26. Regresión Options en ventanas anchas (2026-11-02): los tamaños de
+    columna/checkbox/radio/input usaban `dx()` (suma `cx`) en vez de `dxw()`;
+    en 16:9 no se veía, pero al maximizar (3440x1362, `cx=509`) la columna
+    derecha se salía del panel y los checkboxes se hacían gigantes.
+    Corregido a `dxw` y añadida una comprobación al walkthrough que renderiza
+    las cinco pestañas a 3440x1362 y exige todos los controles dentro del
+    panel. Las cinco pestañas quedan 1:1 (calibrado 0,00; crudo 5,20–6,26),
+    puerta 43/43, `ui_diff` 39/39, tests 332/332, clippy 0.
+    Evidencia: `docs/session-log.md` 2026-11-02 (68).

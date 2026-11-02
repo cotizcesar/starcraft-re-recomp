@@ -26,5 +26,10 @@ PASS frame Hotkeys      Move action selected == hotkeys-terran-scv-move
 PASS frame Hotkeys      Move rebound to H    == hotkeys-terran-scv-move-unbound
 PASS frame Hotkeys      Protoss tab          == hotkeys-protoss
 PASS frame Hotkeys      Probe selected       == hotkeys-protoss-probe
+PASS wide layout    options-speed    all controls inside the panel
+PASS wide layout    options-sound    all controls inside the panel
+PASS wide layout    options-video    all controls inside the panel
+PASS wide layout    options-game     all controls inside the panel
+PASS wide layout    options-network  all controls inside the panel
 
 walkthrough gate: PASS (129 steps, artifacts in /tmp/opencode/walk-gate)

@@ -170,11 +170,13 @@ def shots_by_screen(rows: list[dict]) -> dict[str, int]:
     return first
 
 
-def run_shot(install: str, screen: str, out: Path) -> np.ndarray:
+def run_shot(
+    install: str, screen: str, out: Path, width: int = 2560, height: int = 1440
+) -> np.ndarray:
     env = dict(os.environ, SC_NO_AUDIO="1")
     subprocess.run(
         [str(BIN), "--install", install, "--shot", str(out), "--shot-screen", screen,
-         "--no-intro", "--width", "2560", "--height", "1440"],
+         "--no-intro", "--width", str(width), "--height", str(height)],
         check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return np.asarray(Image.open(out).convert("RGB")).astype(np.int16)
@@ -394,6 +396,18 @@ def main() -> int:
             fail(f"Hotkeys {label}: frame differs from {shot_name} "
                  f"(mean {diff.mean():.3f}, max {diff.max()})")
         print(f"PASS frame Hotkeys      {label:20s} == {shot_name}")
+
+    # Wide (non-16:9) windows letterbox to a 2421x1362 content box at x=509.
+    # Every Options control must stay inside the panel (right edge 2445); the
+    # original `dx()`-as-size bug pushed the right column outside and drew
+    # giant checkboxes.  This is the regression guard for that layout.
+    for tab in ("options-speed", "options-sound", "options-video",
+                "options-game", "options-network"):
+        img = run_shot(args.install, tab, tmp / f"wide-{tab}.bmp", 3440, 1362)
+        outside = (img[150:1150, 2446:2931].max(axis=2) > 170).sum()
+        if outside:
+            fail(f"{tab} at 3440x1362 has {outside} bright pixels outside the panel")
+        print(f"PASS wide layout    {tab:16s} all controls inside the panel")
 
     print(f"\nwalkthrough gate: PASS ({len(rows)} steps, artifacts in {outdir})")
     return 0
