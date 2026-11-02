@@ -691,10 +691,11 @@ pub fn back_destination(screen: &MenuScreen) -> Option<MenuScreen> {
     }
 }
 
-/// Sound played when a screen transition starts: the shipped
-/// `sound/glue/swishin.wav` (the retail "screen in" cue).
-pub const TRANSITION_SOUND: &str = "ui_swish";
-/// Sound played when a control is pressed: `sound/glue/mousedown2.wav`.
+/// Retail CEF menu cues (verified against the live client on 2026-11-02):
+/// hover -> `sound/glue/mouseover.wav`, press -> `sound/glue/mousedown2.wav`.
+/// Screen changes have no dedicated cue: the press that triggers them is the
+/// only sound (the CEF bundle sends only `GLUSND_MOUSE_OVER` and
+/// `GLUSND_MOUSE_DOWN`, and the capture has no swishin transient).
 pub const PRESS_SOUND: &str = "ui_click";
 /// Sound played when the pointer enters a control: `sound/glue/mouseover.wav`.
 pub const HOVER_SOUND: &str = "ui_move";
@@ -1283,9 +1284,10 @@ mod tests {
 
     #[test]
     fn menu_sounds_are_the_shipped_glue_cues() {
-        assert_eq!(TRANSITION_SOUND, "ui_swish");
         assert_eq!(PRESS_SOUND, "ui_click");
         assert_eq!(HOVER_SOUND, "ui_move");
+        // The remastered CEF menu has no dedicated transition cue; the press
+        // is the only sound on a screen change (live capture, 2026-11-02).
     }
 
     #[test]

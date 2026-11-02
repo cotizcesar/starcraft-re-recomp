@@ -1,17 +1,17 @@
 step	action	screen	sounds	state
 0	move:700:700	Main	ui_move	
-1	click	GameType	ui_swish	
+1	click	GameType	ui_click	
 2	move:1103:618	GameType		
-3	key:L	Lan	ui_swish	lan_sel=0 entries=0 status=no games found (H to host)
+3	key:L	Lan	ui_click	lan_sel=0 entries=0 status=no games found (H to host)
 4	fixture:lan-peer	Lan		lan_sel=0 entries=1 status=no games found (H to host)
 5	fixture:lan-peer	Lan		lan_sel=0 entries=2 status=no games found (H to host)
 6	move:1000:763	Lan	ui_move	lan_sel=0 entries=2 status=no games found (H to host)
 7	click	Lan	ui_click	lan_sel=1 entries=2 status=no games found (H to host)
 8	move:1000:763	Lan		lan_sel=1 entries=2 status=no games found (H to host)
 9	click	Lan		lan_sel=1 entries=2 status=join failed: Connection refused (os error 111)
-10	key:Escape	GameType	ui_swish	
+10	key:Escape	GameType	ui_click	
 11	move:1103:618	GameType		
-12	click	Lobby	ui_swish	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+12	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 13	move:1000:1028	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 14	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 15	move:1122:1039	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
@@ -21,9 +21,9 @@ step	action	screen	sounds	state
 19	move:1122:1046	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
 20	click	Lobby	ui_click	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
 21	move:1964:1288	Lobby	ui_move	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
-22	click	Main	ui_swish	
+22	click	Main	ui_click	
 23	move:558:1042	Main	ui_move	
-24	click	Options	ui_swish	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+24	click	Options	ui_click	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 25	move:1100:391	Options	ui_move	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 26	click	Options	ui_click	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 27	move:1000:544	Options	ui_move	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
@@ -65,9 +65,9 @@ step	action	screen	sounds	state
 63	move:700:1254	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
 64	click	Options	ui_click	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 65	move:1860:1254	Options	ui_move	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-66	click	Main	ui_swish	
+66	click	Main	ui_click	
 67	move:558:1123	Main	ui_move	
-68	click	Collections	ui_swish	
+68	click	Collections	ui_click	
 69	move:587:386	Collections	ui_move	
 70	click	Collections	ui_click	
 71	move:963:707	Collections	ui_move	
@@ -75,13 +75,13 @@ step	action	screen	sounds	state
 73	move:1337:1175	Collections	ui_move	
 74	click	Collections	ui_click	
 75	move:2017:1277	Collections	ui_move	
-76	click	Main	ui_swish	
+76	click	Main	ui_click	
 77	move:558:1273	Main	ui_move	
-78	click	Credits	ui_swish	
+78	click	Credits	ui_click	
 79	move:558:1348	Credits	ui_move	
-80	click	Main	ui_swish	
+80	click	Main	ui_click	
 81	move:558:1192	Main	ui_move	
-82	click	Hotkeys	ui_swish	race=Terran sel=None action=None key=None reset=false error=false
+82	click	Hotkeys	ui_click	race=Terran sel=None action=None key=None reset=false error=false
 83	move:471:357	Hotkeys	ui_move	race=Terran sel=None action=None key=None reset=false error=false
 84	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
 85	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
@@ -99,32 +99,32 @@ step	action	screen	sounds	state
 97	click	Hotkeys	ui_click	race=Protoss sel=None action=None key=None reset=false error=false
 98	move:471:357	Hotkeys	ui_move	race=Protoss sel=None action=None key=None reset=false error=false
 99	click	Hotkeys	ui_click	race=Protoss sel=Some(64) action=None key=None reset=false error=false
-100	key:Escape	Main	ui_swish	
+100	key:Escape	Main	ui_click	
 101	move:700:300	Main	ui_move	
-102	click	GameType	ui_swish	
+102	click	GameType	ui_click	
 103	move:1103:618	GameType		
-104	click	Registry	ui_swish	
+104	click	Registry	ui_click	
 105	move:800:390	Registry		
 106	click	Registry	ui_move	
 107	move:1869:1178	Registry		
-108	click	Episode	ui_swish	
+108	click	Episode	ui_click	
 109	move:1262:666	Episode		
-110	click	Mission	ui_swish	
+110	click	Mission	ui_click	
 111	move:1200:670	Mission	ui_move	
 112	click	Mission	ui_click	
 113	move:1477:1015	Mission	ui_move	
-114	click	Episode	ui_swish	
+114	click	Episode	ui_click	
 115	move:1332:1134	Episode		
-116	click	SavedGames	ui_swish	
+116	click	SavedGames	ui_click	
 117	move:600:380	SavedGames	ui_move	
 118	click	SavedGames		
 119	move:1917:1283	SavedGames	ui_move	
-120	click	Episode	ui_swish	
+120	click	Episode	ui_click	
 121	move:1325:1359	Episode		
-122	click	Replays	ui_swish	
+122	click	Replays	ui_click	
 123	move:700:483	Replays	ui_move	
 124	click	Replays		
 125	move:1964:1288	Replays	ui_move	
-126	click	Episode	ui_swish	
+126	click	Episode	ui_click	
 127	move:1967:1242	Episode		
-128	click	Main	ui_swish	
+128	click	Main	ui_click	

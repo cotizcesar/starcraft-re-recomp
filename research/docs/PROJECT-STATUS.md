@@ -204,3 +204,11 @@ capas regeneradas, `ui_diff` 39/39).
     `ui_swish` de las transiciones (1:1 estricto, recomendado) o se mantiene
     como sabor clásico. Evidencia: `docs/session-log.md` 2026-11-02 (66) y
     `engine-rust/docs/retail-sound-mapping.txt`.
+25. Política de sonido del menú corregida (2026-11-02): el retail CEF no
+    reproduce `swishin`/`swishout` al cambiar de panel; solo hover
+    (`mouseover`) y pulsación (`mousedown2`). Se retiró `ui_swish` de las 23
+    transiciones del menú (ahora `ui_click`), se eliminó
+    `menu::TRANSITION_SOUND` y el walkthrough exige `ui_click` en cada
+    transición y ningún swish. Tests 332/332, puertas 43/43 crudo y
+    calibrado, `ui_diff` 39/39. Evidencia: `docs/session-log.md`
+    2026-11-02 (67).

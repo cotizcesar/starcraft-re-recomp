@@ -5,7 +5,8 @@ Feeds a deterministic input script through the real `sc_view` menu handlers
 (via `--menu-script`), then checks:
 
 1. the screen transition sequence covers every menu screen and each change
-   plays exactly one `ui_swish`;
+   plays the retail press cue (`ui_click`), with no dedicated swish (the CEF
+   bundle only sends GLUSND_MOUSE_OVER/DOWN);
 2. `ui_click` fires on control presses and never on a screen change;
    `ui_move` fires when the pointer enters a control;
 3. Options sliders/checkboxes/tabs change the real `GameOptions` values and
@@ -225,9 +226,12 @@ def main() -> int:
     if got != EXPECTED_TRANSITIONS:
         fail(f"transition sequence {got} != {EXPECTED_TRANSITIONS}")
     for row in transitions:
-        if row["sounds"] != "ui_swish":
+        if row["sounds"] != "ui_click":
             fail(f"step {row['step']} changes to {row['screen']} with cues {row['sounds']!r}")
-    print(f"PASS transitions: {len(transitions)} screen changes, each with ui_swish")
+    print(
+        f"PASS transitions: {len(transitions)} screen changes, each with the "
+        "press cue ui_click (no swish: retail CEF has no transition cue)"
+    )
     print("     " + " -> ".join(["Main"] + got))
 
     # ---- 2. cue policy --------------------------------------------------
@@ -256,9 +260,8 @@ def main() -> int:
     if len(hovers) < 25:
         fail(f"only {len(hovers)} pointer entries produced ui_move")
     print(
-        f"PASS sounds: ui_swish on {len(transitions)} screen changes, "
-        f"ui_click on {presses} presses, "
-        f"ui_move on {len(hovers)} pointer entries"
+        f"PASS sounds: ui_click on {presses} presses including "
+        f"{len(transitions)} screen changes, ui_move on {len(hovers)} pointer entries"
     )
     for cue, path in CUE_PATHS.items():
         print(f"     {cue:8s} <- {path}")

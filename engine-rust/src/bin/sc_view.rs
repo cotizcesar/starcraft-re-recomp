@@ -5074,7 +5074,7 @@ impl App {
             }
         }
         if let Some(idx) = target {
-            self.play("ui_swish");
+            self.play("ui_click");
             self.map_index = idx;
             self.start_campaign_mission(idx);
         } else {
@@ -5172,7 +5172,7 @@ impl App {
                         }
                         Key::R => {
                             self.menu_screen = MenuScreen::Registry;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Escape => self.quit = true,
                         _ => {}
@@ -5202,12 +5202,12 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.profile_sel = 0;
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         } else if hit(0.638, 0.884, 0.822, 0.944) {
                             self.registry_after_gametype = false;
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         } else if hit(0.1813, 0.694, 0.3672, 0.743) {
                             self.profiles
                                 .push(format!("Player{}", self.profiles.len() + 1));
@@ -5266,7 +5266,7 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.profile_sel = 0;
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Escape => {
                             self.registry_after_gametype = false;
@@ -5274,7 +5274,7 @@ impl App {
                                 self.menu_screen = t;
                             }
                             self.profile_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5304,7 +5304,7 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.gametype_hover = None;
                                 self.gametype_multi = false;
-                                self.play("ui_swish");
+                                self.play("ui_click");
                             }
                         }
                         return;
@@ -5327,7 +5327,7 @@ impl App {
                             self.menu_screen = MenuScreen::Lan;
                             self.lan.map_index = self.map_index;
                             self.lan_scan();
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Escape => {
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
@@ -5335,7 +5335,7 @@ impl App {
                             }
                             self.gametype_hover = None;
                             self.gametype_multi = false;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5373,7 +5373,7 @@ impl App {
                                 episode: (self.episode_sel + 1) as u8,
                             };
                             self.mission_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         } else if galaxycraft::menu::CAMPAIGN_BUTTONS
                             .iter()
                             .any(|b| inside(b.rect))
@@ -5391,7 +5391,7 @@ impl App {
                                 Some(2) => self.menu_screen = MenuScreen::Replays,
                                 _ => self.menu_screen = MenuScreen::Main,
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         return;
                     }
@@ -5414,27 +5414,27 @@ impl App {
                                 episode: (self.episode_sel + 1) as u8,
                             };
                             self.mission_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::L => {
                             self.menu_screen = MenuScreen::SavedGames;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::C => {
                             self.menu_screen = MenuScreen::Lobby {
                                 map: Some(self.map_index),
                             };
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::R => {
                             self.menu_screen = MenuScreen::Replays;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Escape => {
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5447,7 +5447,7 @@ impl App {
                         Some(MenuHit::Ok) => return self.launch_mission(episode),
                         Some(MenuHit::Cancel) => {
                             self.menu_screen = MenuScreen::Episode;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Some(MenuHit::Row(i)) if i != self.mission_sel => {
                             self.mission_sel = i;
@@ -5471,7 +5471,7 @@ impl App {
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5500,7 +5500,7 @@ impl App {
                         }
                         Key::H => {
                             self.lan_host();
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Up => {
                             self.lan.sel = self.lan.sel.saturating_sub(1);
@@ -5522,7 +5522,7 @@ impl App {
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
                             }
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5542,7 +5542,7 @@ impl App {
                         Some(MenuHit::Cancel) => {
                             self.menu_screen = MenuScreen::Episode;
                             self.save_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Some(MenuHit::Delete) => {
                             if let Some(path) = list.get(self.save_sel) {
@@ -5588,7 +5588,7 @@ impl App {
                                 self.menu_screen = t;
                             }
                             self.save_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5599,13 +5599,13 @@ impl App {
                 if clicked {
                     match hit {
                         Some(MenuHit::Ok) => {
-                            self.play("ui_swish");
+                            self.play("ui_click");
                             self.load_map(self.map_index);
                         }
                         Some(MenuHit::Cancel) => {
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Some(MenuHit::Race(slot)) => {
                             self.lobby_race_open =
@@ -5631,7 +5631,7 @@ impl App {
                 for key in input.keys.iter().copied() {
                     match key {
                         Key::Enter | Key::Space => {
-                            self.play("ui_swish");
+                            self.play("ui_click");
                             self.load_map(self.map_index);
                         }
                         Key::Up => {
@@ -5660,7 +5660,7 @@ impl App {
                                 self.menu_screen = t;
                             }
                             self.profile_sel = 0;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5773,7 +5773,7 @@ impl App {
                         Some(MenuHit::Ok) => {
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 2;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5786,7 +5786,7 @@ impl App {
                             self.menu_screen = MenuScreen::Options {
                                 tab: all[(i + 1) % all.len()],
                             };
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Up => {
                             self.game_options.game_speed =
@@ -5809,14 +5809,14 @@ impl App {
                         Key::Enter | Key::Space => {
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 2;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::Escape => {
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
                             }
                             self.profile_sel = 2;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -5888,7 +5888,7 @@ impl App {
                                 self.menu_screen = t;
                             }
                             self.profile_sel = 4;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         Key::F12 => self.capture_request = true,
                         _ => {}
@@ -5925,7 +5925,7 @@ impl App {
                             self.hotkey_baseline = self.hotkey_bindings.clone();
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 4;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                             return;
                         }
                         if in_rect(1825.0, 1302.0, 2203.0, 1386.0) {
@@ -5935,7 +5935,7 @@ impl App {
                             self.hotkey_binding_error = false;
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 4;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                             return;
                         }
                     }
@@ -6006,7 +6006,7 @@ impl App {
                         }
                         Some(MenuHit::Ok) | Some(MenuHit::Skip) => {
                             self.menu_screen = MenuScreen::Main;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -6015,7 +6015,7 @@ impl App {
                     match key {
                         Key::Enter | Key::Space | Key::Escape => {
                             self.menu_screen = MenuScreen::Main;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -6025,13 +6025,13 @@ impl App {
                 let (_hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     self.menu_screen = MenuScreen::Main;
-                    self.play("ui_swish");
+                    self.play("ui_click");
                 }
                 for key in input.keys.iter().copied() {
                     match key {
                         Key::Enter | Key::Space | Key::Escape => {
                             self.menu_screen = MenuScreen::Main;
-                            self.play("ui_swish");
+                            self.play("ui_click");
                         }
                         _ => {}
                     }
@@ -9489,7 +9489,9 @@ impl App {
 
     /// Run the action of a main-menu entry (shared by Enter and mouse clicks).
     fn activate_main_item(&mut self, idx: usize) {
-        self.play("ui_swish");
+        // The retail CEF menu has no dedicated transition cue: the press is
+        // the only sound (GLUSND_MOUSE_DOWN).  Verified in the live capture.
+        self.play("ui_click");
         // A sub-screen owns the pointer: the main menu must return to its
         // idle animation instead of keeping the button hover clip lit behind
         // the new panel (the retail client captures the mouse in the panel).
@@ -9557,7 +9559,7 @@ impl App {
         };
         self.gametype_hover = None;
         self.gametype_multi = false;
-        self.play("ui_swish");
+        self.play("ui_click");
     }
 
     /// Blend a measured coverage mask over the current framebuffer.  Masks

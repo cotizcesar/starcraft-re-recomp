@@ -1,7 +1,7 @@
 PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples loaded from the retail install
-PASS transitions: 23 screen changes, each with ui_swish
+PASS transitions: 23 screen changes, each with the press cue ui_click (no swish: retail CEF has no transition cue)
      Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Main
-PASS sounds: ui_swish on 23 screen changes, ui_click on 37 presses, ui_move on 47 pointer entries
+PASS sounds: ui_click on 57 presses including 23 screen changes, ui_move on 47 pointer entries
      ui_move  <- sound/glue/mouseover.wav
      ui_click <- sound/glue/mousedown2.wav
      ui_swish <- sound/glue/swishin.wav

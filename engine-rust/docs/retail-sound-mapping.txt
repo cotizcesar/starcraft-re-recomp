@@ -115,3 +115,10 @@ This leaves one product decision: our client currently plays `ui_swish` on
 every menu screen change. Strict 1:1 (evidence above) says remove it; keeping
 it preserves the classic "swoosh" feel but is not present in the remastered
 CEF capture.
+
+--- policy decision (2026-11-02) ---
+Based on the capture above, `ui_swish` was removed from every menu screen
+transition.  The client now plays only the retail press cue (`ui_click`,
+mousedown2.wav) on a menu change, exactly like the CEF bundle
+(GLUSND_MOUSE_DOWN); hover keeps `ui_move` (mouseover.wav).  The 129-step
+walkthrough now asserts `ui_click` on all 23 transitions and no swish.

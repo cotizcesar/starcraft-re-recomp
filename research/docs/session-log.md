@@ -3357,3 +3357,27 @@ están verificados** y las transiciones de panel **no llevan swish**. Queda la
 decisión de producto: quitar `ui_swish` de las transiciones para 1:1 estricto
 (recomendado por la evidencia) o mantenerlo como sabor clásico.
 Evidencia: `engine-rust/docs/retail-sound-mapping.txt`.
+
+## 2026-11-02 (67) — Política de sonido corregida: sin swish en el menú CEF
+
+La captura del retail (2026-11-02 (66)) demostró que el menú CEF remasterizado
+solo reproduce `mouseover.wav` al hover y `mousedown2.wav` al pulsar; los
+cambios de panel no llevan `swishin.wav` (|r| ≤0.11) ni `swishout.wav`
+(≤0.26). Por tanto se retiró `ui_swish` de las **23 transiciones del menú**:
+ahora cada cambio de pantalla reproduce la pulsación (`ui_click`), que es lo
+que hace el bundle CEF con `GLUSND_MOUSE_DOWN`. El hover sigue con `ui_move`.
+
+Cambios:
+- `handle_menu_input`: los 36 `ui_swish` de transiciones pasan a `ui_click`;
+  `activate_main_item`, `finish_gametype` y `launch_mission` también usan la
+  pulsación. Los `ui_swish` que quedan son de rutas fuera del menú CEF
+  (cargar partida, intro, resultado de misión).
+- `menu::TRANSITION_SOUND` desaparece; el test de política verifica
+  `PRESS_SOUND`/`HOVER_SOUND` y documenta que no hay cue de transición.
+- `menu_walkthrough.py`: las 23 transiciones exigen `ui_click` y ningún
+  `ui_swish`; el resto de comprobaciones (Options, Lobby, Hotkeys, LAN,
+  frames) sigue igual.
+
+Verificación: walkthrough **PASS** (129 pasos; 23 transiciones con
+`ui_click`, 57 pulsaciones, 47 hovers), `ui_visual_diff` **43/43** crudo y
+calibrado, `ui_diff` **39/39**, `cargo test` **332/332**, clippy 0.
