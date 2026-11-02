@@ -158,3 +158,14 @@ capas regeneradas, `ui_diff` 39/39).
     de timeline de los clips de campaña al reloj retail de 10,5 fps. Tests
     326/326; puertas 43/43 crudo y calibrado y `ui_diff` 39/39. Evidencia:
     `docs/session-log.md` 2026-11-02 (62).
+21. Options y Lobby interactivos + puerta de walkthrough (2026-11-02):
+    sliders de 7 topes, checks/radios y pestañas de Options con estado real
+    en `GameOptions`; dropdown de raza del Lobby (misma caja/orden que
+    134831, popup byte-idéntico a la región verificada) y filas de LAN
+    clicables. `scripts/menu_walkthrough.py` recorre 105 pasos y comprueba
+    23 transiciones (`ui_swish`), 28 pulsaciones (`ui_click`), 43 hovers
+    (`ui_move`), los valores de Options/Restore y 10 frames idénticos a los
+    renders headless de la puerta 43/43. Tests 332/332; `ui_visual_diff`
+    43/43 crudo y calibrado; `ui_diff` 39/39; hashes de los WAV de UI
+    verificados contra el install. Evidencia: `docs/session-log.md`
+    2026-11-02 (63) y `engine-rust/docs/menu-walkthrough.txt`.

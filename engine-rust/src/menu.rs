@@ -127,8 +127,43 @@ impl HotkeyRace {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GameOptions {
     pub game_speed: f32,
+    /// 0..1 slider positions of the Speed tab (retail seven-stop rails).
+    pub key_scroll: f32,
+    pub mouse_scroll: f32,
+    pub mouse_sensitivity: f32,
     pub music_volume: f32,
     pub sfx_volume: f32,
+    pub use_mouse_sensitivity: bool,
+    pub mouse_scaling: bool,
+    pub hardware_cursor: bool,
+    pub unit_speech: bool,
+    pub unit_acks: bool,
+    pub sound_background: bool,
+    pub building_sounds: bool,
+    pub cinematic_subtitles: bool,
+    pub original_voice_overs: bool,
+    pub original_1998_campaign: bool,
+    /// Video tab state (all rendered, so the mouse can toggle them).
+    pub video_fps_cap: bool,
+    pub video_vsync: bool,
+    pub video_hd: bool,
+    pub video_environment: bool,
+    pub video_lighting: bool,
+    pub video_smooth_turning: bool,
+    pub video_shadow_stacking: bool,
+    pub video_pillarbox: bool,
+    /// Game tab state: four gameplay checks, the friends notification check,
+    /// the portrait mode (0 animated, 1 still, 2 disabled) and the mini-map
+    /// position (0 left corner, 1 standard).
+    pub game_timer: bool,
+    pub game_color_cycling: bool,
+    pub game_language_filter: bool,
+    pub game_bonus_skins: bool,
+    pub game_friend_notifications: bool,
+    pub portraits: u8,
+    pub minimap_position: u8,
+    /// Network tab: prefer the retail discovery port.
+    pub network_prefer_6112: bool,
     pub fog: bool,
     pub subtitles: bool,
     pub tips_at_startup: bool,
@@ -138,8 +173,37 @@ impl Default for GameOptions {
     fn default() -> Self {
         Self {
             game_speed: 1.0,
-            music_volume: 0.8,
-            sfx_volume: 0.8,
+            key_scroll: 0.5,
+            mouse_scroll: 0.5,
+            mouse_sensitivity: 0.5,
+            music_volume: 0.25,
+            sfx_volume: 0.5,
+            use_mouse_sensitivity: true,
+            mouse_scaling: false,
+            hardware_cursor: true,
+            unit_speech: true,
+            unit_acks: true,
+            sound_background: true,
+            building_sounds: true,
+            cinematic_subtitles: true,
+            original_voice_overs: false,
+            original_1998_campaign: false,
+            video_fps_cap: true,
+            video_vsync: true,
+            video_hd: true,
+            video_environment: true,
+            video_lighting: true,
+            video_smooth_turning: true,
+            video_shadow_stacking: true,
+            video_pillarbox: false,
+            game_timer: false,
+            game_color_cycling: true,
+            game_language_filter: true,
+            game_bonus_skins: true,
+            game_friend_notifications: true,
+            portraits: 0,
+            minimap_position: 0,
+            network_prefer_6112: false,
             fog: true,
             subtitles: true,
             tips_at_startup: false,
@@ -635,6 +699,20 @@ pub const PRESS_SOUND: &str = "ui_click";
 /// Sound played when the pointer enters a control: `sound/glue/mouseover.wav`.
 pub const HOVER_SOUND: &str = "ui_move";
 
+/// Seven-stop slider value from a pointer x inside `x0..x1` (the retail
+/// rails have seven detents between their 16/17 px end pads).
+pub fn slider_step(x: f32, x0: f32, x1: f32) -> usize {
+    let sx0 = x0 + 16.0;
+    let sx1 = x1 - 17.0;
+    let t = ((x - sx0) / (sx1 - sx0).max(1.0)).clamp(0.0, 1.0);
+    (t * 6.0).round() as usize
+}
+
+/// Fraction 0..1 of a seven-stop slider step.
+pub fn slider_frac(step: usize) -> f32 {
+    step.min(6) as f32 / 6.0
+}
+
 /// Measured control rectangles in 2560x1440 content-box pixels, shared by the
 /// drawing code and the hit-testing code so they cannot diverge.
 pub type HitRect = (f32, f32, f32, f32);
@@ -661,6 +739,99 @@ pub const OPTIONS_TABS: [HitRect; 5] = [
 ];
 pub const OPTIONS_BUTTONS: [HitRect; 2] =
     [(513.0, 1212.0, 387.0, 84.0), (1672.0, 1212.0, 378.0, 84.0)];
+
+/// Video tab: Enable FPS Cap (top of the right column) and the seven
+/// checkboxes at y 668 + 54i.
+pub const OPTIONS_CHECKS_VIDEO: [HitRect; 8] = [
+    (1456.0, 341.0, 430.0, 29.0),
+    (1456.0, 668.0, 430.0, 29.0),
+    (1456.0, 722.0, 430.0, 29.0),
+    (1456.0, 776.0, 430.0, 29.0),
+    (1456.0, 830.0, 430.0, 29.0),
+    (1456.0, 884.0, 430.0, 29.0),
+    (1456.0, 938.0, 430.0, 29.0),
+    (1456.0, 992.0, 430.0, 29.0),
+];
+/// Game tab: the four gameplay checkboxes, the friends checkbox and the two
+/// radio groups (portraits 900/1075/1190 at y 752, mini-map 900/1096 at 869).
+pub const OPTIONS_CHECKS_GAME: [HitRect; 10] = [
+    (900.0, 389.0, 430.0, 29.0),
+    (900.0, 443.0, 430.0, 29.0),
+    (900.0, 497.0, 430.0, 29.0),
+    (900.0, 551.0, 430.0, 29.0),
+    (900.0, 941.0, 430.0, 29.0),
+    (896.0, 746.0, 165.0, 46.0),
+    (1071.0, 746.0, 110.0, 46.0),
+    (1186.0, 746.0, 120.0, 46.0),
+    (896.0, 863.0, 190.0, 46.0),
+    (1092.0, 863.0, 160.0, 46.0),
+];
+/// Network tab: `Prefer port 6112`.
+pub const OPTIONS_CHECKS_NETWORK: [HitRect; 1] = [(900.0, 341.0, 430.0, 29.0)];
+
+/// LAN panel geometry (dev lockstep screen): the plate is 360 UI px wide,
+/// 60 + 22*lines tall, centred in the content box; rows are 18 px high.
+pub fn lan_panel_rect(content_w: i32, content_h: i32, lines: usize) -> (i32, i32, i32, i32) {
+    let scale = content_h.max(1) as f32 / 480.0;
+    let bw = (360.0 * scale) as i32;
+    let bh = 60 + lines as i32 * 22;
+    ((content_w - bw) / 2, (content_h - bh) / 2, bw, bh)
+}
+
+pub fn lan_row_rect(panel: (i32, i32, i32, i32), i: usize) -> HitRect {
+    let (bx, by, bw, _) = panel;
+    (
+        (bx + 12) as f32,
+        (by + 44 + i as i32 * 22 - 2) as f32,
+        (bw - 24) as f32,
+        18.0,
+    )
+}
+
+/// Lobby slot rows: the race cell of each of the eight player rows, measured
+/// on 134831 (first ink row y 960, 48 px pitch, race column starts at x 902).
+pub fn lobby_race_bay(i: usize) -> HitRect {
+    (902.0, 958.0 + 48.0 * i as f32, 621.0, 46.0)
+}
+
+/// Live race dropdown: a 5-item list opened from `slot` (same box geometry
+/// as the shipped popup, 55 px rows).
+pub fn lobby_race_item(slot: usize, k: usize) -> HitRect {
+    (
+        902.0,
+        960.0 + 48.0 * slot as f32 + 5.0 + 55.0 * k as f32,
+        441.0,
+        52.0,
+    )
+}
+
+/// Options sliders (rail boxes) and checkboxes, measured on the Options
+/// captures.  Speed: game speed, key scroll, mouse scroll (left) and mouse
+/// sensitivity (right); Sound: music and digital volume.
+pub const OPTIONS_SLIDERS_SPEED: [HitRect; 4] = [
+    (900.0, 371.0, 516.0, 40.0),
+    (900.0, 524.0, 516.0, 40.0),
+    (900.0, 677.0, 516.0, 40.0),
+    (1456.0, 374.0, 516.0, 40.0),
+];
+pub const OPTIONS_CHECKS_SPEED: [HitRect; 4] = [
+    (1456.0, 341.0, 430.0, 29.0),
+    (1456.0, 497.0, 430.0, 29.0),
+    (1456.0, 551.0, 430.0, 29.0),
+    (1456.0, 605.0, 430.0, 29.0),
+];
+pub const OPTIONS_SLIDERS_SOUND: [HitRect; 2] =
+    [(900.0, 374.0, 516.0, 40.0), (900.0, 530.0, 516.0, 40.0)];
+pub const OPTIONS_CHECKS_SOUND: [HitRect; 8] = [
+    (1456.0, 341.0, 430.0, 29.0),
+    (1456.0, 395.0, 430.0, 29.0),
+    (1456.0, 449.0, 430.0, 29.0),
+    (1456.0, 503.0, 430.0, 29.0),
+    (1456.0, 557.0, 430.0, 29.0),
+    (1456.0, 611.0, 430.0, 29.0),
+    (1456.0, 665.0, 430.0, 29.0),
+    (1456.0, 719.0, 430.0, 29.0),
+];
 
 /// Collections grid (11 cells, 353x224; the clipped 4th row keeps 34 px) and
 /// the Ok button.  Cell order matches the reference: console x3, unit x2,
@@ -1163,5 +1334,103 @@ mod tests {
         ] {
             assert_eq!(back_destination(&screen), Some(MenuScreen::Main));
         }
+    }
+
+    #[test]
+    fn overlapping_footer_hot_areas_win_over_the_tall_entries() {
+        // Options label ink starts at y=347.33 UI, inside the 15 px band where
+        // Multiplayer's 160 px hotbox overlaps the footer column.  The footer
+        // entries are later in the dialog, so they must win the hit test.
+        let (scale, ox, oy) = (3.0f32, 320, 0);
+        let options = 320 + (79.0 * scale) as i32;
+        let y = (347.6 * scale) as i32; // inside both Multiplayer and Options
+        assert_eq!(main_entry_at(scale, ox, oy, options, y), Some(2));
+        // Every footer label centre hits its own entry even in that band.
+        for label in MAIN_LABELS.iter().filter(|l| l.idx >= 2 && l.idx <= 6) {
+            let x = ox + (label.x * scale) as i32;
+            let top = oy + (label.y * scale) as i32;
+            assert_eq!(
+                main_entry_at(scale, ox, oy, x, top + 4),
+                Some(label.idx),
+                "footer entry {} must win the overlap band",
+                label.idx
+            );
+        }
+    }
+
+    #[test]
+    fn slider_steps_map_to_the_seven_retail_detents() {
+        assert_eq!(slider_step(900.0, 900.0, 1416.0), 0);
+        assert_eq!(slider_step(1416.0, 900.0, 1416.0), 6);
+        // Centre of the rail is the middle detent.
+        assert_eq!(slider_step(1158.0, 900.0, 1416.0), 3);
+        for step in 0..=6 {
+            assert!((slider_frac(step) - step as f32 / 6.0).abs() < 1e-6);
+        }
+        assert_eq!(slider_frac(9), 1.0, "clamped");
+    }
+
+    #[test]
+    fn options_control_rects_are_inside_the_panel() {
+        // The plate is 515..2047 x 175..1150; every control must sit inside.
+        for r in OPTIONS_SLIDERS_SPEED
+            .iter()
+            .chain(OPTIONS_CHECKS_SPEED.iter())
+            .chain(OPTIONS_SLIDERS_SOUND.iter())
+            .chain(OPTIONS_CHECKS_SOUND.iter())
+        {
+            assert!(r.0 >= 515.0 && r.0 + r.2 <= 2047.0, "{r:?}");
+            assert!(r.1 >= 175.0 && r.1 + r.3 <= 1150.0, "{r:?}");
+        }
+        assert_eq!(OPTIONS_SLIDERS_SPEED[0], (900.0, 371.0, 516.0, 40.0));
+        assert_eq!(OPTIONS_SLIDERS_SPEED[3].0, 1456.0);
+    }
+
+    #[test]
+    fn lobby_race_hit_rects_follow_the_measured_rows() {
+        let bay0 = lobby_race_bay(0);
+        assert_eq!(bay0, (902.0, 958.0, 621.0, 46.0));
+        let bay7 = lobby_race_bay(7);
+        assert_eq!(bay7.1, 958.0 + 48.0 * 7.0);
+        // Rows do not overlap and stay inside the slot panel (855..1434).
+        for i in 0..7 {
+            let a = lobby_race_bay(i);
+            let b = lobby_race_bay(i + 1);
+            assert!(a.1 + a.3 <= b.1, "row {i} overlaps the next");
+        }
+        assert!(bay7.1 + bay7.3 <= 1434.0);
+        // The dropdown items sit under their slot and keep a 55 px pitch.
+        let item0 = lobby_race_item(1, 0);
+        let item1 = lobby_race_item(1, 1);
+        assert_eq!(item1.1 - item0.1, 55.0);
+        assert_eq!(item0.0, 902.0);
+        assert!(item0.1 >= lobby_race_bay(1).1);
+    }
+
+    #[test]
+    fn remaining_option_controls_are_reachable() {
+        for r in OPTIONS_CHECKS_VIDEO
+            .iter()
+            .chain(OPTIONS_CHECKS_GAME.iter())
+            .chain(OPTIONS_CHECKS_NETWORK.iter())
+        {
+            assert!(r.0 >= 515.0 && r.0 + r.2 <= 2047.0, "{r:?}");
+            assert!(r.1 >= 175.0 && r.1 + r.3 <= 1150.0, "{r:?}");
+        }
+        assert_eq!(OPTIONS_CHECKS_VIDEO[0].1, 341.0);
+        assert_eq!(OPTIONS_CHECKS_VIDEO[7].1, 992.0);
+        assert_eq!(OPTIONS_CHECKS_GAME[5].0, 896.0);
+        assert_eq!(OPTIONS_CHECKS_NETWORK[0], (900.0, 341.0, 430.0, 29.0));
+    }
+
+    #[test]
+    fn lan_rows_are_clickable_inside_the_panel() {
+        let panel = lan_panel_rect(2560, 1440, 4);
+        assert_eq!(panel.2, 1080);
+        let row = lan_row_rect(panel, 2);
+        assert!(row.0 >= panel.0 as f32 && row.0 + row.2 <= (panel.0 + panel.2) as f32);
+        assert!(row.1 >= panel.1 as f32);
+        let next = lan_row_rect(panel, 3);
+        assert_eq!(next.1 - row.1, 22.0);
     }
 }

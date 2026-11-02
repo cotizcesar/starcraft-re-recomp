@@ -3187,3 +3187,64 @@ junto a los tests ya existentes de menu (151/105 frames a 10,5 fps) y cursor
 Verificación: `ui_visual_diff.py` **43/43** crudo y **43/43** calibrado,
 `ui_diff.py` **39/39**, `cargo test` **326/326**, `clippy --all-targets
 -- -D warnings` **0**, `cargo build --release --bin sc_view` OK.
+
+## 2026-11-02 (63) — Options y Lobby interactivos + puerta de walkthrough
+
+Se cierra el hueco que quedaba del menú: los controles que solo se dibujaban
+ya aceptan ratón y su estado es real, y un arnés guionizado demuestra
+transiciones, sonidos y frames sin inyección sintética en X11/Wayland.
+
+**Options (5 pestañas)**. `GameOptions` gana los campos que el CEF pinta
+(`key_scroll`, `mouse_scroll`, `mouse_sensitivity`, `use_mouse_sensitivity`,
+`mouse_scaling`, `hardware_cursor`, los 8 checks de Sound, los 8 de Video,
+los 4 de Game + notificaciones, `portraits`, `minimap_position` y
+`network_prefer_6112`). Las tablas medidas en `menu.rs`
+(`OPTIONS_SLIDERS_SPEED/SOUND`, `OPTIONS_CHECKS_SPEED/SOUND/VIDEO/GAME/
+NETWORK`) son la única fuente de geometría: `MenuHit::OptSlider(i)` lleva el
+clic a uno de los 7 topes del riel (`slider_step`/`slider_frac`) y
+`MenuHit::OptCheck(i)` conmuta el check/radio de esa pestaña. Restore to
+Default vuelve a `GameOptions::default()`. Verificado en el walkthrough:
+speed 1.00→0.67, key 0.50→0.17, mouse 0.50→0.83 (los tres topes pulsados),
+music 0.25→0.50, sfx 0.50→0.00, 10 estados de checks distintos, y Restore
+deja speed=1.00/music=0.25.
+
+**Lobby**. `lobby_race_open: Option<usize>` + `MenuHit::Race(slot)` /
+`RacePick(slot,k)`: clic en la celda de raza abre el desplegable del slot,
+el ítem bajo el puntero se resalta y al pulsarlo se escribe
+`lobby_races[slot]`. El desplegable vivo usa la misma caja, orden y pitch que
+el popup de la captura 134831 (Zerg/Terran/Protoss/Random, 55 px); el frame
+del walkthrough con el popup abierto es **byte-idéntico** (región
+900..1345 x 999..1279, diff 0.0) al render `lobby` que la puerta visual ya
+compara con la captura. El estado final del walkthrough es
+`[Terran, Zerg, Random, ...]`.
+
+**LAN**. Las filas del panel de lockstep ya seleccionan/unen con ratón
+(`lan_panel_rect`/`lan_row_rect` compartidos por dibujo y entrada); la
+pantalla se alcanza con `L` desde Game Type y vuelve con Escape
+(`back_destination`). Es una pantalla de arnés, no una captura retail, así
+que no se le inventan botones.
+
+**Puerta nueva (`scripts/menu_walkthrough.py`)**. Ejecuta `sc_view
+--menu-script` (105 pasos), que alimenta `MenuInput` a los manejadores
+reales, y comprueba:
+- 23 cambios de pantalla, cada uno con exactamente `ui_swish`;
+- 28 pulsaciones con `ui_click`, 43 entradas de puntero con `ui_move`, y
+  ningún `ui_swish` en un clic que no cambia de pantalla;
+- 5 pestañas de Options, valores de sliders/checks y Restore;
+- razas del Lobby;
+- 10 pantallas con frame **idéntico** (max diff 0) al render headless que la
+  puerta 43/43 compara contra el original, y el popup del Lobby idéntico a
+  la región verificada de 134831.
+
+La política de sonidos se apoya en los ficheros retail ya fijados por
+SHA-256 en `tests/retail.rs` (mismo test que corre con `SC_INSTALL`):
+`ui_move` ← `sound/glue/mouseover.wav`, `ui_click` ←
+`sound/glue/mousedown2.wav`, `ui_swish` ← `sound/glue/swishin.wav`.
+
+Verificación: `menu_walkthrough.py` **PASS** (105 pasos; tabla en
+`engine-rust/docs/menu-walkthrough.txt`), `ui_visual_diff.py` **43/43**
+crudo y **43/43** calibrado, `ui_diff.py` **39/39**, `cargo test`
+**332/332**, `clippy --all-targets -- -D warnings` **0**,
+`cargo build --release --bin sc_view` OK, y
+`SC_INSTALL=… cargo test --test retail casc_returns_the_documented_retail_files`
+**ok** (hashes de los tres WAV de UI).

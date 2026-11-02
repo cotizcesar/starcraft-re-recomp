@@ -686,6 +686,13 @@ impl Default for LanUi {
     }
 }
 
+/// One menu input tick (keys pressed this frame, pointer, left button).
+struct MenuInput {
+    keys: Vec<Key>,
+    mouse: Option<(i32, i32)>,
+    mouse_down: bool,
+}
+
 /// Control under the pointer on a sub-screen (shared by every branch so
 /// hover/click sounds and hit geometry stay consistent).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -697,6 +704,10 @@ enum MenuHit {
     Row(usize),
     Tab(usize),
     Cell(usize),
+    OptSlider(usize),
+    OptCheck(usize),
+    Race(usize),
+    RacePick(usize, usize),
     Equip,
     Skip,
 }
@@ -888,6 +899,11 @@ struct App {
     /// Control under the pointer on the current sub-screen (drives the
     /// hover sound).
     menu_hover: Option<MenuHit>,
+    /// Lobby slot whose race dropdown is open (`None` = closed).
+    lobby_race_open: Option<usize>,
+    /// Cue names played this session (used by the scripted walkthrough to
+    /// prove the sound policy; bounded to the last 512 entries).
+    sound_log: Vec<String>,
     /// Collections cell selected in the grid (drives the preview column).
     collection_sel: usize,
     /// `--menu-at` / `--menu-phase` pins, shared with the campaign clips so
@@ -2393,6 +2409,128 @@ fn scale_i_hud(scale: f32) -> i32 {
     (scale * 0.85).round().clamp(1.0, 3.0) as i32
 }
 
+/// Map a script key name to a minifb key.
+fn script_key(name: &str) -> Key {
+    match name {
+        "Up" => Key::Up,
+        "Down" => Key::Down,
+        "Left" => Key::Left,
+        "Right" => Key::Right,
+        "Return" | "Enter" => Key::Enter,
+        "Escape" | "Esc" => Key::Escape,
+        "Tab" => Key::Tab,
+        "Space" => Key::Space,
+        "Delete" => Key::Delete,
+        "L" => Key::L,
+        "R" => Key::R,
+        _ => Key::Unknown,
+    }
+}
+
+/// Scripted menu walkthrough: feeds synthetic `MenuInput` ticks through the
+/// real menu handlers, writes one BMP per step and a TSV with the screen and
+/// the sound cues each step produced.  `GC_WALK_DIR` overrides the output
+/// directory (default `/tmp/opencode/walk`).
+fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
+    let dir = std::env::var("GC_WALK_DIR").unwrap_or_else(|_| "/tmp/opencode/walk".into());
+    let _ = std::fs::create_dir_all(&dir);
+    let mut log = String::from("step\taction\tscreen\tsounds\tstate\n");
+    let mut mouse: Option<(i32, i32)> = None;
+    let mut seen = app.sound_log.len();
+    // One frame per screen change (plus the Lobby popup hover frame) keeps
+    // the artifacts small; the TSV still records every step.
+    let mut prev_screen = String::new();
+    for (i, step) in script.split(',').map(str::trim).enumerate() {
+        let mut keys = Vec::new();
+        let mut down = false;
+        if let Some(rest) = step.strip_prefix("move:") {
+            let (x, y) = rest.split_once(':').unwrap_or(("0", "0"));
+            mouse = Some((x.parse().unwrap_or(0), y.parse().unwrap_or(0)));
+        } else if step == "click" {
+            down = true;
+        } else if let Some(k) = step.strip_prefix("key:") {
+            keys.push(script_key(k));
+        }
+        let input = MenuInput {
+            keys,
+            mouse,
+            mouse_down: down,
+        };
+        app.update_view(fb);
+        app.handle_menu_input(&input);
+        app.update_view(fb);
+        app.draw_menu(fb);
+        let screen = format!("{:?}", app.menu_screen)
+            .split([' ', '{'])
+            .next()
+            .unwrap_or("?")
+            .to_string();
+        if screen != prev_screen || step == "move:1122:1039" {
+            let path = format!("{dir}/walk-{i:02}-{screen}.bmp");
+            let _ = fb.write_bmp(std::path::Path::new(&path));
+        }
+        prev_screen = screen.clone();
+        let sounds: Vec<String> = app.sound_log[seen..].to_vec();
+        seen = app.sound_log.len();
+        let o = &app.game_options;
+        let bit = |v: bool| if v { '1' } else { '0' };
+        let flags: String = [
+            o.video_fps_cap,
+            o.video_vsync,
+            o.video_hd,
+            o.video_environment,
+            o.video_lighting,
+            o.video_smooth_turning,
+            o.video_shadow_stacking,
+            o.video_pillarbox,
+            o.game_timer,
+            o.game_color_cycling,
+            o.game_language_filter,
+            o.game_bonus_skins,
+            o.game_friend_notifications,
+            o.portraits == 1,
+            o.portraits == 2,
+            o.minimap_position == 1,
+            o.network_prefer_6112,
+            o.unit_speech,
+            o.unit_acks,
+            o.sound_background,
+            o.building_sounds,
+            o.subtitles,
+            o.cinematic_subtitles,
+            o.original_voice_overs,
+            o.original_1998_campaign,
+            o.use_mouse_sensitivity,
+            o.mouse_scaling,
+            o.hardware_cursor,
+        ]
+        .iter()
+        .map(|v| bit(*v))
+        .collect();
+        let state = match &app.menu_screen {
+            MenuScreen::Options { tab } => format!(
+                "tab={tab:?} speed={:.2} key={:.2} mouse={:.2} sens={:.2} music={:.2} sfx={:.2} flags={flags}",
+                o.game_speed,
+                o.key_scroll,
+                o.mouse_scroll,
+                o.mouse_sensitivity,
+                o.music_volume,
+                o.sfx_volume
+            ),
+            MenuScreen::Lobby { .. } => format!("races={:?}", app.lobby_races),
+            _ => String::new(),
+        };
+        log.push_str(&format!(
+            "{i}\t{step}\t{screen}\t{}\t{state}\n",
+            sounds.join("+")
+        ));
+    }
+    if let Err(e) = std::fs::write(format!("{dir}/walk.tsv"), &log) {
+        eprintln!("walk.tsv write failed: {e}");
+    }
+    print!("{log}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut chk: Option<PathBuf> = None;
@@ -2406,6 +2544,7 @@ fn main() {
     let mut height = VIEW_H;
     let mut shot: Option<PathBuf> = None;
     let mut shot_screen = String::from("menu");
+    let mut menu_script: Option<String> = None;
     let mut start_screen: Option<String> = None;
     let mut freeze = false;
     let mut fullscreen = false;
@@ -2492,6 +2631,10 @@ fn main() {
             }
             "--shot-screen" => {
                 shot_screen = args[i + 1].clone();
+                i += 2;
+            }
+            "--menu-script" => {
+                menu_script = Some(args[i + 1].clone());
                 i += 2;
             }
             "--replay" => {
@@ -2847,6 +2990,8 @@ fn main() {
         campaign_layers: None,
         episode_hover: None,
         menu_hover: None,
+        lobby_race_open: None,
+        sound_log: Vec::new(),
         collection_sel: 0,
         menu_at,
         menu_phases,
@@ -2927,6 +3072,14 @@ fn main() {
     // runs, but into a BMP instead of a window.  This lets the campaign
     // menu, retail briefing and mission screens be checked without an X
     // server or a window manager.
+    if let Some(script) = menu_script {
+        app.intro = false;
+        app.menu = true;
+        app.menu_screen = MenuScreen::Main;
+        app.profile_sel = 0;
+        run_menu_script(&mut app, &mut fb, &script);
+        return;
+    }
     if shot.is_some() || start_screen.is_some() {
         if let Some(name) = &start_screen {
             shot_screen = name.clone();
@@ -3517,8 +3670,12 @@ fn draw_unbound_badge(fb: &mut Framebuffer, bx: i32, by: i32, dx: i32, dy: i32) 
 }
 
 impl App {
-    fn play(&self, name: &str) {
+    fn play(&mut self, name: &str) {
         self.audio.play_named(&self.sounds, name);
+        self.sound_log.push(name.to_string());
+        if self.sound_log.len() > 512 {
+            self.sound_log.drain(..256);
+        }
     }
 
     /// Apply a rebind and run CEF's per-unit collision rules.
@@ -4879,40 +5036,57 @@ impl App {
         }
     }
 
+    /// Input snapshot for one menu tick.  Live play fills it from the window;
+    /// `--menu-script` fills it from a script so the real menu code can be
+    /// walked headlessly (screens + sounds) without synthetic X11 events.
     fn handle_menu(&mut self, window: &Window) {
+        let input = MenuInput {
+            keys: window.get_keys_pressed(KeyRepeat::No),
+            mouse: window
+                .get_unscaled_mouse_pos(MouseMode::Clamp)
+                .map(|(x, y)| (x as i32, y as i32)),
+            mouse_down: window.get_mouse_down(MouseButton::Left),
+        };
+        self.handle_menu_input(&input);
+    }
+
+    fn handle_menu_input(&mut self, input: &MenuInput) {
         // Sub-screen navigation for the retail menu flow.  Each screen uses
         // Up/Down + Enter/Esc; the map-list Tab/R shortcuts stay on Main.
         let screen = self.menu_screen.clone();
         match screen {
             MenuScreen::Main => {
                 // Mouse: hover highlights, left click activates.
-                if let Some((mx, my)) = window
-                    .get_unscaled_mouse_pos(MouseMode::Clamp)
-                    .map(|(x, y)| (x as i32, y as i32))
-                {
-                    let rects = self.menu_entry_rects();
-                    let hit = rects
-                        .iter()
-                        .find(|(_, r)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3);
-                    if let Some((idx, _)) = hit {
-                        self.set_main_hover(Some(*idx));
-                        if *idx != self.profile_sel {
-                            self.profile_sel = *idx;
+                if let Some((mx, my)) = input.mouse {
+                    // Use the shipped-hot-area resolver: the footer entries
+                    // overlap the tall Single/Multiplayer boxes and must win
+                    // the hit test (retail z-order).
+                    let hit = galaxycraft::menu::main_entry_at(
+                        self.ui_scale,
+                        self.ui_ox,
+                        self.ui_oy,
+                        mx,
+                        my,
+                    );
+                    if let Some(idx) = hit {
+                        self.set_main_hover(Some(idx));
+                        if idx != self.profile_sel {
+                            self.profile_sel = idx;
                             self.play("ui_move");
                         }
-                        if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                        if input.mouse_down && !self.mouse_was_down {
                             self.mouse_was_down = true;
-                            self.activate_main_item(*idx);
+                            self.activate_main_item(idx);
                             return;
                         }
                     } else {
                         self.set_main_hover(None);
                     }
                 }
-                if !window.get_mouse_down(MouseButton::Left) {
+                if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
                             self.profile_sel = (self.profile_sel + 7) % 8;
@@ -4963,10 +5137,7 @@ impl App {
                 // Mouse: the registry panel is a real dialog.  Its normalized
                 // rects come from `draw_registry` so drawing and hit-testing
                 // cannot diverge.
-                if let Some((mx, my)) = window
-                    .get_unscaled_mouse_pos(MouseMode::Clamp)
-                    .map(|(x, y)| (x as i32, y as i32))
-                {
+                if let Some((mx, my)) = input.mouse {
                     let (cx, cy, cw, ch) = self.content_box;
                     let hit = |x0: f32, y0: f32, x1: f32, y1: f32| {
                         mx >= cx + (cw as f32 * x0) as i32
@@ -4974,7 +5145,7 @@ impl App {
                             && my >= cy + (ch as f32 * y0) as i32
                             && my < cy + (ch as f32 * y1) as i32
                     };
-                    if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                    if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if hit(0.638, 0.788, 0.822, 0.848) {
                             if self.registry_after_gametype {
@@ -5013,10 +5184,10 @@ impl App {
                         return;
                     }
                 }
-                if !window.get_mouse_down(MouseButton::Left) {
+                if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
                             self.profile_sel = self.profile_sel.saturating_sub(1);
@@ -5068,21 +5239,18 @@ impl App {
                 // the wordmark buttons and `Cancel`, and a left click chooses
                 // the entry.  The menu behind stays idle (no hover clip).
                 self.main_cursor = None;
-                let hit = window
-                    .get_unscaled_mouse_pos(MouseMode::Clamp)
-                    .map(|(x, y)| (x as i32, y as i32))
-                    .and_then(|(x, y)| {
-                        galaxycraft::menu::gametype_entry_at(
-                            self.ui_scale,
-                            self.ui_ox,
-                            self.ui_oy,
-                            x,
-                            y,
-                        )
-                    });
+                let hit = input.mouse.and_then(|(x, y)| {
+                    galaxycraft::menu::gametype_entry_at(
+                        self.ui_scale,
+                        self.ui_ox,
+                        self.ui_oy,
+                        x,
+                        y,
+                    )
+                });
                 self.gametype_hover = hit.filter(|idx| *idx < 2);
                 if let Some(idx) = hit {
-                    if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                    if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         match idx {
                             0 | 1 => self.finish_gametype(idx == 1),
@@ -5096,10 +5264,10 @@ impl App {
                         return;
                     }
                 }
-                if !window.get_mouse_down(MouseButton::Left) {
+                if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up | Key::Down => {
                             self.episode_sel = 1 - self.episode_sel.min(1);
@@ -5130,10 +5298,7 @@ impl App {
             MenuScreen::Episode => {
                 // Mouse: the three episode slots and the four shipped command
                 // controls (`glucmpgn` ids 8/7/6/5/10/11/9).
-                if let Some((mx, my)) = window
-                    .get_unscaled_mouse_pos(MouseMode::Clamp)
-                    .map(|(x, y)| (x as i32, y as i32))
-                {
+                if let Some((mx, my)) = input.mouse {
                     let (cx, cy, cw, ch) = self.content_box;
                     let (scale, ox) = galaxycraft::menu::campaign_scale(cw, ch);
                     let expansion = self.episode_sel >= 3;
@@ -5148,7 +5313,7 @@ impl App {
                     };
                     let slot = slots.iter().position(|s| inside(s.button));
                     self.episode_hover = slot;
-                    if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                    if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if let Some(idx) = slot {
                             // Clicking a race selects that episode and opens
@@ -5185,10 +5350,10 @@ impl App {
                         return;
                     }
                 }
-                if !window.get_mouse_down(MouseButton::Left) {
+                if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
                             self.episode_sel = (self.episode_sel + 5) % 6;
@@ -5230,7 +5395,7 @@ impl App {
                 }
             }
             MenuScreen::Mission { episode } => {
-                let (hit, clicked) = self.menu_pointer(window);
+                let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
                         Some(MenuHit::Ok) => return self.launch_mission(episode),
@@ -5245,7 +5410,7 @@ impl App {
                         _ => {}
                     }
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
                             self.mission_sel = self.mission_sel.saturating_sub(1);
@@ -5267,7 +5432,21 @@ impl App {
                 }
             }
             MenuScreen::Lan => {
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                let (hit, clicked) = self.menu_pointer(input);
+                if clicked {
+                    if let Some(MenuHit::Row(i)) = hit {
+                        let entry = i.checked_sub(2);
+                        if let Some(e) = entry.filter(|e| *e < self.lan.entries.len()) {
+                            if self.lan.sel == e {
+                                self.lan_join();
+                            } else {
+                                self.lan.sel = e;
+                                self.play("ui_click");
+                            }
+                        }
+                    }
+                }
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::S => {
                             self.lan_scan();
@@ -5306,7 +5485,7 @@ impl App {
             MenuScreen::SavedGames | MenuScreen::Replays => {
                 let replays = matches!(&self.menu_screen, MenuScreen::Replays);
                 let list = self.save_list(replays);
-                let (hit, clicked) = self.menu_pointer(window);
+                let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
                         Some(MenuHit::Ok) => {
@@ -5333,7 +5512,7 @@ impl App {
                         _ => {}
                     }
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
                             self.save_sel = self.save_sel.saturating_sub(1);
@@ -5370,7 +5549,7 @@ impl App {
                 }
             }
             MenuScreen::Lobby { .. } => {
-                let (hit, clicked) = self.menu_pointer(window);
+                let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
                         Some(MenuHit::Ok) => {
@@ -5382,10 +5561,28 @@ impl App {
                             self.profile_sel = 0;
                             self.play("ui_swish");
                         }
+                        Some(MenuHit::Race(slot)) => {
+                            self.lobby_race_open =
+                                (self.lobby_race_open != Some(slot)).then_some(slot);
+                            self.play("ui_click");
+                        }
+                        Some(MenuHit::RacePick(slot, k)) => {
+                            let race = [
+                                LobbyRace::Zerg,
+                                LobbyRace::Terran,
+                                LobbyRace::Protoss,
+                                LobbyRace::Random,
+                            ][k.min(3)];
+                            if slot < self.lobby_races.len() {
+                                self.lobby_races[slot] = race;
+                            }
+                            self.lobby_race_open = None;
+                            self.play("ui_click");
+                        }
                         _ => {}
                     }
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Enter | Key::Space => {
                             self.play("ui_swish");
@@ -5424,15 +5621,104 @@ impl App {
                 }
             }
             MenuScreen::Options { tab } => {
-                let (hit, clicked) = self.menu_pointer(window);
+                let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
                         Some(MenuHit::Tab(i)) => {
+                            // A tab switch stays on the same screen: the cue
+                            // is the press sound, not the screen-in swish.
                             let all = OptionsTab::all();
                             self.menu_screen = MenuScreen::Options {
                                 tab: all[i.min(all.len() - 1)],
                             };
-                            self.play("ui_swish");
+                            self.play("ui_click");
+                        }
+                        Some(MenuHit::OptSlider(i)) => {
+                            if let Some((mx, _)) = input.mouse {
+                                let (cx, _cy, cw, _ch) = self.content_box;
+                                let x = (mx - cx) as f32 / (cw as f32 / 2560.0);
+                                let (x0, x1) = match (tab, i) {
+                                    (OptionsTab::Speed, 0..=2) => (900.0, 1416.0),
+                                    (OptionsTab::Speed, _) => (1456.0, 1972.0),
+                                    (OptionsTab::Sound, _) => (900.0, 1416.0),
+                                    _ => (900.0, 1416.0),
+                                };
+                                let step = galaxycraft::menu::slider_step(x, x0, x1);
+                                let f = galaxycraft::menu::slider_frac(step);
+                                match (tab, i) {
+                                    (OptionsTab::Speed, 0) => {
+                                        self.game_options.game_speed = 0.5 + 0.5 * f;
+                                    }
+                                    (OptionsTab::Speed, 1) => self.game_options.key_scroll = f,
+                                    (OptionsTab::Speed, 2) => self.game_options.mouse_scroll = f,
+                                    (OptionsTab::Speed, _) => {
+                                        self.game_options.mouse_sensitivity = f;
+                                    }
+                                    (OptionsTab::Sound, 0) => self.game_options.music_volume = f,
+                                    (OptionsTab::Sound, _) => self.game_options.sfx_volume = f,
+                                    _ => {}
+                                }
+                                self.play("ui_click");
+                            }
+                        }
+                        Some(MenuHit::OptCheck(i)) => {
+                            let o = &mut self.game_options;
+                            match (tab, i) {
+                                (OptionsTab::Speed, 0) => {
+                                    o.use_mouse_sensitivity = !o.use_mouse_sensitivity;
+                                }
+                                (OptionsTab::Speed, 1) => o.mouse_scaling = !o.mouse_scaling,
+                                (OptionsTab::Speed, 2) => o.hardware_cursor = !o.hardware_cursor,
+                                (OptionsTab::Speed, _) => {}
+                                (OptionsTab::Sound, 0) => o.unit_speech = !o.unit_speech,
+                                (OptionsTab::Sound, 1) => o.unit_acks = !o.unit_acks,
+                                (OptionsTab::Sound, 2) => o.sound_background = !o.sound_background,
+                                (OptionsTab::Sound, 3) => o.building_sounds = !o.building_sounds,
+                                (OptionsTab::Sound, 4) => o.subtitles = !o.subtitles,
+                                (OptionsTab::Sound, 5) => {
+                                    o.cinematic_subtitles = !o.cinematic_subtitles;
+                                }
+                                (OptionsTab::Sound, 6) => {
+                                    o.original_voice_overs = !o.original_voice_overs;
+                                }
+                                (OptionsTab::Sound, _) => {
+                                    o.original_1998_campaign = !o.original_1998_campaign;
+                                }
+                                (OptionsTab::Video, 0) => o.video_fps_cap = !o.video_fps_cap,
+                                (OptionsTab::Video, 1) => o.video_vsync = !o.video_vsync,
+                                (OptionsTab::Video, 2) => o.video_hd = !o.video_hd,
+                                (OptionsTab::Video, 3) => {
+                                    o.video_environment = !o.video_environment
+                                }
+                                (OptionsTab::Video, 4) => o.video_lighting = !o.video_lighting,
+                                (OptionsTab::Video, 5) => {
+                                    o.video_smooth_turning = !o.video_smooth_turning;
+                                }
+                                (OptionsTab::Video, 6) => {
+                                    o.video_shadow_stacking = !o.video_shadow_stacking;
+                                }
+                                (OptionsTab::Video, _) => o.video_pillarbox = !o.video_pillarbox,
+                                (OptionsTab::Game, 0) => o.game_timer = !o.game_timer,
+                                (OptionsTab::Game, 1) => {
+                                    o.game_color_cycling = !o.game_color_cycling
+                                }
+                                (OptionsTab::Game, 2) => {
+                                    o.game_language_filter = !o.game_language_filter;
+                                }
+                                (OptionsTab::Game, 3) => o.game_bonus_skins = !o.game_bonus_skins,
+                                (OptionsTab::Game, 4) => {
+                                    o.game_friend_notifications = !o.game_friend_notifications;
+                                }
+                                (OptionsTab::Game, 5) => o.portraits = 0,
+                                (OptionsTab::Game, 6) => o.portraits = 1,
+                                (OptionsTab::Game, 7) => o.portraits = 2,
+                                (OptionsTab::Game, 8) => o.minimap_position = 0,
+                                (OptionsTab::Game, _) => o.minimap_position = 1,
+                                (OptionsTab::Network, _) => {
+                                    o.network_prefer_6112 = !o.network_prefer_6112;
+                                }
+                            }
+                            self.play("ui_click");
                         }
                         Some(MenuHit::Restore) => {
                             self.game_options = GameOptions::default();
@@ -5446,7 +5732,7 @@ impl App {
                         _ => {}
                     }
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Tab => {
                             let all = OptionsTab::all();
@@ -5492,7 +5778,7 @@ impl App {
             }
             MenuScreen::Hotkeys { race } => {
                 if self.hotkey_reset {
-                    for key in window.get_keys_pressed(KeyRepeat::No) {
+                    for key in input.keys.iter().copied() {
                         match key {
                             Key::Escape => {
                                 self.hotkey_reset = false;
@@ -5506,10 +5792,7 @@ impl App {
                             _ => {}
                         }
                     }
-                    if let Some((mx, my)) = window
-                        .get_unscaled_mouse_pos(MouseMode::Clamp)
-                        .map(|(x, y)| (x as i32, y as i32))
-                    {
+                    if let Some((mx, my)) = input.mouse {
                         let (cx, cy, cw, ch) = self.content_box;
                         let hit = |x0: f32, y0: f32, x1: f32, y1: f32| {
                             mx >= cx + (cw as f32 * x0 / 2560.0) as i32
@@ -5517,7 +5800,7 @@ impl App {
                                 && my >= cy + (ch as f32 * y0 / 1440.0) as i32
                                 && my < cy + (ch as f32 * y1 / 1440.0) as i32
                         };
-                        if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                        if input.mouse_down && !self.mouse_was_down {
                             self.mouse_was_down = true;
                             if hit(996.0, 813.0, 1356.0, 879.0) {
                                 self.restore_hotkey_defaults();
@@ -5529,12 +5812,12 @@ impl App {
                             }
                         }
                     }
-                    if !window.get_mouse_down(MouseButton::Left) {
+                    if !input.mouse_down {
                         self.mouse_was_down = false;
                     }
                     return;
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     if let Some(action) = self.hotkey_action {
                         if let Some(c) = key_letter(key) {
                             self.rebind_hotkey(action, c, c.to_ascii_lowercase() as u16);
@@ -5568,13 +5851,10 @@ impl App {
                 // Mouse: race tabs, unit cells and command cards.  The tab
                 // hover edge is what capture 131026 shows (Protoss hovered
                 // while Terran is still the active race).
-                if let Some((mx, my)) = window
-                    .get_unscaled_mouse_pos(MouseMode::Clamp)
-                    .map(|(x, y)| (x as i32, y as i32))
-                {
+                if let Some((mx, my)) = input.mouse {
                     let (cx, cy, cw, ch) = self.content_box;
                     // Bottom "Restore to Default" opens the confirmation dialog.
-                    if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                    if input.mouse_down && !self.mouse_was_down {
                         let in_rect = |x0: f32, y0: f32, x1: f32, y1: f32| {
                             mx >= cx + (cw as f32 * x0 / 2560.0) as i32
                                 && mx < cx + (cw as f32 * x1 / 2560.0) as i32
@@ -5621,7 +5901,7 @@ impl App {
                         let th = (ch as f32 * 0.052083) as i32;
                         if mx >= tx && mx < tx + tw && my >= ty && my < ty + th {
                             tab_hover = Some(*r);
-                            if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                            if input.mouse_down && !self.mouse_was_down {
                                 self.mouse_was_down = true;
                                 self.menu_screen = MenuScreen::Hotkeys { race: *r };
                                 self.hotkey_sel = None;
@@ -5642,7 +5922,7 @@ impl App {
                         .iter()
                         .find(|(_, r)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3)
                         .map(|(id, _)| *id);
-                    if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                    if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if let Some(id) = action_hit {
                             self.hotkey_action = Some(id);
@@ -5655,12 +5935,12 @@ impl App {
                         }
                     }
                 }
-                if !window.get_mouse_down(MouseButton::Left) {
+                if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
             }
             MenuScreen::Collections | MenuScreen::Credits => {
-                let (hit, clicked) = self.menu_pointer(window);
+                let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
                         Some(MenuHit::Cell(i)) => {
@@ -5677,7 +5957,7 @@ impl App {
                         _ => {}
                     }
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Enter | Key::Space | Key::Escape => {
                             self.menu_screen = MenuScreen::Main;
@@ -5688,12 +5968,12 @@ impl App {
                 }
             }
             MenuScreen::Intro { .. } => {
-                let (_hit, clicked) = self.menu_pointer(window);
+                let (_hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     self.menu_screen = MenuScreen::Main;
                     self.play("ui_swish");
                 }
-                for key in window.get_keys_pressed(KeyRepeat::No) {
+                for key in input.keys.iter().copied() {
                     match key {
                         Key::Enter | Key::Space | Key::Escape => {
                             self.menu_screen = MenuScreen::Main;
@@ -8829,11 +9109,9 @@ impl App {
         sel: usize,
         help: &str,
     ) {
-        let (scale, ox, oy) = self.ui_metrics(fb);
-        let bw = (360.0 * scale) as i32;
-        let bh = 60 + lines.len() as i32 * 22;
-        let bx = (fb.width - bw) / 2;
-        let by = (fb.height - bh) / 2;
+        let (cx, cy, cw, ch) = Self::content_rect(fb);
+        let (bx, by, bw, bh) = galaxycraft::menu::lan_panel_rect(cw, ch, lines.len());
+        let (bx, by) = (cx + bx, cy + by);
         for y in by..by + bh {
             for x in bx..bx + bw {
                 let c = fb.get(x, y);
@@ -8841,7 +9119,7 @@ impl App {
             }
         }
         fb.rect_outline(bx, by, bw, bh, Rgb::new(110, 150, 185));
-        fb.text_centered(fb.width / 2, by + 12, title, Rgb::new(220, 230, 245), 2);
+        fb.text_centered(cx + cw / 2, by + 12, title, Rgb::new(220, 230, 245), 2);
         for (i, line) in lines.iter().enumerate() {
             let y = by + 44 + i as i32 * 22;
             let selected = i == sel;
@@ -8861,8 +9139,7 @@ impl App {
                 1,
             );
         }
-        fb.text_centered(fb.width / 2, by + bh - 20, help, Rgb::new(150, 170, 195), 1);
-        let _ = (scale, ox, oy);
+        fb.text_centered(cx + cw / 2, by + bh - 20, help, Rgb::new(150, 170, 195), 1);
     }
 
     fn draw_main_full(&mut self, fb: &mut Framebuffer) {
@@ -9034,6 +9311,18 @@ impl App {
                 } else if inside(m::CREATE_BUTTONS[1]) {
                     Some(MenuHit::Cancel)
                 } else {
+                    if let Some(slot) = self.lobby_race_open {
+                        for k in 0..LobbyRace::all().len() {
+                            if inside(m::lobby_race_item(slot, k)) {
+                                return Some(MenuHit::RacePick(slot, k));
+                            }
+                        }
+                    }
+                    for i in 0..8 {
+                        if inside(m::lobby_race_bay(i)) {
+                            return Some(MenuHit::Race(i));
+                        }
+                    }
                     row_of(m::CREATE_ROWS, 6).map(MenuHit::Row)
                 }
             }
@@ -9059,10 +9348,27 @@ impl App {
                     row_of(rows, 10).map(MenuHit::Row)
                 }
             }
-            MenuScreen::Options { .. } => {
+            MenuScreen::Options { tab } => {
                 for (i, r) in m::OPTIONS_TABS.iter().enumerate() {
                     if inside(*r) {
                         return Some(MenuHit::Tab(i));
+                    }
+                }
+                let (sliders, checks): (&[m::HitRect], &[m::HitRect]) = match tab {
+                    OptionsTab::Speed => (&m::OPTIONS_SLIDERS_SPEED, &m::OPTIONS_CHECKS_SPEED),
+                    OptionsTab::Sound => (&m::OPTIONS_SLIDERS_SOUND, &m::OPTIONS_CHECKS_SOUND),
+                    OptionsTab::Video => (&[], &m::OPTIONS_CHECKS_VIDEO),
+                    OptionsTab::Game => (&[], &m::OPTIONS_CHECKS_GAME),
+                    OptionsTab::Network => (&[], &m::OPTIONS_CHECKS_NETWORK),
+                };
+                for (i, r) in sliders.iter().enumerate() {
+                    if inside(*r) {
+                        return Some(MenuHit::OptSlider(i));
+                    }
+                }
+                for (i, r) in checks.iter().enumerate() {
+                    if inside(*r) {
+                        return Some(MenuHit::OptCheck(i));
                     }
                 }
                 if inside(m::OPTIONS_BUTTONS[0]) {
@@ -9087,6 +9393,22 @@ impl App {
                     None
                 }
             }
+            MenuScreen::Lan => {
+                let lines = 2 + if self.lan.listener.is_some() || self.lan.entries.is_empty() {
+                    1
+                } else {
+                    self.lan.entries.len()
+                };
+                let panel = m::lan_panel_rect(cw, ch, lines);
+                for i in 0..lines {
+                    let r = m::lan_row_rect(panel, i);
+                    let r = (r.0 + cx as f32, r.1, r.2, r.3);
+                    if inside(r) {
+                        return Some(MenuHit::Row(i));
+                    }
+                }
+                None
+            }
             MenuScreen::Credits | MenuScreen::Intro { .. } => Some(MenuHit::Skip),
             _ => None,
         }
@@ -9095,10 +9417,8 @@ impl App {
     /// Pointer state for the current sub-screen: the control under the
     /// cursor (playing `ui_move` when it changes) and an edge-triggered left
     /// click.
-    fn menu_pointer(&mut self, window: &Window) -> (Option<MenuHit>, bool) {
-        let pointer = window
-            .get_unscaled_mouse_pos(MouseMode::Clamp)
-            .map(|(x, y)| (x as i32, y as i32));
+    fn menu_pointer(&mut self, input: &MenuInput) -> (Option<MenuHit>, bool) {
+        let pointer = input.mouse;
         let screen = self.menu_screen.clone();
         let hit = pointer.and_then(|(x, y)| self.menu_hit(&screen, x, y));
         if hit != self.menu_hover {
@@ -9107,16 +9427,10 @@ impl App {
                 self.play("ui_move");
             }
         }
-        let down = window.get_mouse_down(MouseButton::Left);
+        let down = input.mouse_down;
         let clicked = down && !self.mouse_was_down;
         self.mouse_was_down = down;
         (hit, clicked)
-    }
-
-    fn menu_entry_rects(&self) -> Vec<(usize, (i32, i32, i32, i32))> {
-        // One source of truth for drawing and hit-testing (see `menu.rs`,
-        // which also unit-tests that every centre hits its own entry).
-        galaxycraft::menu::main_entry_rects(self.ui_scale, self.ui_ox, self.ui_oy).to_vec()
     }
 
     /// Run the action of a main-menu entry (shared by Enter and mouse clicks).
@@ -11209,6 +11523,59 @@ impl App {
                 );
             }
         }
+        // Live race dropdown: same box, order and pitch as the shipped popup
+        // on 134831 (Zerg / Terran / Protoss / Random).  The highlighted row
+        // is the one under the pointer (retail hover), falling back to the
+        // slot's current race.  The screenshot states above stay identical.
+        if !replays {
+            if let Some(slot) = self.lobby_race_open {
+                let popup_x = cx + (cw as f32 * 0.3516) as i32;
+                let popup_y = row_y(slot) - (ch as f32 * 0.0060) as i32;
+                let popup_w = (cw as f32 * 0.1738) as i32;
+                let popup_h = (ch as f32 * 0.1944) as i32;
+                fb.rect(popup_x, popup_y, popup_w, popup_h, Rgb::new(2, 4, 10));
+                fb.rect_outline(popup_x, popup_y, popup_w, popup_h, CSS_INNER);
+                let options = [
+                    LobbyRace::Zerg,
+                    LobbyRace::Terran,
+                    LobbyRace::Protoss,
+                    LobbyRace::Random,
+                ];
+                let hover_k = match self.menu_hover {
+                    Some(MenuHit::RacePick(hovered, k)) if hovered == slot => Some(k),
+                    _ => None,
+                };
+                for (k, race) in options.iter().enumerate() {
+                    let ty = popup_y
+                        + (ch as f32 * 0.010) as i32
+                        + (k as f32 * ch as f32 * 0.0382) as i32;
+                    let lit = hover_k == Some(k)
+                        || (hover_k.is_none() && self.lobby_races.get(slot) == Some(race));
+                    if lit {
+                        fb.rect(
+                            popup_x + 1,
+                            ty - 2,
+                            popup_w - 2,
+                            (ch as f32 * 0.036) as i32,
+                            Rgb::new(14, 24, 66),
+                        );
+                    }
+                    hd(
+                        self,
+                        fb,
+                        popup_x + (cw as f32 * 0.006) as i32,
+                        ty,
+                        race.label(),
+                        8.5 * scale,
+                        if lit {
+                            Rgb::new(225, 235, 255)
+                        } else {
+                            rgb_green
+                        },
+                    );
+                }
+            }
+        }
         // Yellow scrollbar on the slot list.
         let ssx = slots.0 + sw - (12.0 * scale) as i32;
         fb.rect(
@@ -11664,7 +12031,7 @@ impl App {
                 left,
                 left + col_w,
                 dy(544.0),
-                0.5,
+                self.game_options.key_scroll.clamp(0.0, 1.0),
                 "slow",
                 "fast",
                 dy(579.0),
@@ -11686,7 +12053,7 @@ impl App {
                 left,
                 left + col_w,
                 dy(697.0),
-                0.5,
+                self.game_options.mouse_scroll.clamp(0.0, 1.0),
                 "slow",
                 "fast",
                 dy(732.0),
@@ -11700,7 +12067,7 @@ impl App {
                 right,
                 dy(341.0),
                 dx(29.0),
-                true,
+                self.game_options.use_mouse_sensitivity,
                 true,
                 "Mouse Sensitivity",
                 true,
@@ -11712,7 +12079,7 @@ impl App {
                 right,
                 right_end,
                 dy(394.0),
-                0.5,
+                self.game_options.mouse_sensitivity.clamp(0.0, 1.0),
                 "slow",
                 "fast",
                 dy(429.0),
@@ -11724,13 +12091,16 @@ impl App {
                 &mut self.ui_font,
                 right_end + dxw(1.0),
                 dy(349.0),
-                "50%",
+                &format!(
+                    "{}%",
+                    (self.game_options.mouse_sensitivity.clamp(0.0, 1.0) * 100.0).round() as i32
+                ),
                 px(24.0),
                 white,
             );
             for (i, (label, checked, enabled)) in [
-                ("Use Mouse Scaling", false, true),
-                ("Hardware Cursor", true, true),
+                ("Use Mouse Scaling", self.game_options.mouse_scaling, true),
+                ("Hardware Cursor", self.game_options.hardware_cursor, true),
                 ("Use Mouse Confine", false, false),
             ]
             .iter()
@@ -11771,7 +12141,7 @@ impl App {
                 left,
                 left + col_w,
                 dy(394.0),
-                0.25,
+                self.game_options.music_volume.clamp(0.0, 1.0),
                 "min",
                 "max",
                 dy(430.0),
@@ -11796,7 +12166,7 @@ impl App {
                 left,
                 left + col_w,
                 dy(550.0),
-                0.5,
+                self.game_options.sfx_volume.clamp(0.0, 1.0),
                 "min",
                 "max",
                 dy(586.0),
@@ -11804,14 +12174,23 @@ impl App {
                 px(20.0),
             );
             for (i, (label, checked)) in [
-                ("Unit Speech", true),
-                ("Unit Acknowledgments", true),
-                ("Sound Plays While In Background", true),
-                ("Building Sounds", true),
-                ("Game Subtitles", true),
-                ("Cinematic Subtitles", true),
-                ("Original Unit Voice Overs", false),
-                ("Original 1998 Campaign", false),
+                ("Unit Speech", self.game_options.unit_speech),
+                ("Unit Acknowledgments", self.game_options.unit_acks),
+                (
+                    "Sound Plays While In Background",
+                    self.game_options.sound_background,
+                ),
+                ("Building Sounds", self.game_options.building_sounds),
+                ("Game Subtitles", self.game_options.subtitles),
+                ("Cinematic Subtitles", self.game_options.cinematic_subtitles),
+                (
+                    "Original Unit Voice Overs",
+                    self.game_options.original_voice_overs,
+                ),
+                (
+                    "Original 1998 Campaign",
+                    self.game_options.original_1998_campaign,
+                ),
             ]
             .iter()
             .enumerate()
@@ -11921,7 +12300,7 @@ impl App {
                 right,
                 dy(341.0),
                 dx(29.0),
-                true,
+                self.game_options.video_fps_cap,
                 true,
                 "Enable FPS Cap",
                 false,
@@ -11963,13 +12342,16 @@ impl App {
                 px(20.0),
             );
             for (i, (label, checked)) in [
-                ("Enable Vertical Sync", true),
-                ("HD Graphics", true),
-                ("Environment Effects", true),
-                ("Real-Time Lighting", true),
-                ("Smooth Unit Turning", true),
-                ("Shadow Stacking", true),
-                ("Pillarbox", false),
+                ("Enable Vertical Sync", self.game_options.video_vsync),
+                ("HD Graphics", self.game_options.video_hd),
+                ("Environment Effects", self.game_options.video_environment),
+                ("Real-Time Lighting", self.game_options.video_lighting),
+                (
+                    "Smooth Unit Turning",
+                    self.game_options.video_smooth_turning,
+                ),
+                ("Shadow Stacking", self.game_options.video_shadow_stacking),
+                ("Pillarbox", self.game_options.video_pillarbox),
             ]
             .iter()
             .enumerate()
@@ -12001,10 +12383,13 @@ impl App {
                 white,
             );
             for (i, (label, checked)) in [
-                ("Game Timer", false),
-                ("Enable Color Cycling", true),
-                ("Mature Language Filter", true),
-                ("Show Bonus Skins", true),
+                ("Game Timer", self.game_options.game_timer),
+                ("Enable Color Cycling", self.game_options.game_color_cycling),
+                (
+                    "Mature Language Filter",
+                    self.game_options.game_language_filter,
+                ),
+                ("Show Bonus Skins", self.game_options.game_bonus_skins),
             ]
             .iter()
             .enumerate()
@@ -12052,9 +12437,9 @@ impl App {
                 white,
             );
             for (x, label, selected) in [
-                (900.0f32, "Animated", true),
-                (1075.0, "Still", false),
-                (1190.0, "Disabled", false),
+                (900.0f32, "Animated", self.game_options.portraits == 0),
+                (1075.0, "Still", self.game_options.portraits == 1),
+                (1190.0, "Disabled", self.game_options.portraits == 2),
             ] {
                 opt_radio(
                     fb,
@@ -12078,9 +12463,12 @@ impl App {
                 px(24.0),
                 white,
             );
-            for (i, (label, selected)) in [("Left Corner", true), ("Standard", false)]
-                .iter()
-                .enumerate()
+            for (i, (label, selected)) in [
+                ("Left Corner", self.game_options.minimap_position == 0),
+                ("Standard", self.game_options.minimap_position == 1),
+            ]
+            .iter()
+            .enumerate()
             {
                 opt_radio(
                     fb,
@@ -12101,7 +12489,7 @@ impl App {
                 left,
                 dy(941.0),
                 dx(29.0),
-                true,
+                self.game_options.game_friend_notifications,
                 true,
                 "Friends presence text notifications",
                 false,
@@ -12224,7 +12612,7 @@ impl App {
                 left,
                 dy(341.0),
                 dx(29.0),
-                false,
+                self.game_options.network_prefer_6112,
                 true,
                 "Prefer port 6112",
                 false,
