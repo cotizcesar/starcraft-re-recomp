@@ -48,3 +48,41 @@ Manual step to finish the waveform A/B: run the client where CEF UI audio is
 audible (native Windows, or a Wine/Proton build whose CEF host outputs audio),
 confirm a hover/click is audible, and record that output device. On this
 machine the CEF host emits no UI audio at all, so no recording can contain it.
+
+--- 64-bit client + all-monitor attempt (2026-11-02, later) ---
+The Lutris script was pointed at x86_64/StarCraft.exe (footer "64-bit").
+It spawns the CEF renderer as a separate process:
+  SceneCefBrowser.exe SyncMemName=SceneBrowserSyncMem.340
+Recorded every sink monitor (USB, S/PDIF, Bluetooth, HDMI and a null sink)
+while driving Collections, and polled `pactl list short sink-inputs` every
+50 ms for 8 s. Results:
+  - the only sink-input during the whole run was 3591 -> sink 3494
+    (application.name "StarCraft"); no CEF/SceneCefBrowser stream ever
+    appeared;
+  - the CEF process has no PipeWire/PulseAudio/ALSA descriptors (checked
+    /proc/<cef>/fd), i.e. it does not open an audio backend;
+  - the five pw-record captures are byte-identical (pw-record fell back to
+    the default source for suspended monitors), so the effective capture is
+    the StarCraft stream monitor;
+  - again no transient at CEF clicks (Ok RMS 806 -> 1009 -> 717 around the
+    click, but local correlation with swishin <= 0.06; Collections cell
+    click 590 -> 227 -> 199, no transient). The small Ok rise is the screen
+    change/music, not the swishin waveform.
+So both the 32-bit and 64-bit clients run the CEF UI with a silent audio
+bridge in this Proton/CEF environment.
+
+GLUSND names in the retail binaries (string table, both clients):
+  x86_64/StarCraft.exe 0x140ade580 GLUSND_SWISH_IN
+                       0x140ade5a8 GLUSND_MOUSE_OVER
+                       0x140ade5c0 GLUSND_MOUSE_DOWN
+  (same block contains SWISH_LOCK/SWISH_OUT; x86 has the same table)
+The exact ID->file resolution is not stored as plain path strings or CASC
+keys in the executable (searched both: no `mouseover.wav`, no CKey for the
+three files), so the binary-level evidence is the GLUSND name table plus the
+CEF enum (MOUSE_DOWN 165, MOUSE_OVER 166, SWISH_IN 172) and the matching glue assets.
+
+Manual step to finish the waveform A/B: sign in to Battle.net in the retail
+client (the menu currently shows "[Login]") and/or use a Wine/Proton build
+whose CEF host has a working audio backend, verify a hover/click is audible,
+then record that output. In this environment the CEF host emits no UI audio,
+so no recording can contain the cues.

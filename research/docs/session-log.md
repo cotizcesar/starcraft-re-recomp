@@ -3299,3 +3299,37 @@ Verificación: `menu_walkthrough.py` **PASS** (129 pasos; 23 transiciones,
 37 pulsaciones, 47 hovers, LAN y los 6 frames de Hotkeys), `ui_visual_diff`
 **43/43** crudo y calibrado, `ui_diff` **39/39**, `cargo test` **332/332**,
 `clippy --all-targets -- -D warnings` **0**, release OK.
+
+## 2026-11-02 (65) — CEF 64-bit, todos los monitores y límite de audio
+
+Se repitió la captura con el cliente **64-bit** (`x86_64/StarCraft.exe`, el
+script de Lutris apuntando a ese ejecutable). El cliente arranca el renderer
+CEF como proceso aparte (`SceneCefBrowser.exe SyncMemName=…`). Se grabaron a
+la vez los monitores de USB, S/PDIF, Bluetooth, HDMI y un sink nulo, y se
+sondeó `pactl list short sink-inputs` cada 50 ms durante 8 s:
+
+- el único sink-input del run fue `3591 -> 3494` (`application.name
+  "StarCraft"`); **nunca** apareció un stream de CEF/SceneCefBrowser;
+- el proceso CEF no tiene descriptores de PipeWire/Pulse/ALSA
+  (`/proc/<cef>/fd`), es decir, no abre backend de audio;
+- los cinco `pw-record` salieron idénticos (para monitores suspendidos
+  cayeron al source por defecto), así que la captura efectiva es el monitor
+  del stream de StarCraft;
+- otra vez sin transitorio en clics CEF: Ok 806→1009→717 con correlación
+  local contra `swishin` ≤0.06; clic de celda de Collections 590→227→199.
+
+Conclusión: tanto el cliente 32-bit como el 64-bit ejecutan la UI CEF con el
+puente de audio silencioso en este Proton/CEF. El menú muestra `[Login]`, así
+que el paso manual es iniciar sesión en Battle.net y/o usar un
+Wine/CEF con salida de audio, confirmar que se oye el hover/clic y grabar ese
+dispositivo. En el binario retail están las cadenas `GLUSND_SWISH_IN`
+(0x140ade580), `GLUSND_MOUSE_OVER` (0x140ade5a8) y `GLUSND_MOUSE_DOWN`
+(0x140ade5c0); el enum CEF asigna MOUSE_DOWN 165, MOUSE_OVER 166 y
+SWISH_IN 172, y los assets `mouseover.wav`/`mousedown2.wav`/`swishin.wav`
+están hasheados. La resolución ID→fichero no está como string ni CKey plana
+en el ejecutable (buscado en ambos clientes). Evidencia:
+`engine-rust/docs/retail-sound-mapping.txt`.
+
+El resto de la verificación no cambia: walkthrough de 129 pasos con Hotkeys y
+LAN, 6 frames de Hotkeys idénticos, puertas 43/43 crudo y calibrado, 39/39,
+332 tests, clippy 0.

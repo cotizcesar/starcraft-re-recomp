@@ -182,3 +182,13 @@ capas regeneradas, `ui_diff` 39/39).
     retail (`GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`/`GLUSND_SWISH_IN`).
     Evidencia: `docs/session-log.md` 2026-11-02 (64),
     `engine-rust/docs/retail-sound-mapping.txt`.
+23. CEF 64-bit + todos los monitores (2026-11-02): el cliente 64-bit lanza
+    `SceneCefBrowser.exe` y tampoco emite audio de UI; el sondeo de
+    sink-inputs solo ve el stream de StarCraft y el proceso CEF no abre
+    descriptores de audio. Persisten las cadenas GLUSND_* en ambos
+    ejecutables (SWISH_IN 0x140ade580, MOUSE_OVER 0x140ade5a8, MOUSE_DOWN
+    0x140ade5c0) y el enum CEF (165/166/172) con los WAV hasheados; la
+    resolución ID→fichero no está como string/CKey plana. A/B de waveform
+    pendiente de un entorno con audio CEF (login Battle.net y/o Wine/CEF con
+    salida de audio). Evidencia: `docs/session-log.md` 2026-11-02 (65) y
+    `engine-rust/docs/retail-sound-mapping.txt`.
