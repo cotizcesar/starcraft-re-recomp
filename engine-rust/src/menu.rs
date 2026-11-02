@@ -608,6 +608,94 @@ pub fn gametype_entry_at(scale: f32, ox: i32, oy: i32, x: i32, y: i32) -> Option
         .map(|(i, _)| *i)
 }
 
+/// Escape / back destination of each menu screen in the retail flow.
+/// `None` only for the main menu (Escape there quits the client).
+pub fn back_destination(screen: &MenuScreen) -> Option<MenuScreen> {
+    match screen {
+        MenuScreen::Main => None,
+        MenuScreen::Registry => Some(MenuScreen::Main),
+        MenuScreen::GameType => Some(MenuScreen::Main),
+        MenuScreen::Episode => Some(MenuScreen::GameType),
+        MenuScreen::Mission { .. } => Some(MenuScreen::Episode),
+        MenuScreen::SavedGames | MenuScreen::Replays => Some(MenuScreen::Episode),
+        MenuScreen::Lan => Some(MenuScreen::GameType),
+        MenuScreen::Lobby { .. } => Some(MenuScreen::Main),
+        MenuScreen::Options { .. } => Some(MenuScreen::Main),
+        MenuScreen::Hotkeys { .. } => Some(MenuScreen::Main),
+        MenuScreen::Collections | MenuScreen::Credits => Some(MenuScreen::Main),
+        MenuScreen::Intro { .. } => Some(MenuScreen::Main),
+    }
+}
+
+/// Sound played when a screen transition starts: the shipped
+/// `sound/glue/swishin.wav` (the retail "screen in" cue).
+pub const TRANSITION_SOUND: &str = "ui_swish";
+/// Sound played when a control is pressed: `sound/glue/mousedown2.wav`.
+pub const PRESS_SOUND: &str = "ui_click";
+/// Sound played when the pointer enters a control: `sound/glue/mouseover.wav`.
+pub const HOVER_SOUND: &str = "ui_move";
+
+/// Measured control rectangles in 2560x1440 content-box pixels, shared by the
+/// drawing code and the hit-testing code so they cannot diverge.
+pub type HitRect = (f32, f32, f32, f32);
+
+/// `Select starting mission` modal: Ok and Cancel bays of `phist.dds`.
+pub const MISSION_BUTTONS: [HitRect; 2] =
+    [(910.0, 972.0, 355.0, 86.0), (1300.0, 972.0, 355.0, 86.0)];
+/// Mission list rows (8 lines, 57 px pitch, first ink top at 478).
+pub const MISSION_ROWS: HitRect = (748.0, 470.0, 1062.0, 8.0 * 57.0);
+
+/// Create/Replays/Lobby shell: Ok and Cancel bays of `pok`/`pcancel`.
+pub const CREATE_BUTTONS: [HitRect; 2] =
+    [(1637.0, 1143.0, 463.0, 65.0), (1753.0, 1255.0, 423.0, 66.0)];
+/// Create/Replays list rows (6 rows at y 406 + 57i).
+pub const CREATE_ROWS: HitRect = (504.0, 398.0, 886.0, 6.0 * 57.0);
+
+/// Options tab stack (five 93 px cells from y 345) and the Restore/Ok pair.
+pub const OPTIONS_TABS: [HitRect; 5] = [
+    (521.0, 345.0, 327.0, 93.0),
+    (521.0, 438.0, 327.0, 93.0),
+    (521.0, 531.0, 327.0, 93.0),
+    (521.0, 624.0, 327.0, 93.0),
+    (521.0, 717.0, 327.0, 93.0),
+];
+pub const OPTIONS_BUTTONS: [HitRect; 2] =
+    [(513.0, 1212.0, 387.0, 84.0), (1672.0, 1212.0, 378.0, 84.0)];
+
+/// Collections grid (11 cells, 353x224; the clipped 4th row keeps 34 px) and
+/// the Ok button.  Cell order matches the reference: console x3, unit x2,
+/// announcers x6.
+pub const COLLECTION_CELLS: [HitRect; 11] = [
+    (411.0, 274.0, 353.0, 224.0),
+    (787.0, 274.0, 353.0, 224.0),
+    (1161.0, 274.0, 353.0, 224.0),
+    (411.0, 595.0, 353.0, 224.0),
+    (787.0, 595.0, 353.0, 224.0),
+    (411.0, 916.0, 353.0, 224.0),
+    (787.0, 916.0, 353.0, 224.0),
+    (1161.0, 916.0, 353.0, 224.0),
+    (411.0, 1158.0, 353.0, 34.0),
+    (787.0, 1158.0, 353.0, 34.0),
+    (1161.0, 1158.0, 353.0, 34.0),
+];
+/// Collections grid content, in `COLLECTION_CELLS` order: thumbnail file in
+/// `webui/dist/lib/images/` plus the title shown in the right-hand preview.
+pub const COLLECTION_ITEMS: [(&str, &str); 11] = [
+    ("default_console_thumbnail.jpg", "Default"),
+    ("krc_silver_console_thumbnail.png", "Silver"),
+    ("krc_gold_console_thumbnail.png", "Gold"),
+    ("skins_default.jpg", "Default"),
+    ("skins_carbot.png", "Carbot"),
+    ("default_announcer.png", "Default"),
+    ("um_announcer.png", "Um"),
+    ("jeon_announcer.png", "Jeon"),
+    ("kim_announcer.png", "Kim"),
+    ("umjeonkim_announcer.png", "UmJeonKim"),
+    ("heyjini_announcer.png", "HeyJini"),
+];
+pub const COLLECTION_BUTTONS: [HitRect; 2] =
+    [(1837.0, 1245.0, 360.0, 66.0), (1688.0, 421.0, 410.0, 57.0)];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -952,5 +1040,128 @@ mod tests {
             GameTypeFollowup::MultiplayerLobby,
             "Multiplayer -> Select Game Type -> connection/lobby"
         );
+    }
+
+    #[test]
+    fn every_sub_screen_has_a_back_destination() {
+        let screens = [
+            MenuScreen::Registry,
+            MenuScreen::GameType,
+            MenuScreen::Episode,
+            MenuScreen::Mission { episode: 1 },
+            MenuScreen::SavedGames,
+            MenuScreen::Replays,
+            MenuScreen::Lan,
+            MenuScreen::Lobby { map: None },
+            MenuScreen::Options {
+                tab: OptionsTab::Speed,
+            },
+            MenuScreen::Hotkeys {
+                race: HotkeyRace::Terran,
+            },
+            MenuScreen::Collections,
+            MenuScreen::Credits,
+            MenuScreen::Intro { expansion: false },
+        ];
+        for screen in screens {
+            let back = back_destination(&screen).expect("back destination");
+            assert_ne!(back, screen, "back must leave {screen:?}");
+        }
+        assert_eq!(back_destination(&MenuScreen::Main), None);
+        assert_eq!(
+            back_destination(&MenuScreen::Mission { episode: 1 }),
+            Some(MenuScreen::Episode)
+        );
+        assert_eq!(
+            back_destination(&MenuScreen::Episode),
+            Some(MenuScreen::GameType)
+        );
+    }
+
+    #[test]
+    fn menu_hit_rects_match_the_measured_controls() {
+        let inside = |r: HitRect| {
+            r.2 > 0.0
+                && r.3 > 0.0
+                && r.0 >= 0.0
+                && r.1 >= 0.0
+                && r.0 + r.2 <= 2560.0
+                && r.1 + r.3 <= 1440.0
+        };
+        for r in MISSION_BUTTONS.iter().chain(CREATE_BUTTONS.iter()) {
+            assert!(inside(*r), "{r:?} outside the content box");
+        }
+        // Mission Ok/Cancel live on the phist plate (708..1848 x 342..1095).
+        for r in MISSION_BUTTONS {
+            assert!(r.0 >= 708.0 && r.0 + r.2 <= 1848.0);
+            assert!(r.1 >= 342.0 && r.1 + r.3 <= 1095.0);
+        }
+        // Create Ok/Cancel are the measured pok/pcancel bays.
+        assert_eq!(CREATE_BUTTONS[0], (1637.0, 1143.0, 463.0, 65.0));
+        assert_eq!(CREATE_BUTTONS[1], (1753.0, 1255.0, 423.0, 66.0));
+        // Options cells share one x and a 93 px pitch.
+        assert!(OPTIONS_TABS.iter().all(|r| r.0 == 521.0 && r.2 == 327.0));
+        for pair in OPTIONS_TABS.windows(2) {
+            assert_eq!(pair[1].1 - pair[0].1, 93.0);
+        }
+        for r in COLLECTION_CELLS.iter().chain(COLLECTION_BUTTONS.iter()) {
+            assert!(inside(*r), "{r:?} outside the content box");
+        }
+        assert_eq!(COLLECTION_CELLS[0], (411.0, 274.0, 353.0, 224.0));
+    }
+
+    #[test]
+    fn menu_sounds_are_the_shipped_glue_cues() {
+        assert_eq!(TRANSITION_SOUND, "ui_swish");
+        assert_eq!(PRESS_SOUND, "ui_click");
+        assert_eq!(HOVER_SOUND, "ui_move");
+    }
+
+    #[test]
+    fn collections_items_cover_every_hit_cell() {
+        assert_eq!(COLLECTION_ITEMS.len(), COLLECTION_CELLS.len());
+        assert_eq!(COLLECTION_ITEMS[0].0, "default_console_thumbnail.jpg");
+        assert_eq!(COLLECTION_ITEMS[3].0, "skins_default.jpg");
+        assert_eq!(COLLECTION_ITEMS[10].0, "heyjini_announcer.png");
+    }
+
+    #[test]
+    fn menu_flow_round_trip_matches_the_capture_sequence() {
+        // Main -> Single Player opens `Select Game Type` in single mode.
+        assert_eq!(gametype_followup(false), GameTypeFollowup::Registry);
+        // Multiplayer goes to the connection/lobby instead.
+        assert_eq!(gametype_followup(true), GameTypeFollowup::MultiplayerLobby);
+        // Original starts at Episode I, Expansion at Episode IV.
+        assert_eq!(episode_start(false), 0);
+        assert_eq!(episode_start(true), 3);
+        // Episode <-> Mission modal, then back to Game Type and the main menu.
+        assert_eq!(
+            back_destination(&MenuScreen::Mission { episode: 1 }),
+            Some(MenuScreen::Episode)
+        );
+        let mut screen = MenuScreen::Episode;
+        for want in [MenuScreen::GameType, MenuScreen::Main] {
+            screen = back_destination(&screen).expect("back path");
+            assert_eq!(screen, want);
+        }
+        // Saved / Replays (opened from Episode) return to Episode; the footer
+        // screens and the intro return to the main menu.
+        for screen in [MenuScreen::SavedGames, MenuScreen::Replays] {
+            assert_eq!(back_destination(&screen), Some(MenuScreen::Episode));
+        }
+        for screen in [
+            MenuScreen::Options {
+                tab: OptionsTab::Speed,
+            },
+            MenuScreen::Hotkeys {
+                race: HotkeyRace::Terran,
+            },
+            MenuScreen::Collections,
+            MenuScreen::Credits,
+            MenuScreen::Intro { expansion: true },
+            MenuScreen::Registry,
+        ] {
+            assert_eq!(back_destination(&screen), Some(MenuScreen::Main));
+        }
     }
 }

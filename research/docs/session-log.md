@@ -3142,3 +3142,47 @@ exactamente el residuo nativo; `ui_diff.py` **39/39** (31 referencias);
 `cargo build --release --bin sc_view` OK. Tablas en
 `engine-rust/docs/ui-visual-diff-raw.txt` y `ui-visual-diff-calibrated.txt`.
 Evidencia: `analysis/investigations/cef-screens-re.md`.
+
+## 2026-11-02 (62) — Menú completo: ratón, transiciones y sonidos
+
+Cierre funcional del front-end (las 43 capturas ya estaban a 1:1): todas las
+pantallas del menú responden ahora a ratón y teclado con los sonidos retail.
+
+**Modelo de flujo**: `galaxycraft::menu::back_destination` es la tabla única
+de vuelta (Main→None/quit; Registry/GameType/Lobby/Options/Hotkeys/
+Collections/Credits/Intro→Main; Episode→GameType; Mission/Saved/Replays→
+Episode; Lan→GameType) y el cliente la usa en cada rama de Escape, así que
+la tabla testeada es la que gobierna la navegación. Tests
+`every_sub_screen_has_a_back_destination` y
+`menu_flow_round_trip_matches_the_capture_sequence` (Single→GameType→
+Registry→Episode→Mission→Episode→GameType→Main y Multiplayer→lobby).
+
+**Sonidos**: política única con las pistas ya verificadas por hash en
+`EVIDENCE.md` — hover `ui_move` (`mouseover.wav`), pulsación `ui_click`
+(`mousedown2.wav`) y cambio de pantalla `ui_swish` (`swishin.wav`, constante
+`TRANSITION_SOUND`). Se cambiaron 18 transiciones que sonaban a click y las
+pantallas nuevas (Mission/Saved/Replays/Lobby/Options/Collections/Credits/
+Intro) emiten hover al entrar en un control y click al pulsarlo.
+
+**Ratón en todo el menú**: `MenuHit` + `menu_pointer` resuelven el control
+bajo el cursor con las tablas medidas en `menu.rs` (`MISSION_BUTTONS`,
+`MISSION_ROWS`, `CREATE_BUTTONS`, `CREATE_ROWS`, `OPTIONS_TABS`,
+`OPTIONS_BUTTONS`, `COLLECTION_CELLS`, `COLLECTION_BUTTONS`) y disparan
+hover/click. Se añadió clic a Misión (filas + Ok/Cancel), Saved/Replays
+(filas + Ok/Cancel), Lobby (Ok/Cancel), Options (5 pestañas + Restore + Ok,
+y Enter→Ok), Collections (11 celdas + Ok/EQUIP; la celda seleccionada
+cambia la miniatura/título del panel derecho) y Credits/Intro (click).
+Options gana además Restore to Default real (`GameOptions::default()`).
+
+**Frames**: test `campaign_clips_use_the_same_retail_10_5_fps_timeline`
+fija los bucles de los clips de campaña al mismo reloj retail que el menú
+(36 frames de disco = 3,4286 s; 76 de retrato = 7,238 s; On de 20/21/31),
+junto a los tests ya existentes de menu (151/105 frames a 10,5 fps) y cursor
+(5 frames a 6 fps).
+
+**Limpieza**: eliminado un bloque muerto de ~5.7 kLOC en `handle_menu`
+(navegación de lista del menú antiguo que ya no se alcanzaba).
+
+Verificación: `ui_visual_diff.py` **43/43** crudo y **43/43** calibrado,
+`ui_diff.py` **39/39**, `cargo test` **326/326**, `clippy --all-targets
+-- -D warnings` **0**, `cargo build --release --bin sc_view` OK.

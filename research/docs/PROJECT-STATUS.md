@@ -150,3 +150,11 @@ capas regeneradas, `ui_diff` 39/39).
     calibrada **43/43 a 0.00** con capas regeneradas (magnitud = residuo
     nativo) y `ui_diff` **39/39**. Evidencia:
     `analysis/investigations/cef-screens-re.md`.
+20. Menú completo (2026-11-02): ratón en todas las pantallas (Mission,
+    Saved/Replays, Lobby, Options con pestañas/Restore/Ok, Collections con
+    celdas y preview, Credits/Intro), tabla única de vuelta
+    `menu::back_destination` usada por cada rama de Escape, política de
+    sonidos hover/click/transición (`ui_move`/`ui_click`/`ui_swish`) y test
+    de timeline de los clips de campaña al reloj retail de 10,5 fps. Tests
+    326/326; puertas 43/43 crudo y calibrado y `ui_diff` 39/39. Evidencia:
+    `docs/session-log.md` 2026-11-02 (62).

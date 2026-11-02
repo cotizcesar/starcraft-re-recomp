@@ -686,6 +686,20 @@ impl Default for LanUi {
     }
 }
 
+/// Control under the pointer on a sub-screen (shared by every branch so
+/// hover/click sounds and hit geometry stay consistent).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MenuHit {
+    Ok,
+    Cancel,
+    Restore,
+    Row(usize),
+    Tab(usize),
+    Cell(usize),
+    Equip,
+    Skip,
+}
+
 struct App {
     data: Arc<GameData>,
     scenario: Scenario,
@@ -870,6 +884,11 @@ struct App {
     campaign_layers: Option<CampaignLayers>,
     /// Slot under the pointer on the episode screen (drives the `On` clip).
     episode_hover: Option<usize>,
+    /// Control under the pointer on the current sub-screen (drives the
+    /// hover sound).
+    menu_hover: Option<MenuHit>,
+    /// Collections cell selected in the grid (drives the preview column).
+    collection_sel: usize,
     /// `--menu-at` / `--menu-phase` pins, shared with the campaign clips so
     /// headless captures are deterministic.
     menu_at: Option<f32>,
@@ -2826,6 +2845,8 @@ fn main() {
         menu_layers,
         campaign_layers: None,
         episode_hover: None,
+        menu_hover: None,
+        collection_sel: 0,
         menu_at,
         menu_phases,
         lobby_preview: None,
@@ -4832,6 +4853,31 @@ impl App {
     }
 
     #[allow(unreachable_code)]
+    /// Start the selected campaign mission of `episode` (Enter or the Ok
+    /// button); the screen-change cue is the retail `swishin` sound.
+    fn launch_mission(&mut self, episode: u8) {
+        let mut n = 0usize;
+        let mut target = None;
+        for (i, m) in self.maps.iter().enumerate() {
+            if let Some(c) = &m.campaign {
+                if galaxycraft::menu::episode_number(&c.episode).unwrap_or(0) == episode {
+                    if n == self.mission_sel {
+                        target = Some(i);
+                        break;
+                    }
+                    n += 1;
+                }
+            }
+        }
+        if let Some(idx) = target {
+            self.play("ui_swish");
+            self.map_index = idx;
+            self.start_campaign_mission(idx);
+        } else {
+            self.play("ui_click");
+        }
+    }
+
     fn handle_menu(&mut self, window: &Window) {
         // Sub-screen navigation for the retail menu flow.  Each screen uses
         // Up/Down + Enter/Esc; the map-list Tab/R shortcuts stay on Main.
@@ -4905,13 +4951,12 @@ impl App {
                         }
                         Key::R => {
                             self.menu_screen = MenuScreen::Registry;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::Escape => self.quit = true,
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Registry => {
                 // Mouse: the registry panel is a real dialog.  Its normalized
@@ -4939,12 +4984,12 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.profile_sel = 0;
                             }
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         } else if hit(0.638, 0.884, 0.822, 0.944) {
                             self.registry_after_gametype = false;
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 0;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         } else if hit(0.1813, 0.694, 0.3672, 0.743) {
                             self.profiles
                                 .push(format!("Player{}", self.profiles.len() + 1));
@@ -5003,18 +5048,19 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.profile_sel = 0;
                             }
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::Escape => {
                             self.registry_after_gametype = false;
-                            self.menu_screen = MenuScreen::Main;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
                             self.profile_sel = 0;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::GameType => {
                 // The retail popup is a real dialog: the pointer highlights
@@ -5043,7 +5089,7 @@ impl App {
                                 self.menu_screen = MenuScreen::Main;
                                 self.gametype_hover = None;
                                 self.gametype_multi = false;
-                                self.play("ui_click");
+                                self.play("ui_swish");
                             }
                         }
                         return;
@@ -5069,15 +5115,16 @@ impl App {
                             self.play("ui_swish");
                         }
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::Main;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
                             self.gametype_hover = None;
                             self.gametype_multi = false;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Episode => {
                 // Mouse: the three episode slots and the four shipped command
@@ -5132,7 +5179,7 @@ impl App {
                                 Some(2) => self.menu_screen = MenuScreen::Replays,
                                 _ => self.menu_screen = MenuScreen::Main,
                             }
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         return;
                     }
@@ -5159,28 +5206,44 @@ impl App {
                         }
                         Key::L => {
                             self.menu_screen = MenuScreen::SavedGames;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::C => {
                             self.menu_screen = MenuScreen::Lobby {
                                 map: Some(self.map_index),
                             };
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::R => {
                             self.menu_screen = MenuScreen::Replays;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::GameType;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
+                            self.play("ui_swish");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            MenuScreen::Mission { episode } => {
+                let (hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    match hit {
+                        Some(MenuHit::Ok) => return self.launch_mission(episode),
+                        Some(MenuHit::Cancel) => {
+                            self.menu_screen = MenuScreen::Episode;
+                            self.play("ui_swish");
+                        }
+                        Some(MenuHit::Row(i)) if i != self.mission_sel => {
+                            self.mission_sel = i;
                             self.play("ui_click");
                         }
                         _ => {}
                     }
                 }
-                return;
-            }
-            MenuScreen::Mission { episode } => {
                 for key in window.get_keys_pressed(KeyRepeat::No) {
                     match key {
                         Key::Up => {
@@ -5191,39 +5254,16 @@ impl App {
                             self.mission_sel = self.mission_sel.saturating_add(1).min(7);
                             self.play("ui_move");
                         }
-                        Key::Enter | Key::Space => {
-                            // Launch the nth campaign map of this episode.
-                            let mut n = 0usize;
-                            let mut target = None;
-                            for (i, m) in self.maps.iter().enumerate() {
-                                if let Some(c) = &m.campaign {
-                                    if galaxycraft::menu::episode_number(&c.episode).unwrap_or(0)
-                                        == episode
-                                    {
-                                        if n == self.mission_sel {
-                                            target = Some(i);
-                                            break;
-                                        }
-                                        n += 1;
-                                    }
-                                }
-                            }
-                            if let Some(idx) = target {
-                                self.play("ui_swish");
-                                self.map_index = idx;
-                                self.start_campaign_mission(idx);
-                            } else {
-                                self.play("ui_click");
-                            }
-                        }
+                        Key::Enter | Key::Space => return self.launch_mission(episode),
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::Episode;
-                            self.play("ui_click");
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Lan => {
                 for key in window.get_keys_pressed(KeyRepeat::No) {
@@ -5253,17 +5293,38 @@ impl App {
                         Key::Escape => {
                             self.lan.listener = None;
                             self.lan.announce_sock = None;
-                            self.menu_screen = MenuScreen::GameType;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
+                            self.play("ui_swish");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            MenuScreen::SavedGames | MenuScreen::Replays => {
+                let replays = matches!(&self.menu_screen, MenuScreen::Replays);
+                let list = self.save_list(replays);
+                let (hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    match hit {
+                        Some(MenuHit::Ok) => {
+                            if let Some(path) = list.get(self.save_sel).cloned() {
+                                self.load_save(&path, replays);
+                            }
+                        }
+                        Some(MenuHit::Cancel) => {
+                            self.menu_screen = MenuScreen::Episode;
+                            self.save_sel = 0;
+                            self.play("ui_swish");
+                        }
+                        Some(MenuHit::Row(i)) if i != self.save_sel && i < list.len().max(1) => {
+                            self.save_sel = i;
                             self.play("ui_click");
                         }
                         _ => {}
                     }
                 }
-                return;
-            }
-            MenuScreen::SavedGames | MenuScreen::Replays => {
-                let replays = matches!(&self.menu_screen, MenuScreen::Replays);
-                let list = self.save_list(replays);
                 for key in window.get_keys_pressed(KeyRepeat::No) {
                     match key {
                         Key::Up => {
@@ -5290,16 +5351,32 @@ impl App {
                             }
                         }
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::Episode;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
                             self.save_sel = 0;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Lobby { .. } => {
+                let (hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    match hit {
+                        Some(MenuHit::Ok) => {
+                            self.play("ui_swish");
+                            self.load_map(self.map_index);
+                        }
+                        Some(MenuHit::Cancel) => {
+                            self.menu_screen = MenuScreen::Main;
+                            self.profile_sel = 0;
+                            self.play("ui_swish");
+                        }
+                        _ => {}
+                    }
+                }
                 for key in window.get_keys_pressed(KeyRepeat::No) {
                     match key {
                         Key::Enter | Key::Space => {
@@ -5328,16 +5405,39 @@ impl App {
                             self.play("ui_click");
                         }
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::Main;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
                             self.profile_sel = 0;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Options { tab } => {
+                let (hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    match hit {
+                        Some(MenuHit::Tab(i)) => {
+                            let all = OptionsTab::all();
+                            self.menu_screen = MenuScreen::Options {
+                                tab: all[i.min(all.len() - 1)],
+                            };
+                            self.play("ui_swish");
+                        }
+                        Some(MenuHit::Restore) => {
+                            self.game_options = GameOptions::default();
+                            self.play("ui_click");
+                        }
+                        Some(MenuHit::Ok) => {
+                            self.menu_screen = MenuScreen::Main;
+                            self.profile_sel = 2;
+                            self.play("ui_swish");
+                        }
+                        _ => {}
+                    }
+                }
                 for key in window.get_keys_pressed(KeyRepeat::No) {
                     match key {
                         Key::Tab => {
@@ -5346,7 +5446,7 @@ impl App {
                             self.menu_screen = MenuScreen::Options {
                                 tab: all[(i + 1) % all.len()],
                             };
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::Up => {
                             self.game_options.game_speed =
@@ -5366,15 +5466,21 @@ impl App {
                             self.game_options.subtitles = !self.game_options.subtitles;
                             self.play("ui_click");
                         }
-                        Key::Escape => {
+                        Key::Enter | Key::Space => {
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 2;
-                            self.play("ui_click");
+                            self.play("ui_swish");
+                        }
+                        Key::Escape => {
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
+                            self.profile_sel = 2;
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
             MenuScreen::Hotkeys { race } => {
                 if self.hotkey_reset {
@@ -5441,9 +5547,11 @@ impl App {
                             self.play("ui_click");
                         }
                         Key::Escape => {
-                            self.menu_screen = MenuScreen::Main;
+                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                                self.menu_screen = t;
+                            }
                             self.profile_sel = 4;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         Key::F12 => self.capture_request = true,
                         _ => {}
@@ -5483,7 +5591,7 @@ impl App {
                             self.hotkey_baseline = self.hotkey_bindings.clone();
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 4;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                             return;
                         }
                         if in_rect(1825.0, 1302.0, 2203.0, 1386.0) {
@@ -5493,7 +5601,7 @@ impl App {
                             self.hotkey_binding_error = false;
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 4;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                             return;
                         }
                     }
@@ -5542,160 +5650,52 @@ impl App {
                 if !window.get_mouse_down(MouseButton::Left) {
                     self.mouse_was_down = false;
                 }
-                return;
             }
             MenuScreen::Collections | MenuScreen::Credits => {
-                for key in window.get_keys_pressed(KeyRepeat::No) {
-                    match key {
-                        Key::Enter | Key::Space | Key::Escape => {
-                            self.menu_screen = MenuScreen::Main;
+                let (hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    match hit {
+                        Some(MenuHit::Cell(i)) => {
+                            self.collection_sel = i;
                             self.play("ui_click");
+                        }
+                        Some(MenuHit::Equip) => {
+                            self.play("ui_click");
+                        }
+                        Some(MenuHit::Ok) | Some(MenuHit::Skip) => {
+                            self.menu_screen = MenuScreen::Main;
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
+                for key in window.get_keys_pressed(KeyRepeat::No) {
+                    match key {
+                        Key::Enter | Key::Space | Key::Escape => {
+                            self.menu_screen = MenuScreen::Main;
+                            self.play("ui_swish");
+                        }
+                        _ => {}
+                    }
+                }
             }
             MenuScreen::Intro { .. } => {
+                let (_hit, clicked) = self.menu_pointer(window);
+                if clicked {
+                    self.menu_screen = MenuScreen::Main;
+                    self.play("ui_swish");
+                }
                 for key in window.get_keys_pressed(KeyRepeat::No) {
                     match key {
                         Key::Enter | Key::Space | Key::Escape => {
                             self.menu_screen = MenuScreen::Main;
-                            self.play("ui_click");
+                            self.play("ui_swish");
                         }
                         _ => {}
                     }
                 }
-                return;
             }
         }
-        for key in window.get_keys_pressed(KeyRepeat::No) {
-            match key {
-                Key::Tab => {
-                    self.menu_tab = if self.menu_tab == 0 { 1 } else { 0 };
-                    if self.menu_slice().1 <= self.menu_slice().0 {
-                        self.menu_tab = 1 - self.menu_tab;
-                    }
-                    self.menu_index = 0;
-                    self.play("ui_click");
-                }
-                Key::Up | Key::Left => {
-                    let (start, end) = self.menu_slice();
-                    if end > start {
-                        self.menu_index = (self.menu_index + end - start - 1) % (end - start);
-                        self.map_index = start + self.menu_index;
-                        self.play("ui_move");
-                    }
-                }
-                Key::Down | Key::Right => {
-                    let (start, end) = self.menu_slice();
-                    if end > start {
-                        self.menu_index = (self.menu_index + 1) % (end - start);
-                        self.map_index = start + self.menu_index;
-                        self.play("ui_move");
-                    }
-                }
-                Key::R => {
-                    self.menu_race = match self.menu_race {
-                        Race::Terran => Race::Zerg,
-                        Race::Zerg => Race::Protoss,
-                        _ => Race::Terran,
-                    };
-                    self.play("ui_click");
-                }
-                Key::X => {
-                    self.intro_expansion = !self.intro_expansion;
-                    if let Some(store) = &self.video_store {
-                        if let Some((info, poster)) = store.intro_poster(self.intro_expansion) {
-                            self.intro_info = Some(info);
-                            self.intro_poster = Some(poster);
-                        } else {
-                            self.intro_poster = None;
-                            self.intro_info = None;
-                        }
-                    }
-                    self.play("ui_click");
-                }
-                Key::I => {
-                    self.intro_expansion = false;
-                    if let Some(store) = &self.video_store {
-                        if let Some((info, poster)) = store.intro_poster(false) {
-                            self.intro_info = Some(info);
-                            self.intro_poster = Some(poster);
-                        }
-                    }
-                    self.intro = true;
-                    self.intro_started = Instant::now();
-                    self.menu = false;
-                    self.play("ui_swish");
-                }
-                Key::Enter | Key::Space => {
-                    self.play("ui_swish");
-                    self.load_map(self.map_index);
-                }
-                Key::Escape => self.quit = true,
-                _ => {}
-            }
-        }
-        // Mouse: the retail menu hot areas and the map list.
-        let (mx, my) = window
-            .get_unscaled_mouse_pos(MouseMode::Clamp)
-            .map(|(x, y)| (x as i32, y as i32))
-            .unwrap_or((-1, -1));
-        let lmb = window.get_mouse_down(MouseButton::Left);
-        if lmb && !self.lmb_down {
-            let scale = self.ui_scale;
-            let (ox, oy) = (self.ui_ox, self.ui_oy);
-            let single = UiRect::new(24, 86, 270, 84).scaled(scale, ox, oy);
-            let multi = UiRect::new(24, 190, 270, 84).scaled(scale, ox, oy);
-            let intro = UiRect::new(24, 294, 270, 40).scaled(scale, ox, oy);
-            let exit = UiRect::new(24, 346, 270, 40).scaled(scale, ox, oy);
-            let list = UiRect::new(330, 190, 292, 270).scaled(scale, ox, oy);
-            if single.contains(mx, my) {
-                self.menu_tab = 0;
-                self.menu_index = 0;
-                self.map_index = 0;
-                self.play("ui_click");
-            } else if multi.contains(mx, my) {
-                self.menu_tab = 1;
-                self.menu_index = 0;
-                self.map_index = self.campaign_len;
-                self.play("ui_click");
-            } else if intro.contains(mx, my) {
-                self.intro = true;
-                self.intro_started = Instant::now();
-                self.menu = false;
-                self.play("ui_swish");
-            } else if exit.contains(mx, my) {
-                self.quit = true;
-            } else if list.contains(mx, my) {
-                let (start, end) = self.menu_slice();
-                let count = end.saturating_sub(start);
-                let rel_sel = self
-                    .map_index
-                    .saturating_sub(start)
-                    .min(count.saturating_sub(1));
-                let visible = 8usize;
-                let first = rel_sel
-                    .saturating_sub(visible / 2)
-                    .min(count.saturating_sub(visible));
-                let row = ((my - list.y - 26) / 22).max(0) as usize;
-                if row < visible {
-                    let global = start + first + row;
-                    if global < end {
-                        self.map_index = global;
-                        self.menu_index = global - start;
-                        self.play("ui_swish");
-                        if self.maps.get(global).is_some_and(|m| m.campaign.is_some()) {
-                            self.start_campaign_mission(global);
-                        } else {
-                            self.load_map(global);
-                        }
-                    }
-                }
-            }
-        }
-        self.lmb_down = lmb;
     }
 
     fn handle_briefing(&mut self, window: &Window) {
@@ -8979,6 +8979,130 @@ impl App {
 
     /// Clickable rectangles of the eight main-menu entries, in window pixels.
     /// Used both for drawing and for hit-testing so they can never diverge.
+    /// Control under a window point on the current sub-screen.  The rects
+    /// come from the measured control tables in `menu.rs`; rows derive from
+    /// the measured 57 px pitch.
+    fn menu_hit(&self, screen: &MenuScreen, x: i32, y: i32) -> Option<MenuHit> {
+        use galaxycraft::menu as m;
+        let (cx, _cy, cw, ch) = self.content_box;
+        let kx = cw as f32 / 2560.0;
+        let ky = ch as f32 / 1440.0;
+        let inside = |r: m::HitRect| {
+            x >= cx + (r.0 * kx) as i32
+                && x < cx + ((r.0 + r.2) * kx) as i32
+                && y >= (r.1 * ky) as i32
+                && y < ((r.1 + r.3) * ky) as i32
+        };
+        let row_of = |r: m::HitRect, rows: usize| {
+            let fy = y as f32 / ky;
+            if fy < r.1 || fy >= r.1 + r.3 {
+                return None;
+            }
+            let row = ((fy - r.1) / 57.0) as usize;
+            (row < rows).then_some(row)
+        };
+        match screen {
+            MenuScreen::Mission { .. } => {
+                if inside(m::MISSION_BUTTONS[0]) {
+                    Some(MenuHit::Ok)
+                } else if inside(m::MISSION_BUTTONS[1]) {
+                    Some(MenuHit::Cancel)
+                } else {
+                    row_of(m::MISSION_ROWS, 8).map(MenuHit::Row)
+                }
+            }
+            MenuScreen::Replays => {
+                if inside(m::CREATE_BUTTONS[0]) {
+                    Some(MenuHit::Ok)
+                } else if inside(m::CREATE_BUTTONS[1]) {
+                    Some(MenuHit::Cancel)
+                } else {
+                    row_of(m::CREATE_ROWS, 4).map(MenuHit::Row)
+                }
+            }
+            MenuScreen::Lobby { .. } => {
+                if inside(m::CREATE_BUTTONS[0]) {
+                    Some(MenuHit::Ok)
+                } else if inside(m::CREATE_BUTTONS[1]) {
+                    Some(MenuHit::Cancel)
+                } else {
+                    row_of(m::CREATE_ROWS, 6).map(MenuHit::Row)
+                }
+            }
+            MenuScreen::SavedGames => {
+                // `draw_saved` panel/rows/buttons (fractions of the box).
+                let fx = |f: f32| f * 2560.0;
+                let fy = |f: f32| f * 1440.0;
+                let rect =
+                    |x0: f32, y0: f32, x1: f32, y1: f32| (fx(x0), fy(y0), fx(x1 - x0), fy(y1 - y0));
+                let rows = (
+                    fx(0.1758),
+                    fy(0.1639 + 0.12 * 0.4937),
+                    fx(0.3675),
+                    10.0 * fy(0.07 * 0.4937),
+                );
+                if inside(rect(0.646, 0.791, 0.800, 0.862)) {
+                    Some(MenuHit::Ok)
+                } else if inside(rect(0.668, 0.856, 0.830, 0.926)) {
+                    Some(MenuHit::Cancel)
+                } else {
+                    row_of(rows, 10).map(MenuHit::Row)
+                }
+            }
+            MenuScreen::Options { .. } => {
+                for (i, r) in m::OPTIONS_TABS.iter().enumerate() {
+                    if inside(*r) {
+                        return Some(MenuHit::Tab(i));
+                    }
+                }
+                if inside(m::OPTIONS_BUTTONS[0]) {
+                    Some(MenuHit::Restore)
+                } else if inside(m::OPTIONS_BUTTONS[1]) {
+                    Some(MenuHit::Ok)
+                } else {
+                    None
+                }
+            }
+            MenuScreen::Collections => {
+                for (i, r) in m::COLLECTION_CELLS.iter().enumerate() {
+                    if inside(*r) {
+                        return Some(MenuHit::Cell(i));
+                    }
+                }
+                if inside(m::COLLECTION_BUTTONS[0]) {
+                    Some(MenuHit::Ok)
+                } else if inside(m::COLLECTION_BUTTONS[1]) {
+                    Some(MenuHit::Equip)
+                } else {
+                    None
+                }
+            }
+            MenuScreen::Credits | MenuScreen::Intro { .. } => Some(MenuHit::Skip),
+            _ => None,
+        }
+    }
+
+    /// Pointer state for the current sub-screen: the control under the
+    /// cursor (playing `ui_move` when it changes) and an edge-triggered left
+    /// click.
+    fn menu_pointer(&mut self, window: &Window) -> (Option<MenuHit>, bool) {
+        let pointer = window
+            .get_unscaled_mouse_pos(MouseMode::Clamp)
+            .map(|(x, y)| (x as i32, y as i32));
+        let screen = self.menu_screen.clone();
+        let hit = pointer.and_then(|(x, y)| self.menu_hit(&screen, x, y));
+        if hit != self.menu_hover {
+            self.menu_hover = hit;
+            if hit.is_some() {
+                self.play("ui_move");
+            }
+        }
+        let down = window.get_mouse_down(MouseButton::Left);
+        let clicked = down && !self.mouse_was_down;
+        self.mouse_was_down = down;
+        (hit, clicked)
+    }
+
     fn menu_entry_rects(&self) -> Vec<(usize, (i32, i32, i32, i32))> {
         // One source of truth for drawing and hit-testing (see `menu.rs`,
         // which also unit-tests that every centre hits its own entry).
@@ -13225,8 +13349,12 @@ impl App {
             );
         }
         fb.rect(1200, 600, 100, 50, Rgb::new(255, 0, 255));
-        // Right column: preview, title, EQUIP, Ok.
-        if let Some(img) = self.thumb("default_console_thumbnail.jpg", sw(349.0), sw(237.0)) {
+        // Right column: preview of the selected grid cell, title, EQUIP, Ok.
+        let sel = self
+            .collection_sel
+            .min(galaxycraft::menu::COLLECTION_ITEMS.len() - 1);
+        let (sel_img, sel_title) = galaxycraft::menu::COLLECTION_ITEMS[sel];
+        if let Some(img) = self.thumb(sel_img, sw(349.0), sw(237.0)) {
             let (ix, iy) = (sx(1719.0), sy(118.0));
             for yy in 0..img.height as i32 {
                 for xx in 0..img.width as i32 {
@@ -13243,7 +13371,7 @@ impl App {
         }
         self.draw_hd_text(
             fb,
-            "Default",
+            sel_title,
             u(1825.0),
             v(373.0),
             galaxycraft::menu::LabelAlign::Left,
@@ -13691,6 +13819,23 @@ mod retail_timing_tests {
         assert!((cursor_scale_for_height(1920) - 1.0).abs() < 1e-6);
         // A tiny framebuffer still draws at least a pixel-scale arrow.
         assert!(cursor_scale_for_height(1) > 0.0);
+    }
+
+    #[test]
+    fn campaign_clips_use_the_same_retail_10_5_fps_timeline() {
+        // Authored at 15 fps: the three disks are 36 frames (2.4 s), every
+        // portrait 76 (5.067 s) and the On overlays 20/21/31.  The retail
+        // holds each authored frame for 1/10.5 s, exactly like the menu.
+        let (_, frames, duration) = menu_clip_timeline(2.4, 0.0);
+        assert_eq!(frames, 36);
+        assert!((duration - 36.0 / 10.5).abs() < 0.001, "{duration}");
+        let (_, frames, duration) = menu_clip_timeline(76.0 / 15.0, 0.0);
+        assert_eq!(frames, 76);
+        assert!((duration - 76.0 / 10.5).abs() < 0.001, "{duration}");
+        for frames_authored in [20usize, 21, 31] {
+            let (_, frames, _) = menu_clip_timeline(frames_authored as f32 / 15.0, 0.0);
+            assert_eq!(frames, frames_authored);
+        }
     }
 
     #[test]
