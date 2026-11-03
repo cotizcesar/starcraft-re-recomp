@@ -21,6 +21,10 @@ practical summary.
    `World::issue` or an audited mutator that records into the command log
    (see `engine-rust/AGENTS.md`).
 6. **Out of scope:** Battle.net/online, the map editor, other patches.
+7. **License.** Contributions are accepted under the project's
+   [MIT License](LICENSE). Only add third-party code under an MIT-compatible
+   license, and keep its license file next to it (as in
+   `engine-rust/third_party/pklib/`).
 
 ## Setup
 

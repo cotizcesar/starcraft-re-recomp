@@ -131,13 +131,34 @@ online services, the map/campaign editor, and other game patches.
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
 and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Never attach retail game
 files, screenshots or decompiled Blizzard code to an issue or PR. Security
-reports: [SECURITY.md](SECURITY.md).
+reports: [SECURITY.md](SECURITY.md). Contributions are accepted under the MIT
+License.
 
 ## License
 
-Code is licensed under the [MIT License](LICENSE). The vendored PKWARE DCL decoder keeps its own license
-([`engine-rust/third_party/pklib/LICENSE`](engine-rust/third_party/pklib/LICENSE)).
+This project's code is licensed under the **[MIT License](LICENSE)**,
+Copyright (c) 2026 starcraft-re-recomp contributors. You may use, copy,
+modify and redistribute it, commercially or not, as long as you keep the
+copyright notice and the license text. The software comes with no warranty.
+
+| Component | License | Where |
+|---|---|---|
+| Engine, client, tools, scripts and documentation | MIT | [`LICENSE`](LICENSE) |
+| Vendored PKWARE DCL decoder (from StormLib, © Ladislav Zezula) | MIT | [`engine-rust/third_party/pklib/LICENSE`](engine-rust/third_party/pklib/LICENSE) |
+| Rust dependencies (crates.io) | Their own permissive licenses (MIT, Apache-2.0, BSD-3-Clause, ISC, Zlib, Unicode-3.0), all MIT-compatible | `engine-rust/Cargo.lock` |
+| StarCraft game data (art, audio, maps, tables, executables) | **Not covered.** Owned by Blizzard Entertainment and not distributed here | your own install |
+
+**What the MIT License does not cover.** The license applies only to the
+code in this repository. It grants no rights to StarCraft or its assets. To
+play or to run the full test suite you need your own legal copy of
+StarCraft: Remastered. Files generated from it (fixtures, extracted assets,
+screenshots, memory dumps) stay on your machine and must not be
+redistributed. See [NOTICE.md](NOTICE.md).
+
+**Contributions.** By submitting a pull request you agree that your
+contribution is licensed under the MIT License of this project (see
+[CONTRIBUTING.md](CONTRIBUTING.md)).
 
 StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
 trademarks of Blizzard Entertainment, Inc. This project is not affiliated
-with or endorsed by Blizzard. See [NOTICE.md](NOTICE.md).
+with or endorsed by Blizzard.

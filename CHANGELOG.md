@@ -11,6 +11,9 @@ status is in [PROGRESS.md](PROGRESS.md).
   `LICENSE-MIT` is renamed `LICENSE`. The vendored PKWARE DCL decoder keeps its
   own license.
 - `main` is protected: changes land through pull requests with green CI.
+- README: expanded License section (component table, third-party and
+  dependency licenses, what MIT does not cover, inbound = outbound for
+  contributions); CONTRIBUTING gains the license rule.
 
 ## 2026-11-03 — Repository cleanup and community release
 
