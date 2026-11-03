@@ -22,6 +22,7 @@ use galaxycraft::ai::SimpleAi;
 use galaxycraft::aiscript::CampaignAi;
 use galaxycraft::data::GameData;
 use galaxycraft::map::Scenario;
+use galaxycraft::map::TileTables;
 use galaxycraft::retail::RetailInstall;
 use galaxycraft::sim::{Race, World};
 
@@ -93,11 +94,26 @@ fn main() {
         }),
         None => GameData::bundled().expect("bundled tables"),
     });
-    let tiles: Vec<Option<Arc<Vec<u8>>>> = TILESETS
+    // Each era needs its cv5 (MTXM -> megatile) next to the vf4 flags.
+    let tiles: Vec<Option<Arc<TileTables>>> = TILESETS
         .iter()
-        .map(|name| match &retail {
-            Some(install) => install.read(&format!("TileSet/{name}")).map(Arc::new),
-            None => std::fs::read(args.tiles.join(name)).ok().map(Arc::new),
+        .map(|name| {
+            let cv5_name = std::path::Path::new(name).with_extension("cv5");
+            let cv5_name = cv5_name.to_string_lossy();
+            let (vf4, cv5) = match &retail {
+                Some(install) => (
+                    install.read(&format!("TileSet/{name}")),
+                    install.read(&format!("TileSet/{cv5_name}")),
+                ),
+                None => (
+                    std::fs::read(args.tiles.join(name)).ok(),
+                    std::fs::read(args.tiles.join(&*cv5_name)).ok(),
+                ),
+            };
+            Some(Arc::new(TileTables {
+                cv5: cv5?,
+                vf4: vf4?,
+            }))
         })
         .collect();
 
@@ -224,7 +240,7 @@ struct Report {
 
 fn run_map_bytes(
     data: &Arc<GameData>,
-    tiles: &[Option<Arc<Vec<u8>>>],
+    tiles: &[Option<Arc<TileTables>>],
     bytes: &[u8],
     ticks: u64,
 ) -> Result<Report, String> {
@@ -248,7 +264,7 @@ fn run_map_bytes(
         .filter(|s| s.computer)
         .map(|s| s.slot as u8)
         .collect();
-    let mut world = World::from_scenario(data.clone(), &scenario, vf4, &races);
+    let mut world = World::from_scenario(data.clone(), &scenario, &vf4.data(), &races);
     for s in &slots {
         if let Some(p) = world.players.get_mut(s.slot) {
             p.defeated = !s.active;

@@ -628,10 +628,10 @@ impl World {
     pub fn from_scenario(
         data: Arc<GameData>,
         scenario: &Scenario,
-        vf4: &[u8],
+        tiles: &crate::map::TileData,
         races: &[Race],
     ) -> Self {
-        let terrain = Terrain::from_scenario(scenario, vf4);
+        let terrain = Terrain::from_scenario(scenario, tiles);
         let mut world = Self::new(data, terrain, races.len());
         world.vision = Some(Vision::new(scenario.width, scenario.height));
         for (i, race) in races.iter().enumerate() {
@@ -780,9 +780,9 @@ impl World {
                 break;
             }
             let race = world.players[p].race;
-            let start = starts
-                .get(p)
-                .copied()
+            let start = scenario
+                .start_location_of(p as u8)
+                .or_else(|| starts.get(p).copied())
                 .or_else(|| starts.first().copied())
                 .unwrap_or((16 + p as i32 * 16, 16));
             let (sx, sy) = (start.0, start.1);
@@ -811,6 +811,9 @@ impl World {
                 let _ = world.spawn_px(p, uid::OVERLORD, sx + 48, sy - 32);
             }
             world.players[p].minerals = 50;
+        }
+        if !has_placed_force {
+            world.mature_creep();
         }
         if !scenario.triggers.is_empty() {
             let locations: Vec<(i32, i32, i32, i32)> = scenario
@@ -1110,8 +1113,23 @@ impl World {
                     seed[(tile_y * w + tile_x) as usize] = true;
                 }
             }
-            // Three tiles beyond the building edge, matching the classic
-            // creep radius.
+            let town = matches!(u.type_id, uid::HATCHERY | uid::LAIR | uid::HIVE);
+            if town {
+                // Hatchery/Lair/Hive: a 20 x 12-tile box around the building
+                // (measured on 134905: creep spans tiles 65..84 on every row
+                // around the start Hatchery at x 2368).
+                let (ctx, cty) = (cx.div_euclid(32), cy.div_euclid(32));
+                for tile_y in (cty - TOWN_CREEP_RY).max(0)..(cty + TOWN_CREEP_RY).min(h) {
+                    for tile_x in (ctx - TOWN_CREEP_RX).max(0)..(ctx + TOWN_CREEP_RX).min(w) {
+                        if self.terrain.walkable_cell(tile_x * 4 + 2, tile_y * 4 + 2) {
+                            self.creep_supported[(tile_y * w + tile_x) as usize] = true;
+                        }
+                    }
+                }
+                continue;
+            }
+            // Colonies: three tiles beyond the building edge (not measured
+            // against retail yet).
             let rx = hw + 3 * 32;
             let ry = hh + 3 * 32;
             let tx0 = ((cx - rx) / 32).max(0);
@@ -1201,6 +1219,19 @@ impl World {
     /// Per-tile creep maturity (`0..=3`) for renderers.  Rebuilds the mask
     /// first so a source that appeared or died this tick is reflected without
     /// waiting for the next `CREEP_GROW_INTERVAL` boundary.
+    /// Spread every source's creep to its full extent at once: a melee
+    /// game starts with the start Hatchery's creep already grown (134905).
+    pub fn mature_creep(&mut self) {
+        self.creep_dirty = true;
+        self.rebuild_creep();
+        for i in 0..self.creep.len() {
+            if self.creep_supported[i] {
+                self.creep_strength[i] = 3;
+                self.creep[i] = true;
+            }
+        }
+    }
+
     pub fn creep_grid(&mut self) -> &[u8] {
         self.rebuild_creep();
         &self.creep_strength
@@ -5518,6 +5549,10 @@ fn addon_parent(addon: u16) -> Option<u16> {
 }
 
 /// The buildings that generate creep.
+/// Half extents (tiles) of the creep box of a Hatchery/Lair/Hive.
+const TOWN_CREEP_RX: i32 = 10;
+const TOWN_CREEP_RY: i32 = 6;
+
 fn is_creep_source(type_id: u16) -> bool {
     matches!(
         type_id,

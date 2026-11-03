@@ -111,7 +111,12 @@ fn savefile_roundtrip_with_embedded_map() {
         vf4[64 + i * 2] = 1;
     }
     let races = vec![Race::Terran, Race::Protoss];
-    let mut w = World::from_scenario(Arc::new(data()), &sc, &vf4, &races);
+    let mut w = World::from_scenario(
+        Arc::new(data()),
+        &sc,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &races,
+    );
     let a = w.spawn(0, uid::MARINE, 100, 100).unwrap();
     let ids: Vec<u32> = [a].iter().map(|&i| w.units[i].id).collect();
     w.recorder = Some(galaxycraft::replay::Recorder::new());
@@ -144,7 +149,12 @@ fn savefile_roundtrip_with_embedded_map() {
 
     // Rebuild from the embedded CHK and replay.
     let sc2 = Scenario::parse(&back.map_chk).expect("reparse");
-    let mut w2 = World::from_scenario(Arc::new(data()), &sc2, &vf4, &back.races);
+    let mut w2 = World::from_scenario(
+        Arc::new(data()),
+        &sc2,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &back.races,
+    );
     // Same spawns: ids are deterministic (spawn order), but re-resolve.
     let a2 = w2.spawn(0, uid::MARINE, 100, 100).unwrap();
     assert_eq!(w2.units[a2].id, ids[0]);
@@ -168,11 +178,17 @@ fn boxer_with_ai_save_reload_replays_identically() {
 
     let raw = std::fs::read("assets/maps/Boxer.chk").expect("bundled Boxer");
     let vf4 = std::fs::read("assets/TileSet/platform.vf4").expect("bundled vf4");
+    let cv5 = std::fs::read("assets/TileSet/platform.cv5").expect("bundled cv5");
     let races = vec![Race::Terran, Race::Protoss];
 
     // Live run: both AIs + a direct player order, all recorded.
     let sc = Scenario::parse(&raw).expect("parse");
-    let mut w = World::from_scenario(Arc::new(data()), &sc, &vf4, &races);
+    let mut w = World::from_scenario(
+        Arc::new(data()),
+        &sc,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &races,
+    );
     w.recorder = Some(galaxycraft::replay::Recorder::new());
     let mut ai0 = SimpleAi::new(0);
     let mut ai1 = SimpleAi::new(1);
@@ -213,7 +229,12 @@ fn boxer_with_ai_save_reload_replays_identically() {
 
     // Fresh rebuild from the embedded CHK, replay only (no AI).
     let sc2 = Scenario::parse(&back.map_chk).expect("reparse");
-    let mut w2 = World::from_scenario(Arc::new(data()), &sc2, &vf4, &back.races);
+    let mut w2 = World::from_scenario(
+        Arc::new(data()),
+        &sc2,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &back.races,
+    );
     replay_to(&mut w2, &back.rec, back.tick);
     assert_eq!(w2.tick, 300);
     assert_eq!(

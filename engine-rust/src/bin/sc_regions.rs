@@ -29,15 +29,16 @@ fn main() {
         eprintln!("cannot read {chk}: {e}");
         std::process::exit(1)
     });
-    let vf4 = std::fs::read(&vf4_path).unwrap_or_else(|e| {
-        eprintln!("cannot read {vf4_path}: {e}");
-        std::process::exit(1)
-    });
+    let tiles = galaxycraft::map::TileTables::read_vf4(std::path::Path::new(&vf4_path))
+        .unwrap_or_else(|e| {
+            eprintln!("cannot read {vf4_path} (+ .cv5): {e}");
+            std::process::exit(1)
+        });
     let scenario = Scenario::parse(&bytes).unwrap_or_else(|e| {
         eprintln!("cannot parse {chk}: {e}");
         std::process::exit(1)
     });
-    let terrain = Terrain::from_scenario(&scenario, &vf4);
+    let terrain = Terrain::from_scenario(&scenario, &tiles.data());
     let regions = RegionMap::from_terrain(&terrain);
     let total_tiles = (regions.width * regions.height) as u64;
     let walkable: u64 = regions.regions().iter().map(|r| r.size as u64).sum();

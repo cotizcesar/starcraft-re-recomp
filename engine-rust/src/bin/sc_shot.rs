@@ -94,11 +94,13 @@ fn main() {
     let raw = std::fs::read(&chk).expect("scenario");
     let scenario = Scenario::parse(&raw).expect("valid CHK");
     let tileset = Tileset::load(&tiles, scenario.era, &scenario).expect("tileset assets");
-    let vf4 =
-        std::fs::read(tiles.join(format!("{}.vf4", era_name(scenario.era)))).expect("tileset vf4");
+    let tables = galaxycraft::map::TileTables::read_vf4(
+        &tiles.join(format!("{}.vf4", era_name(scenario.era))),
+    )
+    .expect("tileset vf4 + cv5");
     let slots = scenario.player_slots();
     let races: Vec<Race> = slots.iter().map(|s| s.race(Race::Terran)).collect();
-    let mut world = World::from_scenario(data.clone(), &scenario, &vf4, &races);
+    let mut world = World::from_scenario(data.clone(), &scenario, &tables.data(), &races);
     for s in &slots {
         if let Some(p) = world.players.get_mut(s.slot) {
             p.defeated = !s.active;

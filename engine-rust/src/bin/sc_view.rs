@@ -876,6 +876,13 @@ struct App {
     tiles_dir: PathBuf,
     races: Option<Vec<Race>>,
     menu_race: Race,
+    /// 4x HD terrain of the loaded map's era (screen-resolution path).
+    hd_terrain: Option<galaxycraft::render::HdTerrain>,
+    /// 4x HD sprites, fetched from the install on first use.
+    hd_sprites: galaxycraft::hd_sprites::HdSprites,
+    /// Lobby slot the local player takes in a melee game (retail assigns
+    /// one start location per slot); `None` = first human slot.
+    melee_slot: Option<usize>,
     camera: (i32, i32),
     view: (i32, i32),
     drag_start: Option<(i32, i32)>,
@@ -2284,6 +2291,62 @@ fn aa_chevron(fb: &mut Framebuffer, cx: f32, top: f32, hw: f32, h: f32, c0: Rgb,
 /// Glue `RC_BIGTEXT` (Eurostile regular TTF, kern pairs on) at 1440p:
 /// 47.4 px/em, from the mission-row ink widths of 131132 (47.37..47.39).
 const GLUE_BIG_PX: f32 = 47.4;
+
+/// In-game HUD text (BlizzardGlobal, fitted on 135051): normal 32.8 px/em
+/// (unit name), `RC_SMALLTEXT` 25.4 px/em (stat rows), colour (223,223,255).
+const HUD_NAME_PX: f32 = 32.8;
+const HUD_SMALL_PX: f32 = 25.4;
+/// Baselines below the control's top (content px), from the same fit:
+/// name 1192.4 - 1164, "Psi Used" 1279.4 - 1254.
+const HUD_NAME_BASE: f32 = 28.4;
+const HUD_SMALL_BASE: f32 = 25.4;
+const HUD_TEXT_COLOR: Rgb = Rgb::new(223, 223, 255);
+const HUD_HP_COLOR: Rgb = Rgb::new(0, 220, 0);
+const HUD_MENU_COLOR: Rgb = Rgb::new(235, 225, 150);
+/// Resource numbers: pen offset after the icon and baseline (unmeasured
+/// first pass).
+const HUD_RES_TEXT_DX: f32 = 46.0;
+const HUD_RES_BASE: f32 = 32.0;
+const HUD_RES_COLOR: Rgb = Rgb::new(120, 235, 130);
+/// Command glyph tints (enabled yellow, disabled grey).
+const HUD_GLYPH_ENABLED: Rgb = Rgb::new(252, 252, 56);
+const HUD_GLYPH_DISABLED: Rgb = Rgb::new(150, 150, 150);
+
+/// Draw an HD glyph tinted by `colour` (its luminance scales the tint),
+/// keeping the glyph's alpha.
+fn draw_tinted(
+    fb: &mut Framebuffer,
+    img: &galaxycraft::dds::DdsImage,
+    dest: (i32, i32, i32, i32),
+    colour: Rgb,
+) {
+    let (dx, dy, dw, dh) = dest;
+    if dw <= 0 || dh <= 0 || img.width == 0 || img.height == 0 {
+        return;
+    }
+    for y in 0..dh {
+        let sy = ((y as f32 + 0.5) * img.height as f32 / dh as f32) as usize;
+        for x in 0..dw {
+            let sx = ((x as f32 + 0.5) * img.width as f32 / dw as f32) as usize;
+            let p = img.pixel(sx.min(img.width - 1), sy.min(img.height - 1));
+            let a = (p >> 24) as u8;
+            if a == 0 {
+                continue;
+            }
+            let lum = ((p >> 16) & 0xff).max((p >> 8) & 0xff).max(p & 0xff) as f32 / 255.0;
+            let c = Rgb::new(
+                (((colour.0 >> 16) & 0xff) as f32 * lum) as u8,
+                (((colour.0 >> 8) & 0xff) as f32 * lum) as u8,
+                ((colour.0 & 0xff) as f32 * lum) as u8,
+            );
+            let bg = fb.get(dx + x, dy + y);
+            fb.put(dx + x, dy + y, bg.blend(c, a));
+        }
+    }
+}
+
+/// Retail melee start camera: start location 200 game px below the top.
+const START_CAMERA_TOP: i32 = 200;
 /// Glue text faces: `RC_SMALLTEXT` / plain buttons (BlizzardGlobal),
 /// `RC_BIGTEXT` (Eurostile) and `RC_BIGGERTEXT` (Eurostile Extended).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2844,6 +2907,79 @@ fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     }
 }
 
+/// Idle portrait clip of a units.dat portrait id: `arr/portdata.dat` holds
+/// 110 idle and 110 talking `portdata.tbl` indices (1-based), each a path
+/// stem such as `padvisor\PAdFid0` whose first clip is `...fid00.webm`.
+fn portrait_idle_path(install: &RetailInstall, portrait: u16) -> Option<String> {
+    let dat = install.read("arr/portdata.dat")?;
+    let tbl = install.read("arr/portdata.tbl")?;
+    let at = portrait as usize * 4;
+    let idx = u32::from_le_bytes(dat.get(at..at + 4)?.try_into().ok()?) as usize;
+    let table = galaxycraft::tables::StringTable::parse(&tbl).ok()?;
+    let stem = table.get(u16::try_from(idx.checked_sub(1)?).ok()?)?;
+    Some(format!(
+        "portrait/{}0.webm",
+        stem.replace('\\', "/").to_ascii_lowercase()
+    ))
+}
+
+/// Colour marking "no world pixel" in the 1x unit layer composited over the
+/// screen-resolution HD terrain.
+const WORLD_KEY: Rgb = Rgb(0x0001_0203);
+
+/// Bilinear blit of the 1x layer, skipping [`WORLD_KEY`] texels: each output
+/// pixel blends the non-key neighbours by their bilinear weight, so sprite
+/// edges stay as soft as the opaque blit.
+fn blit_scaled_keyed(src: &Framebuffer, dst: &mut Framebuffer, scale: f32, x0: i32) {
+    let s = scale.max(0.5);
+    let dw = ((src.width as f32 * s).round() as i32).min(dst.width - x0);
+    let dh = ((src.height as f32 * s).round() as i32).min(dst.height);
+    let max_sx = src.width - 1;
+    let max_sy = src.height - 1;
+    for y in 0..dh {
+        let fy = ((y as f32 + 0.5) / s) - 0.5;
+        let y0 = fy.floor() as i32;
+        let wy = fy - y0 as f32;
+        for x in 0..dw {
+            let fx = ((x as f32 + 0.5) / s) - 0.5;
+            let xs = fx.floor() as i32;
+            let wx = fx - xs as f32;
+            let (mut r, mut g, mut b, mut wsum) = (0f32, 0f32, 0f32, 0f32);
+            for (sx, sy, w) in [
+                (xs, y0, (1.0 - wx) * (1.0 - wy)),
+                (xs + 1, y0, wx * (1.0 - wy)),
+                (xs, y0 + 1, (1.0 - wx) * wy),
+                (xs + 1, y0 + 1, wx * wy),
+            ] {
+                let p = src.get(sx.clamp(0, max_sx), sy.clamp(0, max_sy));
+                if p == WORLD_KEY || w <= 0.0 {
+                    continue;
+                }
+                r += ((p.0 >> 16) & 0xff) as f32 * w;
+                g += ((p.0 >> 8) & 0xff) as f32 * w;
+                b += (p.0 & 0xff) as f32 * w;
+                wsum += w;
+            }
+            if wsum <= 0.0 {
+                continue;
+            }
+            let c = Rgb::new(
+                (r / wsum).round() as u8,
+                (g / wsum).round() as u8,
+                (b / wsum).round() as u8,
+            );
+            let (px, py) = (x0 + x, y);
+            let a = (wsum * 255.0).round().min(255.0) as u8;
+            let out = if a == 255 {
+                c
+            } else {
+                dst.get(px, py).blend(c, a)
+            };
+            dst.put(px, py, out);
+        }
+    }
+}
+
 fn blit_scaled_at(src: &Framebuffer, dst: &mut Framebuffer, scale: f32, x0: i32) {
     let s = scale.max(0.5);
     let dw = ((src.width as f32 * s).round() as i32).min(dst.width);
@@ -2954,10 +3090,6 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 fn format_time(ticks: u64) -> String {
     let seconds = ticks / 24;
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
-}
-
-fn scale_i_hud(scale: f32) -> i32 {
-    (scale * 0.85).round().clamp(1.0, 3.0) as i32
 }
 
 /// Map a script key name to a minifb key.
@@ -3392,7 +3524,12 @@ fn main() {
         .and_then(|r| r.first().copied())
         .unwrap_or(Race::Terran);
     let races = races_for(&scenario, &slots, &race_override, menu_race);
-    let mut world = World::from_scenario(data.clone(), &scenario, &vf4, &races);
+    let mut world = World::from_scenario(
+        data.clone(),
+        &scenario,
+        &galaxycraft::map::TileData::new(tileset.cv5(), &vf4),
+        &races,
+    );
     apply_slots(&mut world, &slots);
     world.enable_fog();
 
@@ -3590,6 +3727,9 @@ fn main() {
         next_map: None,
         tiles_dir: tiles_dir.clone(),
         menu_race,
+        hd_terrain: None,
+        hd_sprites: Default::default(),
+        melee_slot: None,
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -3752,7 +3892,21 @@ fn main() {
             }
             // Race-specific in-game captures: load that race's campaign
             // mission so the HUD console matches the reference screens.
-            "ingame-terran" | "ingame-terran2" | "ingame-zerg" | "ingame-protoss" => {
+            // The user's (8)The Hunters games of 2026-10-27: Zerg as slot 1
+            // (134905), Terran as slot 7 (135020), Protoss as slot 6
+            // (135051..135121); start locations identified from the
+            // geyser/mineral layout around each town hall.
+            "ingame-zerg" | "ingame-terran2" | "ingame-protoss" => {
+                let (slot, race, dy) = match shot_screen.as_str() {
+                    "ingame-zerg" => (1, Race::Zerg, 0),
+                    "ingame-terran2" => (7, Race::Terran, -8),
+                    _ => (6, Race::Protoss, 8),
+                };
+                app.hunters_start(&fb, slot, race, dy);
+                app.update();
+                app.draw(&mut fb);
+            }
+            "ingame-terran" => {
                 let race = shot_screen.trim_start_matches("ingame-").to_string();
                 // Map choice is calibrated against the reference frames by a
                 // measured sweep over the installed maps (see session log):
@@ -4024,36 +4178,16 @@ fn main() {
                 app.draw(&mut fb);
                 app.draw_full_gamemenu(&mut fb);
             }
-            "objectives" => {
-                // Reference #38 is a Zerg mission.
-                if let Some(i) = app.maps.iter().position(|m| {
-                    let p = m.path.to_string_lossy();
-                    p.contains("/zerg/") && p.ends_with("06.chk")
-                }) {
-                    app.map_index = i;
-                }
-                app.load_map(app.map_index);
-                // The reference shots have units selected, so the HUD shows
-                // the wireframe list and portrait.
-                app.prepare_ingame_shot(&fb);
+            "objectives" | "tips" => {
+                // 134919 / 134931: the Zerg game of 134905 with the dialog open.
+                app.hunters_start(&fb, 1, Race::Zerg, 0);
                 app.update();
                 app.draw(&mut fb);
-                app.draw_objectives_panel(&mut fb);
-            }
-            "tips" => {
-                // Reference #39 is a Zerg mission: load one so the terrain and
-                // the HUD console behind the dialog match.
-                if let Some(i) = app.maps.iter().position(|m| {
-                    let p = m.path.to_string_lossy();
-                    p.contains("/zerg/") && p.ends_with("06.chk")
-                }) {
-                    app.map_index = i;
+                if shot_screen == "objectives" {
+                    app.draw_objectives_panel(&mut fb);
+                } else {
+                    app.draw_tips_panel(&mut fb);
                 }
-                app.load_map(app.map_index);
-                app.prepare_ingame_shot(&fb);
-                app.update();
-                app.draw(&mut fb);
-                app.draw_tips_panel(&mut fb);
             }
             "briefing" => {
                 app.load_map(app.map_index);
@@ -4713,25 +4847,37 @@ impl App {
             }
         };
         let slots = scenario.player_slots();
-        self.local_player = slots
-            .iter()
-            .find(|s| s.active && s.human)
-            .map(|s| s.slot)
+        self.local_player = self
+            .melee_slot
+            .filter(|&s| !scenario.has_placed_force() && slots.iter().any(|p| p.slot == s))
+            .or_else(|| slots.iter().find(|s| s.active && s.human).map(|s| s.slot))
             .unwrap_or(0);
-        let console_race = slots
-            .iter()
-            .find(|s| s.slot == self.local_player)
-            .map(|s| s.race(Race::Terran))
+        let races = races_for(&scenario, &slots, &self.races, self.menu_race);
+        // The console follows the race actually played: a melee slot's SIDE
+        // byte is "user select" and would always fall back to Terran.
+        let console_race = races
+            .get(self.local_player)
+            .copied()
             .unwrap_or(Race::Terran);
         self.console_race = console_race;
         self.console = ConsoleArt::load(&self.assets_root, console_race);
-        let races = races_for(&scenario, &slots, &self.races, self.menu_race);
-        let mut world = World::from_scenario(self.data.clone(), &scenario, &vf4, &races);
+        let mut world = World::from_scenario(
+            self.data.clone(),
+            &scenario,
+            &galaxycraft::map::TileData::new(tileset.cv5(), &vf4),
+            &races,
+        );
         apply_slots(&mut world, &slots);
+        // Melee CHKs mark every slot as computer (OWNR 6); the local player
+        // is the human one, never driven by the AI.
+        if let Some(p) = world.players.get_mut(self.local_player) {
+            p.is_computer = false;
+        }
         world.enable_fog();
+        let local = self.local_player;
         self.ais = slots
             .iter()
-            .filter(|s| s.computer)
+            .filter(|s| s.computer && s.slot != local)
             .map(|s| SimpleAi::new(s.slot as u8))
             .collect();
         self.campaign_ais.clear();
@@ -4790,6 +4936,13 @@ impl App {
                 }
             }
         }
+        if self
+            .hd_terrain
+            .as_ref()
+            .is_none_or(|_| self.scenario.era != scenario.era)
+        {
+            self.hd_terrain = galaxycraft::render::HdTerrain::load(&self.assets_root, scenario.era);
+        }
         self.scenario = scenario;
         self.tileset = tileset;
         self.chk_raw = raw;
@@ -4829,7 +4982,7 @@ impl App {
         self.show_leaderboard = false;
         self.intro = false;
         self.start_mission_music();
-        self.status(format!("{} - {} players", entry.name, entry.players));
+        // Retail shows no map banner at game start (134905/135020/135051).
     }
 
     fn restart(&mut self) {
@@ -5013,11 +5166,23 @@ impl App {
             }
         };
         let slots = scenario.player_slots();
-        let mut world = World::from_scenario(self.data.clone(), &scenario, &vf4, &save.races);
+        let mut world = World::from_scenario(
+            self.data.clone(),
+            &scenario,
+            &galaxycraft::map::TileData::new(tileset.cv5(), &vf4),
+            &save.races,
+        );
         apply_slots(&mut world, &slots);
         world.enable_fog();
         world.rng = save.rec.seed;
         galaxycraft::replay::replay_to(&mut world, &save.rec, save.tick);
+        if self
+            .hd_terrain
+            .as_ref()
+            .is_none_or(|_| self.scenario.era != scenario.era)
+        {
+            self.hd_terrain = galaxycraft::render::HdTerrain::load(&self.assets_root, scenario.era);
+        }
         self.scenario = scenario;
         self.tileset = tileset;
         self.chk_raw = save.map_chk.clone();
@@ -5383,47 +5548,10 @@ impl App {
         }
         let decoded = (|| {
             let install = self.install.as_ref()?;
-            let name = self.data.unit_name(type_id);
-            // Unit names carry a race prefix ("Terran Marine"); the portrait
-            // folders do not (`tmarine`).
-            let stripped = name
-                .split_whitespace()
-                .skip(
-                    if matches!(
-                        name.split_whitespace().next().unwrap_or(""),
-                        "Terran" | "Zerg" | "Protoss"
-                    ) {
-                        1
-                    } else {
-                        0
-                    },
-                )
-                .collect::<Vec<_>>()
-                .join("");
-            let mut norm: String = stripped
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
-                .collect::<String>()
-                .to_ascii_lowercase();
-            if norm.is_empty() {
-                return None;
-            }
-            norm.truncate(7);
-            for prefix in ['t', 'z', 'p', 'n'] {
-                let folder = format!("{prefix}{norm}");
-                let short: String = folder.chars().take(3).collect();
-                let path = format!("portrait/{folder}/{short}fid00.webm");
-                let Ok(bytes) = install.read_by_path(&path) else {
-                    continue;
-                };
-                let info = galaxycraft::video::parse_webm(&bytes).ok()?;
-                if let Some(frame) =
-                    galaxycraft::video::decode_frame_at(&bytes, &info, Some(0.6), 256)
-                {
-                    return Some(frame);
-                }
-            }
-            None
+            let path = portrait_idle_path(install, self.data.unit(type_id).portrait)?;
+            let bytes = install.read_by_path(&path).ok()?;
+            let info = galaxycraft::video::parse_webm(&bytes).ok()?;
+            galaxycraft::video::decode_frame_at(&bytes, &info, Some(0.6), 256)
         })();
         if std::env::var("GC_DEBUG_PORTRAIT").is_ok() {
             eprintln!(
@@ -5564,6 +5692,51 @@ impl App {
 
     /// Centre the camera on the first local unit, like the retail client does
     /// when a mission starts.
+    /// Retail start camera of a melee game: the start location sits half a
+    /// view from the left and 200 game px from the top, clamped to the map
+    /// (measured on 134905 / 135020 / 135051, (8)The Hunters).
+    fn start_camera(&mut self) {
+        let Some((x, y)) = self.scenario.start_location_of(self.local_player as u8) else {
+            return self.centre_on_local_unit();
+        };
+        self.camera = (x - self.view.0 / 2, y - START_CAMERA_TOP);
+        self.clamp_camera();
+    }
+
+    /// Reference in-game captures: the start of a melee game on
+    /// (8)The Hunters as slot `slot` (the start locations of the user's
+    /// three autosaved games, 2026-10-27), with the town hall selected for
+    /// Zerg/Protoss and nothing selected for Terran, as on the captures.
+    fn hunters_start(&mut self, fb: &Framebuffer, slot: usize, race: Race, cam_dy: i32) {
+        if let Some(i) = self
+            .maps
+            .iter()
+            .position(|m| m.name.to_lowercase().contains("the hunters") && m.players == 8)
+        {
+            self.map_index = i;
+        }
+        self.melee_slot = Some(slot);
+        self.menu_race = race;
+        self.races = None;
+        self.load_map(self.map_index);
+        self.minimap_terrain = false;
+        self.menu = false;
+        self.intro = false;
+        self.briefing = false;
+        self.update_view(fb);
+        self.world.update_vision();
+        self.selected.clear();
+        if race != Race::Terran {
+            self.select_reference_selection();
+        }
+        self.refresh_commands();
+        self.start_camera();
+        // The player nudged the camera before capturing: measured by
+        // aligning the terrain (error 1.96-2.35 after the shift).
+        self.camera.1 += cam_dy;
+        self.clamp_camera();
+    }
+
     fn centre_on_local_unit(&mut self) {
         if let Some(u) = self
             .world
@@ -8298,26 +8471,16 @@ impl App {
         }
     }
 
+    /// The nine card buttons of the race dialog (`statbtn{t,z,p}`), right
+    /// anchored like retail.
     fn command_slots(&self) -> Vec<UiRect> {
-        let scale = self.ui_scale;
-        let (ox, oy) = (self.ui_ox, self.ui_oy);
-        if let Some(dialog) = self
-            .console
-            .as_ref()
-            .and_then(|c| c.layout("statbtndefault"))
-        {
-            (1..=9)
-                .filter_map(|id| dialog.control(id))
-                .map(|c| c.abs.scaled(scale, ox, oy))
-                .collect()
-        } else {
-            (0..9)
-                .map(|i| {
-                    UiRect::new(496 + 9 + (i % 3) * 46, 354 + 4 + (i / 3) * 40, 36, 34)
-                        .scaled(scale, ox, oy)
-                })
-                .collect()
-        }
+        let dialog = self.card_dialog();
+        (0..9)
+            .map(|i| {
+                let fallback = UiRect::new(496 + 9 + (i % 3) * 46, 354 + 4 + (i / 3) * 40, 36, 34);
+                self.hud_control(dialog, i + 1, fallback)
+            })
+            .collect()
     }
 
     /// Activate command-card slot `index` (0..8).  This is shared by the
@@ -8904,20 +9067,11 @@ impl App {
     /// a click can never land far from the drawn minimap (the previous version
     /// used the 640x480 safe area instead of the content box and was ~330 px
     /// off at 3440x1440).
+    /// `minimap` control 1 (classic 6,348 128x128, left-anchored); measured
+    /// on 135051 as the console art's black well x 18..402, y 1043..1427.
     fn minimap_rect(&self) -> (i32, i32, i32, i32) {
-        let (cx, _cy, cw, ch) = self.content_box;
-        let hud_frac: f32 = std::env::var("GC_HUD_H")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.2361);
-        let hud_top = (ch as f32 - ch as f32 * hud_frac).round() as i32;
-        let size = (cw as f32 * 0.1516).round() as i32;
-        (
-            cx + (cw as f32 * 0.0047) as i32,
-            hud_top + (size as f32 * 0.0129) as i32,
-            size,
-            size,
-        )
+        let r = self.hud_control("minimap", 1, UiRect::new(6, 348, 128, 128));
+        (r.x, r.y, r.w, r.h)
     }
 
     fn update(&mut self) {
@@ -9080,20 +9234,33 @@ impl App {
         // The world is rendered into a logical 1x framebuffer and then blitted
         // scaled, so sprites keep their proportion against the HUD at any
         // resolution (720p..4K) and ultrawide only widens the view.
+        // HD path (retail at >= 2x): the terrain is drawn at screen
+        // resolution from the 4x art over the whole content height (the
+        // console has see-through gaps), the 1x layer only carries creep and
+        // units, and the fog is applied at screen resolution afterwards.
+        let scale = self.ui_scale.max(0.5);
+        let hd = self.hd_terrain.is_some() && scale >= 2.0;
         let (vw, vh) = self.view;
+        let vh = if hd {
+            (Self::content_rect(fb_full).3 as f32 / scale).ceil() as i32
+        } else {
+            vh
+        };
         let mut world_fb = Framebuffer::new(vw.max(1) as usize, vh.max(1) as usize);
-        world_fb.clear(Rgb::new(0, 0, 0));
+        world_fb.clear(if hd { WORLD_KEY } else { Rgb::new(0, 0, 0) });
         let fb = &mut world_fb;
         let cam = self.camera;
-        self.tileset.draw_terrain(fb, &self.scenario, cam);
+        if !hd {
+            self.tileset.draw_terrain(fb, &self.scenario, cam);
+        }
         // Creep sits on the terrain and under the fog, exactly where the
         // engine's procedural mat is composited.
         let tick = self.world.tick;
-        {
+        if !hd {
             let grid = self.world.creep_grid();
             galaxycraft::render::draw_creep(fb, &self.scenario, cam, grid, tick);
         }
-        if self.fog {
+        if self.fog && !hd {
             self.tileset.draw_fog(
                 fb,
                 &self.scenario,
@@ -9107,12 +9274,17 @@ impl App {
             .filter(|&i| self.world.units[i].alive)
             .collect();
         order.sort_by_key(|&i| self.world.units[i].y);
+        let mut hd_units = Vec::new();
         for i in order {
             let u = &self.world.units[i];
             if self.fog
                 && u.owner as usize != self.local_player
                 && !self.world.can_see_unit(self.local_player as u8, i)
             {
+                continue;
+            }
+            if hd && self.hd_unit_image(u.type_id).is_some() {
+                hd_units.push(i);
                 continue;
             }
             let (sx, sy) = self.screen_of(u);
@@ -9146,597 +9318,151 @@ impl App {
 
         // Blit the logical frame scaled to the window, then draw the HUD in
         // screen space on top.
-        let scale = self.ui_scale.max(0.5);
-        blit_scaled_at(&world_fb, fb_full, scale, self.content_x0);
+        if hd {
+            let (cx, cy, cw, ch) = Self::content_rect(fb_full);
+            let mw = self.scenario.width as i32;
+            let grid = self.world.creep_grid().to_vec();
+            let creep = move |tx: i32, ty: i32| {
+                tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0)
+            };
+            if let Some(t) = &self.hd_terrain {
+                t.draw(
+                    fb_full,
+                    &self.tileset,
+                    &self.scenario,
+                    cam,
+                    (cx, cy, cw, ch),
+                    scale,
+                    &creep,
+                );
+            }
+            blit_scaled_keyed(&world_fb, fb_full, scale, self.content_x0);
+            for &i in &hd_units {
+                self.draw_unit_hd(fb_full, i, (cx, cy, cw, ch), scale);
+            }
+            if self.fog {
+                galaxycraft::render::draw_fog_smooth(
+                    fb_full,
+                    &self.scenario,
+                    &self.world,
+                    self.local_player as u8,
+                    cam,
+                    (cx, cy, cw, ch),
+                    scale,
+                );
+            }
+        } else {
+            blit_scaled_at(&world_fb, fb_full, scale, self.content_x0);
+        }
         let fb = fb_full;
         self.draw_hud(fb);
         self.draw_overlay(fb);
     }
 
-    /// Info-panel interior in screen pixels: the centre plate's dark inset,
-    /// asked from the console art itself so the text follows the frame.
-    fn info_panel_rect(&self, fb: &Framebuffer) -> UiRect {
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let hud_frac: f32 = std::env::var("GC_HUD_H")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.2361);
-        let hud_h = (ch as f32 * hud_frac).round() as i32;
-        let hud_top = ch - hud_h;
-        match &self.console {
-            Some(console) => {
-                let (x, y, w, h) = console.center_interior(hud_top, hud_h, cx, cw);
-                UiRect::new(x, y, w, h)
+    /// HD image of a unit's main sprite (`unit -> flingy -> sprite -> image`).
+    fn hd_unit_image(&self, type_id: u16) -> Option<std::rc::Rc<galaxycraft::hd_sprites::HdImage>> {
+        let ty = self.data.unit(type_id);
+        let flingy = self.data.flingy(ty.flingy)?;
+        let image = self.data.sprite(flingy.sprite)?.image;
+        let install = self.install.as_ref();
+        self.hd_sprites.image(image, |path| install?.read(path))
+    }
+
+    /// Draw one unit from its HD sprite at screen resolution.  Directional
+    /// images store 17 facings (north..south through east); the western ones
+    /// are the mirrored frames, as in the SD GRPs.
+    fn draw_unit_hd(&self, fb: &mut Framebuffer, i: usize, content: (i32, i32, i32, i32), s: f32) {
+        let u = &self.world.units[i];
+        let Some(img) = self.hd_unit_image(u.type_id) else {
+            return;
+        };
+        let directional = img.header.frames.len() >= 17;
+        let (frame, flip) = if directional {
+            let dir = ((u.facing as i32 + 4) / 8).rem_euclid(32);
+            if dir <= 16 {
+                (dir as usize, false)
+            } else {
+                ((32 - dir) as usize, true)
             }
-            None => UiRect::new(cx + cw / 3, hud_top, cw / 3, hud_h),
+        } else {
+            (0, false)
+        };
+        let (cx, cy, cw, ch) = content;
+        let sx = cx as f32 + (u.x as f32 / 256.0 - self.camera.0 as f32) * s;
+        let sy = cy as f32 + (u.y as f32 / 256.0 - self.camera.1 as f32) * s;
+        let team = galaxycraft::render::PLAYER_COLORS
+            [u.owner as usize % galaxycraft::render::PLAYER_COLORS.len()];
+        galaxycraft::hd_sprites::draw_frame(
+            fb,
+            &img,
+            frame,
+            sx,
+            sy,
+            s,
+            flip,
+            Some(team),
+            (cx, cy, cx + cw, cy + ch),
+        );
+    }
+
+    /// Screen rectangle of a console-dialog rect given in absolute classic
+    /// 640x480 coordinates.  Retail keeps the classic layout x3 and anchors
+    /// each dialog in the widened frame: the minimap stays left, `statdata`
+    /// is centred and the right-hand dialogs (`statres`, `statport`,
+    /// `stat_f10`, `statbtn*`) move by the whole extra width.  Measured on
+    /// 135051: card button 1 at x 2155 = (505 + 213.33) * 3, the panel name
+    /// centred at 1265 = (138 + 102 + 76 + 106.67) * 3.
+    fn hud_rect(&self, dialog: &str, r: UiRect) -> UiRect {
+        let (cx, cy, cw, ch) = self.content_box;
+        let s = (ch as f32 / 480.0).max(0.5);
+        let extra = cw as f32 / s - 640.0;
+        let anchor = match dialog {
+            "minimap" => 0.0,
+            "statdata" => 0.5,
+            _ => 1.0,
+        };
+        let x = cx as f32 + (r.x as f32 + anchor * extra) * s;
+        UiRect::new(
+            x.round() as i32,
+            cy + (r.y as f32 * s).round() as i32,
+            (r.w as f32 * s).round() as i32,
+            (r.h as f32 * s).round() as i32,
+        )
+    }
+
+    /// [`Self::hud_rect`] of control `id` of a shipped console dialog.
+    fn hud_control(&self, dialog: &str, id: i32, fallback: UiRect) -> UiRect {
+        let r = self
+            .console
+            .as_ref()
+            .and_then(|c| c.layout(dialog))
+            .and_then(|d| d.control(id))
+            .map(|c| c.abs)
+            .unwrap_or(fallback);
+        self.hud_rect(dialog, r)
+    }
+
+    /// Command-card dialog of the console race.
+    fn card_dialog(&self) -> &'static str {
+        match self.console_race {
+            Race::Zerg => "statbtnz",
+            Race::Protoss => "statbtnp",
+            _ => "statbtnt",
         }
     }
 
     fn draw_hud(&mut self, fb: &mut Framebuffer) {
         let (scale, ox, oy) = self.ui_metrics(fb);
-        // Measured on the retail reference: the console band is 405/1440 of
-        // the content height (28.1%), not the classic 25%.
-        let (_rcx, _rcy, rcw, rch) = Self::content_rect(fb);
-        // Console band: measured on the retail references the metal starts at
-        // y 1100 of 1440 (0.2361), not the 0.2813 an earlier pass used.
-        let hud_frac: f32 = std::env::var("GC_HUD_H")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.2361);
-        let hud_h = (rch as f32 * hud_frac).round() as i32;
-        let hud_top = rch - hud_h + oy;
-        let _ = rcw;
-        let (p_minerals, p_gas) = {
-            let p = &self.world.players[self.local_player];
-            (p.minerals, p.gas)
-        };
-        let supply = self.world.supply_used(self.local_player as u8);
-        let cap = self.world.supply_cap(self.local_player as u8);
-
+        let (cx, cy, cw, ch) = Self::content_rect(fb);
         if let Some(console) = &self.console {
-            if scale >= 1.5 {
-                let (cx, _cy, cw, _ch) = Self::content_rect(fb);
-                console.draw_plates_in(fb, hud_top, hud_h, cx, cw);
-            } else {
-                fb.rect(0, hud_top, fb.width, hud_h, Rgb::new(18, 20, 26));
-                fb.rect(0, hud_top, fb.width, 2, Rgb::new(90, 100, 120));
-            }
-        } else {
-            fb.rect(0, hud_top, fb.width, hud_h, Rgb::new(18, 20, 26));
-            fb.rect(0, hud_top, fb.width, 2, Rgb::new(90, 100, 120));
+            console.draw_plates_in(fb, cy, ch, cx, cw);
         }
-
-        // Resource strip at the shipped `StatRes` [220,0] anchor.
-        let res_layout = self
-            .console
-            .as_ref()
-            .and_then(|c| c.layout("statres"))
-            .cloned();
-        // Retail anchors the resource/supply strip at the TOP-RIGHT of the
-        // 16:9 content box, not centred over the world.
-        let (cx, _cy, cw, _ch) = Self::content_rect(fb);
-        let res = res_layout
-            .as_ref()
-            .map(|d| {
-                // The strip spans 420 units of 640-space; park its right edge
-                // on the content edge so it reads like the retail top-right HUD.
-                let r = d.rect.scaled(scale, cx, oy);
-                let strip_w = (420.0 * scale) as i32;
-                UiRect::new(cx + cw - strip_w, r.y, r.w, r.h)
-            })
-            .unwrap_or_else(|| UiRect::new(0, 0, 420, 20).scaled(scale, cx, oy));
-        // Retail top-right strip: icon + number groups, right-aligned to the
-        // content edge. The icons are drawn as small vectors because CASC
-        // ships no standalone mineral/gas/supply sprites for this console.
-        let res_y = res.y + (2.0 * scale) as i32;
-        let txt = scale_i_hud(scale);
-        let icon = (9.0 * scale).round().max(4.0) as i32;
-        let mut right = cx + cw - (8.0 * scale) as i32;
-
-        // supply (chevrons) + used/cap
-        let sup_label = format!("{}/{}", supply / 2, cap / 2);
-        let sup_w = sup_label.len() as i32 * 8 * txt;
-        fb.text(
-            right - sup_w,
-            res_y,
-            &sup_label,
-            Rgb::new(235, 235, 235),
-            txt,
-        );
-        right -= sup_w + (4.0 * scale) as i32 + icon;
-        fb.triangle_icon(right, res_y, icon, Rgb::new(225, 225, 230));
-
-        // gas
-        right -= (14.0 * scale) as i32;
-        let gas_w = format!("{}", p_gas).len() as i32 * 8 * txt;
-        fb.text(
-            right - gas_w,
-            res_y,
-            &format!("{}", p_gas),
-            Rgb::new(120, 220, 200),
-            txt,
-        );
-        right -= gas_w + (4.0 * scale) as i32 + icon;
-        fb.rect(right, res_y, icon, icon, Rgb::new(70, 190, 165));
-        fb.rect_outline(right, res_y, icon, icon, Rgb::new(140, 240, 210));
-
-        // minerals
-        right -= (14.0 * scale) as i32;
-        let min_w = format!("{}", p_minerals).len() as i32 * 8 * txt;
-        fb.text(
-            right - min_w,
-            res_y,
-            &format!("{}", p_minerals),
-            Rgb::new(120, 235, 130),
-            txt,
-        );
-        right -= min_w + (4.0 * scale) as i32 + icon;
-        fb.diamond_icon(right, res_y, icon, Rgb::new(120, 200, 255));
-
-        // Minimap at the classic lower-left position, protruding into the
-        // view exactly as the retail console frame does.
-        // Minimap measured on reference #30: the radar sits at the very left of
-        // the console band — x 452..840, y 1040..1435 of the 3440x1440 frame —
-        // not at the classic 640x480 offset (which put it 330 px to the right).
-        let (mx0, _my0, mw, _mh) = Self::content_rect(fb);
-        let mm_size = (mw as f32 * 0.1516).round() as i32;
-        let (rx, ry) = (
-            mx0 + (mw as f32 * 0.0047) as i32,
-            hud_top + (mm_size as f32 * 0.0129) as i32,
-        );
-        fb.rect(
-            rx - 2,
-            ry - 2,
-            mm_size + 4,
-            mm_size + 4,
-            Rgb::new(12, 14, 18),
-        );
-        let units = self.world.minimap_units(self.local_player as u8, self.fog);
-        let cam = (
-            self.camera.0,
-            self.camera.1,
-            self.camera.0 + self.view.0,
-            self.camera.1 + self.view.1,
-        );
-        self.tileset.draw_minimap_with_terrain(
-            fb,
-            (rx, ry, mm_size, mm_size),
-            &units,
-            cam,
-            self.world.vision.as_ref(),
-            self.local_player as u8,
-            self.minimap_terrain,
-        );
-        if let Some(con) = self.console.as_ref().and_then(|c| c.con_over.as_ref()) {
-            con.draw_scaled(fb, rx - 4, ry - 4, mm_size + 8, mm_size + 8);
-        } else {
-            fb.rect_outline(
-                rx - 1,
-                ry - 1,
-                mm_size + 2,
-                mm_size + 2,
-                Rgb::new(90, 105, 125),
-            );
-        }
-
-        // Selection panel at `StatData` [138,388,270,92].
-        let data_layout = self
-            .console
-            .as_ref()
-            .and_then(|c| c.layout("statdata"))
-            .cloned();
-        let panel = data_layout
-            .as_ref()
-            .map(|d| d.rect.scaled(scale, ox, oy))
-            .unwrap_or_else(|| UiRect::new(138, 388, 270, 92).scaled(scale, ox, oy));
-        // The retail selection panel is the console plate's own black interior
-        // (measured 0,0,0).  Painting an opaque rectangle here erased the
-        // plate's frame in all three races (the art's interior is smaller than
-        // the rect derived from the triptych), so the fill is only used when no
-        // console art is loaded.
-        // Measured: filling it helps Terran (panel 0.326 vs 0.282) and Protoss
-        // (0.170 vs 0.091) because their art interior is wider than the rect
-        // we derive; for Zerg it erases the organic frame (0.009 vs -0.020), so
-        // the fill is skipped there.
-        if self.console.is_none() || !matches!(self.console_race, Race::Zerg) {
-            fb.rect(panel.x, panel.y, panel.w, panel.h, Rgb::new(0, 0, 0));
-        }
-        let scale_i = if scale >= 1.4 { 2 } else { 1 };
-        if let Some(u) = self.first_selected() {
-            let ty = self.data.unit(u.type_id);
-            // With more than one unit selected the retail panel shows only the
-            // selection slots: 93x95 blue-framed cells stacked vertically
-            // (measured on reference #30 at x 0.3223, y 0.827, pitch 0.0771).
-            if let Some(console) = &self.console {
-                let panel = self.info_panel_rect(fb);
-                // A single selected unit is drawn as one large wireframe in
-                // the panel's left half (reference #37/#41).
-                if self.selected.len() == 1 {
-                    console.draw_wireframe(
-                        fb,
-                        u.type_id,
-                        (
-                            panel.x + (panel.w as f32 * 0.06) as i32,
-                            panel.y + (panel.h as f32 * 0.28) as i32,
-                            (panel.w as f32 * 0.24) as i32,
-                            (panel.h as f32 * 0.46) as i32,
-                        ),
-                        None,
-                    );
-                    let hp = (u.hp / 256).max(0);
-                    let _ = hp;
-                }
-                // Reference #30: 93x95 px cells inside a 703x320 panel, i.e.
-                // 0.132 of its width and 0.30 of its height, stacked with a
-                // 0.98-cell pitch.
-                let slot_w = (panel.w as f32 * 0.132) as i32;
-                let slot_h = (panel.h as f32 * 0.300) as i32;
-                let pitch = (panel.h as f32 * 0.295) as i32;
-                let col_pitch = (panel.w as f32 * 0.140) as i32;
-                let x0 = panel.x + (panel.w as f32 * 0.06) as i32;
-                let y0 = panel.y + (panel.h as f32 * 0.16) as i32;
-                for (i, id) in self
-                    .selected
-                    .iter()
-                    .take(12)
-                    .enumerate()
-                    .filter(|_| self.selected.len() > 1)
-                {
-                    let Some(su) = self.world.unit(*id) else {
-                        continue;
-                    };
-                    let cxx = x0 + (i as i32 / 6) * col_pitch;
-                    let cyy = y0 + (i as i32 % 6) * pitch;
-                    fb.rect(cxx, cyy, slot_w, slot_h, Rgb::new(2, 3, 6));
-                    fb.rect_outline(cxx, cyy, slot_w, slot_h, Rgb::new(40, 90, 210));
-                    // Palette colours, not the team tint: the team tint
-                    // replaces the whole ramp (8..=15), flattening the
-                    // wireframe into a solid silhouette.
-                    console.draw_wireframe(
-                        fb,
-                        su.type_id,
-                        (cxx + 5, cyy + 5, slot_w - 10, slot_h - 10),
-                        None,
-                    );
-                }
-            }
-            // Stats are only shown for a single selected unit; the slots and
-            // the portrait are drawn either way.
-            if self.selected.len() == 1 {
-                // Building (single) selection: the retail panel centres the name
-                // and right-aligns the stat rows. Rects measured on reference #37:
-                // name centre x 0.453 / y 0.821; stat rows right edge x 0.554 from
-                // y 0.881 on a 0.025 pitch; HP at x 0.328 / y 0.952.
-                let hp = (u.hp / 256).max(0);
-                let max_hp = ty.hit_points_raw as i32 / 256;
-                let name = self.data.unit_name(u.type_id);
-                let nw = name.chars().count() as i32 * 8 * scale_i;
-                fb.text(
-                    panel.x + panel.w / 2 - nw / 2,
-                    panel.y + (panel.h as f32 * 0.06) as i32,
-                    name,
-                    Rgb::new(235, 235, 240),
-                    scale_i,
-                );
-                // Retail labels the same four rows "Control" for Terran/Zerg
-                // and "Psi" for Protoss; the values are the player's supply
-                // (the sim keeps it doubled, so halves are the retail units).
-                let used = self.world.supply_used(self.local_player as u8) / 2;
-                let cap = self.world.supply_cap(self.local_player as u8) / 2;
-                let label = if matches!(self.console_race, Race::Protoss) {
-                    "Psi"
-                } else {
-                    "Control"
-                };
-                let _ = ty;
-                let stats = [
-                    format!("{label} Used: {used}"),
-                    format!("{label} Provided: {cap}"),
-                    format!("Total {label}: {cap}"),
-                    format!("{label} Max: {}", 200),
-                ];
-                for (i, text) in stats.iter().enumerate() {
-                    let tw = text.chars().count() as i32 * 8 * scale_i;
-                    fb.text(
-                        panel.x + panel.w - (panel.w as f32 * 0.05) as i32 - tw,
-                        panel.y + (panel.h as f32 * (0.30 + 0.13 * i as f32)) as i32,
-                        text,
-                        Rgb::new(225, 225, 230),
-                        scale_i,
-                    );
-                }
-                fb.text(
-                    panel.x + (panel.w as f32 * 0.06) as i32,
-                    panel.y + (panel.h as f32 * 0.84) as i32,
-                    &format!("{hp}/{max_hp}"),
-                    Rgb::new(120, 235, 120),
-                    scale_i,
-                );
-            }
-        } else {
-            // Retail leaves the selection panel empty instead of printing a
-            // hint; the wireframes only appear when something is selected.
-            let _ = scale_i;
-        }
-
-        // Portrait, measured on the retail references: x 0.7441..0.7969,
-        // y 0.875..0.9861 of the content box (the classic StatPort rect sits
-        // ~350 px to the left in the HD console).
-        let (pcx, _pcy, pcw, pch) = Self::content_rect(fb);
-        let measured_port = matches!(self.console_race, Race::Terran);
-        let port = if measured_port {
-            UiRect::new(
-                pcx + (pcw as f32 * 0.7441) as i32,
-                (pch as f32 * 0.875) as i32,
-                (pcw as f32 * 0.0528) as i32,
-                (pch as f32 * 0.1111) as i32,
-            )
-        } else {
-            self.console
-                .as_ref()
-                .and_then(|c| c.layout("statport"))
-                .and_then(|d| d.control(1))
-                .map(|c| c.abs.scaled(scale, ox, oy))
-                .unwrap_or_else(|| UiRect::new(413, 410, 60, 56).scaled(scale, ox, oy))
-        };
-        fb.rect(port.x, port.y, port.w, port.h, Rgb::new(10, 12, 16));
-        let selected_first = self.first_selected().map(|u| (u.type_id, u.owner));
-        if let Some((unit_type, _unit_owner)) = selected_first {
-            // Prefer the painted retail portrait; fall back to the wireframe
-            // when the install has no clip for this unit.
-            let painted = self.portrait_frame(unit_type);
-            match painted {
-                Some(frame) => {
-                    // Keep the 448x480 portrait's aspect inside StatPort.
-                    let scale_fit = (port.w as f32 / frame.width as f32)
-                        .min(port.h as f32 / frame.height as f32);
-                    let dw = (frame.width as f32 * scale_fit).round().max(1.0) as i32;
-                    let dh = (frame.height as f32 * scale_fit).round().max(1.0) as i32;
-                    let ox_p = port.x + (port.w - dw) / 2;
-                    let oy_p = port.y + (port.h - dh) / 2;
-                    blit_additive(&frame, fb, ox_p, oy_p, dw, dh);
-                }
-                None => {
-                    // Only units with a shipped portrait clip get a painted
-                    // face; buildings have none, and retail leaves the console
-                    // art visible in that well instead of drawing a wireframe
-                    // (measured on the Zerg reference: the well shows the
-                    // console's own ornament).
-                }
-            }
-        }
-        fb.rect_outline(port.x, port.y, port.w, port.h, Rgb::new(80, 95, 115));
-
-        // Command card: positioned from the retail reference measurements
-        // (see below). `statbtndefault` describes the classic 640x480 dialog,
-        // which does not match the Remastered console, so it is not used.
-        // The Remastered console lays its command wells out on the right
-        // plate, not on the classic 640x480 dialog. Fractions below were
-        // measured on the retail reference (screenshot 30 at 3440x1440):
-        // grid x0 = 2590, cell 110x105, pitch 137x147 inside content 2560x1440.
-        // Command card, measured directly on the retail reference at
-        // 3440x1440 (content box x 440..3000, y 0..1440):
-        //   column centres x = 2645 / 2780 / 2920
-        //   row centres    y = 1090 / 1237 / 1377
-        //   icon glyph     ~96x96
-        // Expressed as fractions of the content box so any resolution works.
-        let (ccx, _ccy, ccw, cch) = Self::content_rect(fb);
-        let mut slots: Vec<UiRect> = Vec::new();
-        let cx_f = [0.8613f32, 0.9141, 0.9688];
-        // Rows measured on the reference (glyph bboxes at 3440x1440): centres
-        // 1124 / 1244 / 1364, i.e. 0.7806 / 0.8639 / 0.9472 of the height.
-        let cy_f = [0.7806f32, 0.8639, 0.9472];
-        // Measured on the reference: each cell is 138x120 with a 74x74 glyph
-        // centred in it (icon bbox 2609..2682 x 1088..1161, next column
-        // 2747..2820, next row 1208..1281).
-        // Reference glyphs measure 76x76 px at 1440p; the HD frames carry a
-        // transparent margin, so the drawn box is 0.0350 of the content width
-        // (measured: the old 0.0289 produced 63 px glyphs).
-        // Glyph box measured from the reference glyph bboxes: Terran and Zerg
-        // cards carry 76x76 px glyphs, the Protoss card's are smaller (its
-        // buttons sit in a 2-row block), so the fraction is per race.
-        let (gw_f, gh_f) = match self.console_race {
-            Race::Protoss => (0.0289f32, 0.0514f32),
-            _ => (0.0350, 0.0622),
-        };
-        let glyph = (ccw as f32 * gw_f).round() as i32;
-        let gh = (cch as f32 * gh_f).round() as i32;
-        for fy in cy_f {
-            for fx in cx_f {
-                let cxx = ccx + (ccw as f32 * fx) as i32;
-                let cyy = (cch as f32 * fy) as i32;
-                slots.push(UiRect::new(cxx - glyph / 2, cyy - gh / 2, glyph, gh));
-            }
-        }
-
-        let affordable = |t: u16| {
-            let ty = self.data.unit(t);
-            p_minerals >= ty.mineral_cost as i32 && p_gas >= ty.gas_cost as i32
-        };
-        let commands = self.command_list.clone();
-        // Command icons use their palette colour (retail yellow); the player
-        // colour only tints unit wireframes.
-        let _team = galaxycraft::render::PLAYER_COLORS
-            [self.local_player % galaxycraft::render::PLAYER_COLORS.len()];
-        // Button ids read off the retail reference (screenshot 30): the
-        // five general wells are Move, Stop, Set Rally Point, Return Cargo
-        // and Attack, in that order.  The earlier list (228/230/232/233/229)
-        // drew a rally grid where Attack belongs.
-        let basic: &[(usize, &str)] = &[
-            (228, "MOVE"),
-            (229, "STOP"),
-            (230, "RALLY"),
-            (233, "RETURN"),
-            (255, "ATTACK"),
-        ];
-        // The 3x3 command wells, measured on reference #30: the block spans
-        // x 2576..2986 and y 1055..1430 of the 3440x1440 frame. The retail
-        // client draws the console DDS wells there (bright metal frames round
-        // dark insets), so the block is copied from the art instead of being
-        // repainted flat: measured HUD 24.58 -> 24.08 doing so.
-        let wells_rect = (
-            ccx + (ccw as f32 * 0.8336) as i32,
-            (cch as f32 * 0.7326) as i32,
-            (ccw as f32 * 0.1602) as i32,
-            (cch as f32 * 0.2604) as i32,
-        );
-        if let Some(console) = &self.console {
-            let gain: f32 = std::env::var("GC_WELL_GAIN")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0.79);
-            console.draw_wells(fb, wells_rect, gain);
-        } else if let (Some(first), Some(last)) = (slots.first(), slots.last()) {
-            let pad = (ccw as f32 * 0.009) as i32;
-            let pad_y = (cch as f32 * 0.004) as i32;
-            let gx = first.x - pad;
-            let gy = first.y - pad_y;
-            let gw = (last.x + last.w - first.x) + pad * 2;
-            let gh = (last.y + last.h - first.y) + pad_y * 2;
-            fb.rect(gx, gy, gw, gh, Rgb::new(34, 34, 36));
-            fb.rect_outline(gx, gy, gw, gh, Rgb::new(70, 70, 74));
-        }
-        for (i, slot) in slots.iter().enumerate() {
-            // Retail command wells: each slot is a dark beveled square recessed
-            // into the right plate (measured on reference #30: ~125x95 with the
-            // 90x90 icon centred inside). Without them the glyphs float on the
-            // plate's metal wall.
-            {
-                let pad_x = (ccw as f32 * 0.0066) as i32;
-                let pad_y = (cch as f32 * 0.0014) as i32;
-                let wx = slot.x - pad_x;
-                let wy = slot.y - pad_y;
-                let ww = slot.w + pad_x * 2;
-                let wh = slot.h + pad_y * 2;
-                // When the plate is cropped to its wells the art already draws
-                // them; otherwise (and without art) paint one.
-                // The art's wells are drawn above; only the no-art fallback
-                // paints flat ones.
-                let paint_well = self.console.is_none();
-                if paint_well {
-                    fb.rect(wx, wy, ww, wh, Rgb::new(16, 16, 18));
-                    fb.rect(wx, wy, ww, 2, Rgb::new(70, 70, 74));
-                    fb.rect(wx, wy, 2, wh, Rgb::new(70, 70, 74));
-                    fb.rect(wx, wy + wh - 2, ww, 2, Rgb::new(8, 8, 9));
-                    fb.rect(wx + ww - 2, wy, 2, wh, Rgb::new(8, 8, 9));
-                }
-            }
-            // Retail draws a near-black inset behind every glyph (measured
-            // #0A0A0C on the reference, with the plate metal around it); the
-            // console art carries no insets of its own.
-            let has_button = commands.get(i).is_some() || basic.get(i).is_some();
-            if self.console.is_some() && has_button {
-                // Retail inset: 126x110 inside the 138x120 cell (measured).
-                // Empty slots keep the plate metal: the reference's third row
-                // has no insets at all.
-                let cw = (ccw as f32 * 0.0492).round() as i32;
-                let chh = (cch as f32 * 0.0764).round() as i32;
-                let cx0 = slot.x + slot.w / 2 - cw / 2;
-                let cy0 = slot.y + slot.h / 2 - chh / 2;
-                fb.rect(cx0, cy0, cw, chh, Rgb::new(10, 10, 12));
-                fb.rect_outline(cx0, cy0, cw, chh, Rgb::new(64, 64, 68));
-            }
-            // With retail console art the button frame comes from `cmdbtns`;
-            // only the fallback path paints a flat box.
-            if self.console.is_none() {
-                let bg = Rgb::new(24, 29, 38).blend(Rgb::new(70, 82, 100), 70);
-                fb.rect(slot.x, slot.y, slot.w, slot.h, bg);
-                fb.rect_outline(slot.x, slot.y, slot.w, slot.h, Rgb::new(95, 112, 135));
-            }
-            if let Some(&t) = commands.get(i) {
-                let ok = affordable(t);
-                if let Some(console) = &self.console {
-                    // Retail command-card ink: the glyph is yellow with dark
-                    // cut-outs.  `cmdicons.grp` stores its ramp in palette
-                    // entries 3..=15, which are the *team-colour* slots of
-                    // unit.pal (magenta/blue placeholders); drawing them
-                    // straight from the palette painted the wells purple
-                    // (measured: 0.0% yellow / 7.4% purple against the
-                    // reference's 6.5% / 0.0%).
-                    let _ = ok;
-                    let colour = if ok {
-                        Rgb::new(252, 252, 56)
-                    } else {
-                        // Unaffordable buttons are dimmed, as in retail.
-                        Rgb::new(120, 120, 32)
-                    };
-                    if !console.draw_command_icon_tinted(
-                        fb,
-                        t as usize,
-                        (slot.x, slot.y, slot.w, slot.h),
-                        colour,
-                    ) {
-                        console.draw_command_icon_ink(
-                            fb,
-                            t as usize,
-                            (slot.x, slot.y, slot.w, slot.h),
-                        );
-                    }
-                }
-            } else if let Some(&(frame, label)) = basic.get(i) {
-                if let Some(console) = &self.console {
-                    if !console.draw_command_icon_tinted(
-                        fb,
-                        frame,
-                        (slot.x, slot.y, slot.w, slot.h),
-                        Rgb::new(252, 252, 56),
-                    ) {
-                        console.draw_command_icon_ink(fb, frame, (slot.x, slot.y, slot.w, slot.h));
-                    }
-                }
-                let _ = label;
-            }
-        }
-
-        // Clock / APM plates above the resource strip.
-        if let Some(console) = &self.console {
-            let clock_w = (352.0 * scale / 3.0) as i32;
-            let clock_h = (92.0 * scale / 3.0) as i32;
-            let cx = ox + fb.width - clock_w - (16.0 * scale) as i32;
-            let cy = oy + (18.0 * scale) as i32;
-            if let Some(clock) = &console.clock {
-                clock.draw_scaled(fb, cx, cy, clock_w, clock_h);
-            }
-            let secs = self.world.tick / 24;
-            fb.text(
-                cx + (24.0 * scale / 3.0) as i32,
-                cy + (6.0 * scale / 3.0) as i32,
-                &format!("{:02}:{:02}", secs / 60, secs % 60),
-                Rgb::new(180, 255, 180),
-                1,
-            );
-            if let Some(apm) = &console.apm {
-                let aw = (304.0 * scale / 3.0) as i32;
-                let ah = (92.0 * scale / 3.0) as i32;
-                apm.draw_scaled(fb, cx, cy + clock_h + 2, aw, ah);
-                let minutes = (self.world.tick as f32 / 24.0 / 60.0).max(1.0 / 60.0);
-                let apm_value = (self.actions as f32 / minutes).round() as u32;
-                fb.text(
-                    cx + (24.0 * scale / 3.0) as i32,
-                    cy + clock_h + (6.0 * scale / 3.0) as i32,
-                    &format!("APM {apm_value}"),
-                    Rgb::new(180, 255, 180),
-                    1,
-                );
-            }
-        }
-
-        // Retail MENU button at its measured HD position.
-        if self.console.is_some() {
-            // The plate art already draws the MENU well; only the label goes
-            // on top, as in the retail client.
-            let rect = Self::menu_button_rect(fb);
-            let label = if self.show_stats { "MENU*" } else { "MENU" };
-            let fw = label.len() as i32 * 8;
-            fb.text(
-                rect.x + (rect.w - fw) / 2,
-                rect.y + (rect.h - 8) / 2,
-                label,
-                Rgb::new(235, 225, 150),
-                1,
-            );
-        }
-
+        self.draw_hud_resources(fb);
+        self.draw_hud_minimap(fb);
+        self.draw_hud_selection(fb);
+        self.draw_hud_portrait(fb);
+        self.draw_hud_menu_label(fb);
+        self.draw_hud_card(fb);
         // Status line in the game view.
         if Instant::now() < self.status_until && !self.status.is_empty() {
             fb.text_centered(
@@ -9780,6 +9506,257 @@ impl App {
         }
         if self.show_stats {
             self.draw_mission_stats(fb, scale, ox, oy);
+        }
+    }
+
+    /// `statres`: minerals, gas and supply, each an HD icon (`icons`
+    /// frames 0 / gas / supply by race) and its number in BlizzardGlobal.
+    fn draw_hud_resources(&mut self, fb: &mut Framebuffer) {
+        let p = &self.world.players[self.local_player];
+        let (minerals, gas) = (p.minerals, p.gas);
+        let used = self.world.supply_used(self.local_player as u8) / 2;
+        let cap = self.world.supply_cap(self.local_player as u8) / 2;
+        let (gas_icon, supply_icon) = match self.console_race {
+            Race::Zerg => (1, 4),
+            Race::Protoss => (3, 6),
+            _ => (2, 5),
+        };
+        let fields = [
+            (3, 0usize, minerals.to_string()),
+            (2, gas_icon, gas.to_string()),
+            (1, supply_icon, format!("{used}/{cap}")),
+        ];
+        let (_, _, _, ch) = self.content_box;
+        let k = ch as f32 / 1440.0;
+        for (id, icon, text) in fields {
+            let r = self.hud_control("statres", id, UiRect::new(572 - (id - 1) * 68, 0, 66, 20));
+            if let Some(img) = self
+                .console
+                .as_ref()
+                .and_then(|c| c.icons4.as_ref())
+                .and_then(|g| g.frame(icon))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, r.x, r.y + (r.h - h) / 2, w, h);
+            }
+            let x = (r.x - self.content_box.0) as f32 / k + HUD_RES_TEXT_DX;
+            self.glue_text_face(
+                fb,
+                x,
+                (r.y as f32) / k + HUD_RES_BASE,
+                &text,
+                HUD_SMALL_PX,
+                HUD_RES_COLOR,
+                None,
+                GlueFace::Small,
+            );
+        }
+    }
+
+    /// `minimap` control 1 (classic 6,348 128x128, left-anchored): units and
+    /// the camera box over the console art's own black well.
+    fn draw_hud_minimap(&mut self, fb: &mut Framebuffer) {
+        let (rx, ry, rw, rh) = self.minimap_rect();
+        let units = self.world.minimap_units(self.local_player as u8, self.fog);
+        let cam = (
+            self.camera.0,
+            self.camera.1,
+            self.camera.0 + self.view.0,
+            self.camera.1 + self.view.1,
+        );
+        self.tileset.draw_minimap_with_terrain(
+            fb,
+            (rx, ry, rw, rh),
+            &units,
+            cam,
+            self.world.vision.as_ref(),
+            self.local_player as u8,
+            self.minimap_terrain,
+        );
+    }
+
+    /// `statdata` for one selected unit: HD wireframe (LTEXT 1), name
+    /// (CTEXT -5), shields/hit points (CTEXT -7) and, for town halls, the
+    /// four supply rows (CTEXT -10..-13).
+    fn draw_hud_selection(&mut self, fb: &mut Framebuffer) {
+        let Some(u) = self.first_selected().cloned() else {
+            return;
+        };
+        if self.selected.len() != 1 {
+            return;
+        }
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cx0 = self.content_box.0;
+        let to_x = |x: i32| (x - cx0) as f32 / k;
+        let ty = self.data.unit(u.type_id).clone();
+        let wire = self.hud_control("statdata", 1, UiRect::new(168, 388, 64, 64));
+        if let Some(console) = &self.console {
+            console.draw_wireframe(fb, u.type_id, (wire.x, wire.y, wire.w, wire.h), None);
+        }
+        let name = self.data.unit_name(u.type_id).to_string();
+        let nr = self.hud_control("statdata", -5, UiRect::new(240, 388, 152, 14));
+        let w = self.glue_measure(&name, HUD_NAME_PX, GlueFace::Small);
+        self.glue_text_face(
+            fb,
+            to_x(nr.x) + (nr.w as f32 / k - w) / 2.0,
+            nr.y as f32 / k + HUD_NAME_BASE,
+            &name,
+            HUD_NAME_PX,
+            HUD_TEXT_COLOR,
+            None,
+            GlueFace::Small,
+        );
+        // Hit points (and shields first for Protoss) under the wireframe.
+        let hp = (u.hp / 256).max(0);
+        let max_hp = ty.hit_points_raw as i32 / 256;
+        let hr = self.hud_control("statdata", -7, UiRect::new(148, 452, 100, 12));
+        let mut parts: Vec<(String, Rgb)> = Vec::new();
+        if ty.has_shields {
+            parts.push((
+                format!("{}/{} ", u.shields / 256, ty.shield_points),
+                HUD_TEXT_COLOR,
+            ));
+        }
+        parts.push((format!("{hp}/{max_hp}"), HUD_HP_COLOR));
+        let total: f32 = parts
+            .iter()
+            .map(|(t, _)| self.glue_measure(t, HUD_SMALL_PX, GlueFace::Small))
+            .sum();
+        let mut x = to_x(hr.x) + (hr.w as f32 / k - total) / 2.0;
+        for (t, c) in parts {
+            x = self.glue_text_face(
+                fb,
+                x,
+                hr.y as f32 / k + HUD_SMALL_BASE,
+                &t,
+                HUD_SMALL_PX,
+                c,
+                None,
+                GlueFace::Small,
+            );
+        }
+        // Town halls list the player's supply.
+        if matches!(
+            u.type_id,
+            galaxycraft::ids::unit::COMMAND_CENTER
+                | galaxycraft::ids::unit::NEXUS
+                | galaxycraft::ids::unit::HATCHERY
+                | galaxycraft::ids::unit::LAIR
+                | galaxycraft::ids::unit::HIVE
+        ) {
+            let used = self.world.supply_used(self.local_player as u8) / 2;
+            let cap = self.world.supply_cap(self.local_player as u8) / 2;
+            let label = if matches!(self.console_race, Race::Protoss) {
+                "Psi"
+            } else {
+                "Control"
+            };
+            let rows = [
+                format!("{label} Used: {used}"),
+                format!("{label} Provided: {cap}"),
+                format!("Total {label}: {cap}"),
+                format!("{label} Max: 200"),
+            ];
+            for (i, text) in rows.iter().enumerate() {
+                let r = self.hud_control(
+                    "statdata",
+                    -10 - i as i32,
+                    UiRect::new(281, 418 + 14 * i as i32, 111, 14),
+                );
+                let w = self.glue_measure(text, HUD_SMALL_PX, GlueFace::Small);
+                self.glue_text_face(
+                    fb,
+                    to_x(r.x) + (r.w as f32 / k - w) / 2.0,
+                    r.y as f32 / k + HUD_SMALL_BASE,
+                    text,
+                    HUD_SMALL_PX,
+                    HUD_TEXT_COLOR,
+                    None,
+                    GlueFace::Small,
+                );
+            }
+        }
+    }
+
+    /// `statport` button 1: the selected unit's idle portrait (the race
+    /// advisor for buildings, via units.dat -> portdata).
+    fn draw_hud_portrait(&mut self, fb: &mut Framebuffer) {
+        let Some(type_id) = self.first_selected().map(|u| u.type_id) else {
+            return;
+        };
+        let port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
+        if let Some(frame) = self.portrait_frame(type_id) {
+            let fit = (port.w as f32 / frame.width as f32).min(port.h as f32 / frame.height as f32);
+            let dw = (frame.width as f32 * fit).round().max(1.0) as i32;
+            let dh = (frame.height as f32 * fit).round().max(1.0) as i32;
+            blit_additive(
+                &frame,
+                fb,
+                port.x + (port.w - dw) / 2,
+                port.y + (port.h - dh) / 2,
+                dw,
+                dh,
+            );
+        }
+    }
+
+    /// `stat_f10` button 1: the MENU label over the console's own well.
+    fn draw_hud_menu_label(&mut self, fb: &mut Framebuffer) {
+        if self.console.is_none() {
+            return;
+        }
+        let r = self.menu_button_rect();
+        let k = self.content_box.3 as f32 / 1440.0;
+        let label = "MENU";
+        let w = self.glue_measure(label, HUD_SMALL_PX, GlueFace::Small);
+        self.glue_text_face(
+            fb,
+            (r.x - self.content_box.0) as f32 / k + (r.w as f32 / k - w) / 2.0,
+            r.y as f32 / k + HUD_SMALL_BASE,
+            label,
+            HUD_SMALL_PX,
+            HUD_MENU_COLOR,
+            None,
+            GlueFace::Small,
+        );
+    }
+
+    /// Command card: the retail button set of the selected unit
+    /// (`galaxycraft::buttons`), each glyph from the 4x `cmdicons` at the
+    /// race dialog's button rect; disabled buttons are grey.
+    fn draw_hud_card(&mut self, fb: &mut Framebuffer) {
+        let Some(u) = self.first_selected().cloned() else {
+            return;
+        };
+        if u.owner as usize != self.local_player {
+            return;
+        }
+        let card = galaxycraft::buttons::card(&self.world, &u);
+        let slots = self.command_slots();
+        let Some(console) = &self.console else {
+            return;
+        };
+        let k = self.content_box.3 as f32 / 1440.0;
+        for (slot, entry) in slots.iter().zip(card.iter()) {
+            let Some((button, state)) = entry else {
+                continue;
+            };
+            let colour = match state {
+                galaxycraft::buttons::ButtonState::Enabled => HUD_GLYPH_ENABLED,
+                galaxycraft::buttons::ButtonState::Disabled => HUD_GLYPH_DISABLED,
+            };
+            if let Some(img) = console
+                .cmdicons4
+                .as_ref()
+                .and_then(|g| g.frame(button.icon as usize))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                let x = slot.x + (slot.w - w) / 2;
+                let y = slot.y + (slot.h - h) / 2;
+                draw_tinted(fb, img, (x, y, w, h), colour);
+            }
         }
     }
 
@@ -14830,14 +14807,9 @@ impl App {
     /// The MENU button in the HD console, measured on the references:
     /// x 0.7363..0.8035, y 0.8194..0.8542 of the content box (the classic
     /// Stat_F10 rect sits ~340 px to the left).
-    fn menu_button_rect(fb: &Framebuffer) -> UiRect {
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        UiRect::new(
-            cx + (cw as f32 * 0.7363) as i32,
-            (ch as f32 * 0.8194) as i32,
-            (cw as f32 * 0.0672) as i32,
-            (ch as f32 * 0.0347) as i32,
-        )
+    /// `stat_f10` button 1 (MENU), right-anchored.
+    fn menu_button_rect(&self) -> UiRect {
+        self.hud_control("stat_f10", 1, UiRect::new(416, 388, 64, 20))
     }
 
     /// In-game "Game Menu" dialog at the rects measured on reference #32:

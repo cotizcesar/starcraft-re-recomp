@@ -16,6 +16,8 @@
 pub mod ai;
 pub mod aiscript;
 pub mod audio;
+pub mod button_sets;
+pub mod buttons;
 pub mod calibration;
 pub mod campaign;
 pub mod campaign_progress;
@@ -27,6 +29,7 @@ pub mod economy;
 #[rustfmt::skip]
 pub mod handlers;
 pub mod hd_anim;
+pub mod hd_sprites;
 pub mod hotkey_data;
 pub mod ids;
 pub mod iscript;

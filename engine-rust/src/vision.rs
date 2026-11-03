@@ -78,7 +78,12 @@ impl Vision {
         let tx = cx.div_euclid(32);
         let ty = cy.div_euclid(32);
         let center_height = terrain.elevation_px(cx, cy);
-        let r = range_tiles.max(0);
+        // INFERENCE (2026-11-03): the retail sight mask is `3 + 2r` tiles wide
+        // (one tile beyond `r`).  Measured on 135051 / 135020: the fog's 50 %
+        // point sits at 12.0 tiles from the Nexus (sight 11) and 11.0 from
+        // the Command Center (sight 10).  Falsifier: a unit exactly r+1 tiles
+        // from a lone seer staying hidden in the retail client.
+        let r = range_tiles.max(0) + 1;
         let r2 = r * r;
         for dy in -r..=r {
             for dx in -r..=r {
@@ -214,5 +219,27 @@ impl World {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Vision;
+    use crate::map::Terrain;
+
+    #[test]
+    fn sight_reaches_one_tile_beyond_the_range() {
+        // A seer at the centre of tile (20, 20) with sight 11 reveals the tile
+        // 12 tiles east (the retail 3 + 2r mask) but not the one 13 east.
+        let terrain = Terrain::open(64, 64);
+        let mut v = Vision::new(64, 64);
+        v.reveal(0, 20 * 32 + 16, 20 * 32 + 16, 11, false, &terrain);
+        assert!(v.is_visible(0, 32 * 32 + 16, 20 * 32 + 16));
+        assert!(!v.is_visible(0, 33 * 32 + 16, 20 * 32 + 16));
+        assert!(v.is_explored(0, 32 * 32 + 16, 20 * 32 + 16));
+        assert!(
+            !v.is_visible(1, 21 * 32, 20 * 32),
+            "other players see nothing"
+        );
     }
 }

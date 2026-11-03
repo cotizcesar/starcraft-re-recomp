@@ -430,7 +430,12 @@ fn scenario_parser_and_starting_base() {
     for i in 0..16 {
         vf4[64 + i * 2] = 1;
     }
-    let w = World::from_scenario(g, &sc, &vf4, &[Race::Terran, Race::Protoss]);
+    let w = World::from_scenario(
+        g,
+        &sc,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &[Race::Terran, Race::Protoss],
+    );
     assert!(w
         .units
         .iter()
@@ -479,7 +484,12 @@ fn campaign_scenarios_do_not_get_free_bases() {
     push(b"UNIT", &units);
     let sc = Scenario::parse(&chk).unwrap();
     let vf4 = vec![0u8; 96];
-    let w = World::from_scenario(Arc::new(data()), &sc, &vf4, &[Race::Terran, Race::Protoss]);
+    let w = World::from_scenario(
+        Arc::new(data()),
+        &sc,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &[Race::Terran, Race::Protoss],
+    );
     assert_eq!(
         w.units.iter().filter(|u| u.alive && u.owner == 0).count(),
         1,
@@ -541,8 +551,19 @@ fn every_shipped_map_loads_and_steps_when_available() {
                 .as_path(),
         )
         .unwrap_or_else(|e| panic!("{}: tileset {era}: {e}", map.display()));
+        let cv5 = std::fs::read(
+            std::path::Path::new(&tile_dir)
+                .join(TILESETS[era])
+                .with_extension("cv5"),
+        )
+        .unwrap_or_else(|e| panic!("{}: tileset {era} cv5: {e}", map.display()));
         let races = vec![Race::Terran, Race::Protoss, Race::Zerg, Race::Zerg];
-        let mut world = World::from_scenario(Arc::new(data()), &scenario, &vf4, &races);
+        let mut world = World::from_scenario(
+            Arc::new(data()),
+            &scenario,
+            &galaxycraft::map::TileData::new(&cv5, &vf4),
+            &races,
+        );
         for _ in 0..64 {
             if world.winner.is_some() {
                 break;
@@ -1238,12 +1259,13 @@ fn full_match_on_a_real_map_when_available() {
         return;
     };
     let chk = std::fs::read(chk_path).expect("chk");
+    let cv5 = std::fs::read(std::path::Path::new(&vf4_path).with_extension("cv5")).expect("cv5");
     let vf4 = std::fs::read(vf4_path).expect("vf4");
     let scenario = Scenario::parse(&chk).expect("scenario");
     let mut world = World::from_scenario(
         Arc::new(data()),
         &scenario,
-        &vf4,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
         &[Race::Terran, Race::Protoss],
     );
     let mut ais = vec![SimpleAi::new(0), SimpleAi::new(1)];
@@ -1323,7 +1345,12 @@ fn melee_start_composition_matches_retail() {
         (Race::Protoss, uid::NEXUS, uid::PROBE),
         (Race::Zerg, uid::HATCHERY, uid::DRONE),
     ] {
-        let w = World::from_scenario(Arc::new(data()), &sc, &vf4, &[race, Race::Terran]);
+        let w = World::from_scenario(
+            Arc::new(data()),
+            &sc,
+            &galaxycraft::map::TileData::synthetic(&vf4),
+            &[race, Race::Terran],
+        );
         let own = |t: u16| {
             w.units
                 .iter()
@@ -1682,7 +1709,12 @@ fn map_serial_links_attach_addons_and_pair_nydus_canals() {
     let sc = Scenario::parse(&chk).unwrap();
     assert_eq!(sc.units[0].serial, 1);
     assert_eq!(sc.units[0].link_serial, 2);
-    let w = World::from_scenario(Arc::new(data()), &sc, &[0u8; 96], &[Race::Terran]);
+    let w = World::from_scenario(
+        Arc::new(data()),
+        &sc,
+        &galaxycraft::map::TileData::synthetic(&[0u8; 96]),
+        &[Race::Terran],
+    );
     let cc = w
         .units
         .iter()
@@ -1744,8 +1776,19 @@ fn campaign_player_slots_keep_non_contiguous_owners() {
             .join(format!("{}.vf4", era_name(scenario.era))),
     )
     .expect("vf4");
+    let cv5 = std::fs::read(
+        asset_root()
+            .join("TileSet")
+            .join(format!("{}.cv5", era_name(scenario.era))),
+    )
+    .expect("cv5");
     let races: Vec<Race> = slots.iter().map(|s| s.race(Race::Terran)).collect();
-    let world = World::from_scenario(Arc::new(data()), &scenario, &vf4, &races);
+    let world = World::from_scenario(
+        Arc::new(data()),
+        &scenario,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &races,
+    );
     // The old start-location-derived count was 4 and dropped owners 4 and 6.
     for owner in [4u8, 6u8] {
         assert!(
@@ -1808,9 +1851,20 @@ fn next_scenario_action_resolves_to_the_bundled_followup_mission() {
             .join(format!("{}.vf4", era_name(scenario.era))),
     )
     .expect("vf4");
+    let cv5 = std::fs::read(
+        asset_root()
+            .join("TileSet")
+            .join(format!("{}.cv5", era_name(scenario.era))),
+    )
+    .expect("cv5");
     let slots = scenario.player_slots();
     let races: Vec<Race> = slots.iter().map(|s| s.race(Race::Terran)).collect();
-    let world = World::from_scenario(Arc::new(data()), &scenario, &vf4, &races);
+    let world = World::from_scenario(
+        Arc::new(data()),
+        &scenario,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &races,
+    );
     let action = world
         .triggers
         .as_ref()

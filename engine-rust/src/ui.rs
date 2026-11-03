@@ -12,6 +12,7 @@
 //! resolved against their parent, which is what the shipped dialogs use.
 
 pub const UI_JSON: &[&str] = &[
+    "minimap",
     "statdata",
     "statres",
     "statport",

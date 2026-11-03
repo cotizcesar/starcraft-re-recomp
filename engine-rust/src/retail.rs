@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v10 (consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v12 (hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -540,6 +540,14 @@ impl RetailInstall {
                     report.files += 1;
                     report.bytes += bytes.len() as u64;
                 }
+            }
+            // 4x HD megatiles (128 px per tile): what retail draws the
+            // terrain from at 1440p.
+            let hd = format!("tileset/{era}.dds.vr4");
+            if let Ok(bytes) = self.read_by_path(&hd) {
+                write_file(&dest.join("hd").join(&hd), &bytes)?;
+                report.files += 1;
+                report.bytes += bytes.len() as u64;
             }
         }
 
@@ -1083,6 +1091,11 @@ pub const GLUE_ART: &[&str] = &[
     // Front-end space backdrop (planet + red nebula) used behind the menu,
     // options, hotkeys and collections screens.
     "glue/palmm/backgnd.dds",
+    // 4x HD in-game HUD art: resource icons, command-card glyphs and the
+    // selection wireframes (retail draws them at 0.75 at 1440p).
+    "game/icons.dds.grp",
+    "unit/cmdicons/cmdicons.dds.grp",
+    "unit/wirefram/wirefram.dds.grp",
     // Episode-select console plates (`glucmpgn.ui.json` ids 1/3), the
     // edge-anchored `palcs` backdrop halves and the mission-history popup
     // (`phist.dds` carries the modal frame, list box and Ok/Cancel buttons).

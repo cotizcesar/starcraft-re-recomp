@@ -458,6 +458,16 @@ impl Scenario {
             .map(|u| (u.x, u.y))
             .collect()
     }
+
+    /// Start location owned by player slot `owner`.  The CHK lists them in
+    /// any order ((8)The Hunters: owners 0,1,2,7,3,6,4,5), so indexing
+    /// [`Self::start_locations`] by slot puts players on the wrong base.
+    pub fn start_location_of(&self, owner: u8) -> Option<(i32, i32)> {
+        self.units
+            .iter()
+            .find(|u| u.unit_id == 214 && u.owner == owner)
+            .map(|u| (u.x, u.y))
+    }
     /// The scenario's `OWNR` bytes are the per-slot controller type.  Values
     /// 0 and 4 are inactive/neutral; 5 is the human player in campaign maps
     /// and 6 is a computer.  Some maps still use the older 1..=3 values, so
@@ -636,9 +646,65 @@ pub struct Terrain {
     elevation: Vec<u8>,
 }
 
+/// Tileset tables the terrain grid is built from.  An MTXM entry is
+/// `group << 4 | index`; `cv5` maps it to a megatile and `vf4` holds 16
+/// minitile flag words per **megatile**.  Indexing `vf4` by the group made
+/// almost every tile of (8)The Hunters walkable (its lakes included).
+#[derive(Clone, Copy, Debug)]
+pub struct TileData<'a> {
+    pub cv5: Option<&'a [u8]>,
+    pub vf4: &'a [u8],
+}
+
+impl<'a> TileData<'a> {
+    pub fn new(cv5: &'a [u8], vf4: &'a [u8]) -> Self {
+        Self {
+            cv5: Some(cv5),
+            vf4,
+        }
+    }
+
+    /// Synthetic test tables without a cv5: the MTXM group number is the
+    /// megatile record (fixtures number their `vf4` records that way).
+    pub fn synthetic(vf4: &'a [u8]) -> Self {
+        Self { cv5: None, vf4 }
+    }
+
+    /// Megatile of an MTXM entry.
+    pub fn megatile(&self, mtxm: u16) -> usize {
+        let group = (mtxm >> 4) as usize;
+        match self.cv5 {
+            Some(cv5) => u16_at(cv5, group * 52 + 20 + (mtxm & 0x0f) as usize * 2) as usize,
+            None => group,
+        }
+    }
+}
+
+/// Owned `cv5` + `vf4` of one tileset.
+#[derive(Clone, Debug, Default)]
+pub struct TileTables {
+    pub cv5: Vec<u8>,
+    pub vf4: Vec<u8>,
+}
+
+impl TileTables {
+    /// Read a `.vf4` and its `.cv5` sibling.
+    pub fn read_vf4(path: &std::path::Path) -> std::io::Result<Self> {
+        Ok(Self {
+            vf4: std::fs::read(path)?,
+            cv5: std::fs::read(path.with_extension("cv5"))?,
+        })
+    }
+
+    pub fn data(&self) -> TileData<'_> {
+        TileData::new(&self.cv5, &self.vf4)
+    }
+}
+
 impl Terrain {
-    /// Build a terrain grid from a scenario and the tileset's `vf4` bytes.
-    pub fn from_scenario(scenario: &Scenario, vf4: &[u8]) -> Self {
+    /// Build a terrain grid from a scenario and its tileset tables.
+    pub fn from_scenario(scenario: &Scenario, tiles: &TileData) -> Self {
+        let vf4 = tiles.vf4;
         let walk_width = scenario.width * 4;
         let walk_height = scenario.height * 4;
         let mut walk = vec![false; walk_width * walk_height];
@@ -647,8 +713,7 @@ impl Terrain {
         for ty in 0..scenario.height {
             for tx in 0..scenario.width {
                 let tile = scenario.tiles[ty * scenario.width + tx];
-                let mega = (tile >> 4) as usize;
-                let record = mega * 32;
+                let record = tiles.megatile(tile) * 32;
                 for my in 0..4 {
                     for mx in 0..4 {
                         let idx = (ty * 4 + my) * walk_width + tx * 4 + mx;
@@ -922,6 +987,42 @@ impl Terrain {
 mod tests {
     use super::*;
 
+    fn start(owner: u8, x: i32, y: i32) -> MapUnit {
+        MapUnit {
+            serial: 0,
+            unit_id: 214,
+            x,
+            y,
+            owner,
+            states_set: 0,
+            fields_set: 0,
+            hit_point_percent: 100,
+            shield_percent: 100,
+            energy_percent: 100,
+            resource_amount: 0,
+            hangar: 0,
+            states: 0,
+            link_serial: 0,
+        }
+    }
+
+    #[test]
+    fn start_locations_are_looked_up_by_owner_not_file_order() {
+        // (8)The Hunters stores owner 7 before owners 3..6.
+        let sc = Scenario {
+            units: vec![
+                start(0, 384, 240),
+                start(7, 320, 1552),
+                start(3, 3712, 2608),
+            ],
+            ..Scenario::default()
+        };
+        assert_eq!(sc.start_location_of(7), Some((320, 1552)));
+        assert_eq!(sc.start_location_of(3), Some((3712, 2608)));
+        assert_eq!(sc.start_location_of(5), None);
+        assert_eq!(sc.start_locations()[1], (320, 1552), "file order");
+    }
+
     /// Build a minimal 2x2 CHK with one MTXM tile.
     fn tiny_chk() -> Vec<u8> {
         let mut out = Vec::new();
@@ -1004,6 +1105,24 @@ mod tests {
     }
 
     #[test]
+    fn cv5_resolves_the_megatile_whose_vf4_flags_apply() {
+        // tiny_chk's tile is 32 = group 2, index 0.  The cv5 maps group 2
+        // index 0 to megatile 1; only megatile 1's record is walkable.
+        let s = Scenario::parse(&tiny_chk()).unwrap();
+        let mut cv5 = vec![0u8; 52 * 3];
+        cv5[2 * 52 + 20] = 1;
+        let mut vf4 = vec![0u8; 96];
+        for i in 0..16 {
+            vf4[32 + i * 2] = 1;
+        }
+        let tiles = TileData::new(&cv5, &vf4);
+        assert_eq!(tiles.megatile(32), 1);
+        assert!(Terrain::from_scenario(&s, &tiles).walkable_px(0, 0));
+        // Indexing by the group (record 2) would read the unwalkable record.
+        assert!(!Terrain::from_scenario(&s, &TileData::synthetic(&vf4)).walkable_px(0, 0));
+    }
+
+    #[test]
     fn vf4_flags_define_walkability() {
         let s = Scenario::parse(&tiny_chk()).unwrap();
         // Megatile 2 (tile 32 >> 4) is at record offset 64.  Make every
@@ -1012,7 +1131,7 @@ mod tests {
         for i in 0..16 {
             vf4[64 + i * 2] = 1;
         }
-        let t = Terrain::from_scenario(&s, &vf4);
+        let t = Terrain::from_scenario(&s, &TileData::synthetic(&vf4));
         assert!(t.walkable_px(0, 0));
         assert!(t.walkable_px(63, 63));
         assert!(t.buildable_px(0, 0));

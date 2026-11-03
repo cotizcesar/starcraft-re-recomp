@@ -476,6 +476,285 @@ pub fn load_hd_megatiles(path: &Path) -> Option<Vec<Option<Box<[u32]>>>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// One resampled megatile (ARGB, `size * size`).
+type TilePixels = std::rc::Rc<Box<[u32]>>;
+
+/// 4x HD terrain (`tileset/<era>.dds.vr4`, 128x128 DXT1 per megatile),
+/// drawn at screen resolution.  Payloads stay compressed; a megatile is
+/// decoded and resampled to the current tile size the first time it is
+/// drawn (a map uses a few hundred of the ~7000).
+pub struct HdTerrain {
+    bytes: Vec<u8>,
+    /// `(offset, len)` of each megatile's DDS payload.
+    records: Vec<(usize, usize)>,
+    cache: std::cell::RefCell<HashMap<(usize, usize), TilePixels>>,
+}
+
+impl HdTerrain {
+    /// Index the archive: `[u32 file size][u16 count][u16 ?]` then
+    /// `[u32 flags][u16 w][u16 h][u32 len][DDS]` records (jungle: 7038).
+    pub fn parse(bytes: Vec<u8>) -> Option<Self> {
+        let mut records = Vec::new();
+        let mut off = 8usize;
+        while off + 12 <= bytes.len() {
+            let len = u32_at(&bytes, off + 8)? as usize;
+            let at = off + 12;
+            if len < 128 || at + len > bytes.len() || &bytes[at..at + 4] != b"DDS " {
+                break;
+            }
+            records.push((at, len));
+            off = at + len;
+        }
+        (!records.is_empty()).then(|| Self {
+            bytes,
+            records,
+            cache: Default::default(),
+        })
+    }
+
+    pub fn load(root: &Path, era: u16) -> Option<Self> {
+        let path = root.join(format!("hd/tileset/{}.dds.vr4", era_name(era)));
+        Self::parse(fs::read(path).ok()?)
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// Megatile `mega` resampled to `size`x`size` (premultiplied-alpha box
+    /// filter over the 128 px source).
+    pub fn tile(&self, mega: usize, size: usize) -> Option<TilePixels> {
+        if let Some(t) = self.cache.borrow().get(&(mega, size)) {
+            return Some(t.clone());
+        }
+        let &(at, len) = self.records.get(mega)?;
+        let img = crate::dds::parse(&self.bytes[at..at + len])?;
+        let mut px = downsample_rgba(&img, size, size);
+        // Retail draws the HD terrain darker than the raw texels: lit grass
+        // and dirt measure 0.91 of the DDS colour on 135051 / 135020.
+        for p in px.iter_mut() {
+            let scale = |c: u32| ((c as f32) * HD_TERRAIN_GAIN).round() as u32;
+            *p = (*p & 0xff00_0000)
+                | (scale((*p >> 16) & 0xff) << 16)
+                | (scale((*p >> 8) & 0xff) << 8)
+                | scale(*p & 0xff);
+        }
+        let t = std::rc::Rc::new(px);
+        self.cache.borrow_mut().insert((mega, size), t.clone());
+        Some(t)
+    }
+
+    /// Draw the terrain of `scenario` into the screen rectangle `dest`
+    /// (`x, y, w, h`), with the camera at game px `cam` and `s` screen px per
+    /// game px.  `tileset` resolves MTXM entries to megatiles; tiles for
+    /// which `creep(tx, ty)` holds draw a creep megatile (cv5 group 1).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        &self,
+        fb: &mut Framebuffer,
+        tileset: &Tileset,
+        scenario: &Scenario,
+        cam: (i32, i32),
+        dest: (i32, i32, i32, i32),
+        s: f32,
+        creep: &dyn Fn(i32, i32) -> bool,
+    ) {
+        let size = (TILE_PX as f32 * s).round().max(1.0) as usize;
+        let (dx, dy, dw, dh) = dest;
+        let view_w = (dw as f32 / s).ceil() as i32;
+        let view_h = (dh as f32 / s).ceil() as i32;
+        let first_x = (cam.0 / TILE_PX).max(0);
+        let first_y = (cam.1 / TILE_PX).max(0);
+        let last_x = ((cam.0 + view_w) / TILE_PX + 1).min(scenario.width as i32);
+        let last_y = ((cam.1 + view_h) / TILE_PX + 1).min(scenario.height as i32);
+        for ty in first_y..last_y {
+            for tx in first_x..last_x {
+                let Some(&mtxm) = scenario
+                    .tiles
+                    .get(ty as usize * scenario.width + tx as usize)
+                else {
+                    continue;
+                };
+                let sx = dx + ((tx * TILE_PX - cam.0) as f32 * s).round() as i32;
+                let sy = dy + ((ty * TILE_PX - cam.1) as f32 * s).round() as i32;
+                let mtxm = if creep(tx, ty) {
+                    creep_mtxm(tx, ty)
+                } else {
+                    mtxm
+                };
+                let group = ((mtxm >> 4) & 0x7ff) as usize;
+                let bg = tileset.background_megatile(group) as usize;
+                let mega = tileset.megatile(mtxm) as usize;
+                // Group background first, then the tile's own megatile
+                // (its cut-out alpha reveals the background), as in SD.
+                let layers: &[usize] = if mega == bg { &[bg] } else { &[bg, mega] };
+                for &m in layers {
+                    if let Some(px) = self.tile(m, size) {
+                        blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Measured brightness of the retail HD terrain relative to its texels.
+pub const HD_TERRAIN_GAIN: f32 = 0.91;
+
+/// Fog darkness of an explored tile that is not in sight (0..=255).
+pub const FOG_EXPLORED_ALPHA: f32 = 150.0;
+/// Fog grid samples per tile and Gaussian width in tiles.
+const FOG_SUB: i32 = 4;
+const FOG_SIGMA: f32 = 0.8;
+
+/// In-place separable Gaussian blur of a `w x h` grid (clamped edges).
+fn gaussian_blur(v: &mut [f32], w: usize, h: usize, sigma: f32) {
+    let r = (sigma * 3.0).ceil() as i32;
+    let k: Vec<f32> = (-r..=r)
+        .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let norm: f32 = k.iter().sum();
+    let mut tmp = vec![0f32; v.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (n, kv) in k.iter().enumerate() {
+                let xx = (x as i32 + n as i32 - r).clamp(0, w as i32 - 1) as usize;
+                acc += v[y * w + xx] * kv;
+            }
+            tmp[y * w + x] = acc / norm;
+        }
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (n, kv) in k.iter().enumerate() {
+                let yy = (y as i32 + n as i32 - r).clamp(0, h as i32 - 1) as usize;
+                acc += tmp[yy * w + x] * kv;
+            }
+            v[y * w + x] = acc / norm;
+        }
+    }
+}
+
+/// Retail HD fog at screen resolution: one darkness value per tile (0 in
+/// sight, [`FOG_EXPLORED_ALPHA`] explored, 255 unexplored), interpolated
+/// bilinearly between tile centres so the edge of vision is a soft ramp
+/// instead of 32 px blocks.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_fog_smooth(
+    fb: &mut Framebuffer,
+    scenario: &Scenario,
+    world: &crate::sim::World,
+    owner: u8,
+    cam: (i32, i32),
+    dest: (i32, i32, i32, i32),
+    s: f32,
+) {
+    let (dx, dy, dw, dh) = dest;
+    // Margin of 4 tiles so the blur sees the tiles beyond the screen edge.
+    let tx0 = (cam.0 / TILE_PX) - 4;
+    let ty0 = (cam.1 / TILE_PX) - 4;
+    let tw = (dw as f32 / s / TILE_PX as f32).ceil() as i32 + 9;
+    let th = (dh as f32 / s / TILE_PX as f32).ceil() as i32 + 9;
+    let (mw, mh) = (scenario.width as i32, scenario.height as i32);
+    let mut grid = vec![0f32; (tw * th) as usize];
+    for j in 0..th {
+        for i in 0..tw {
+            let (tx, ty) = ((tx0 + i).clamp(0, mw - 1), (ty0 + j).clamp(0, mh - 1));
+            let (cx, cy) = (tx * TILE_PX + TILE_PX / 2, ty * TILE_PX + TILE_PX / 2);
+            grid[(j * tw + i) as usize] = if !world.is_explored_by(owner, cx, cy) {
+                255.0
+            } else if !world.is_visible_to(owner, cx, cy) {
+                FOG_EXPLORED_ALPHA
+            } else {
+                0.0
+            };
+        }
+    }
+    // Upsample to FOG_SUB samples per tile (piecewise constant) and blur
+    // with a Gaussian of FOG_SIGMA tiles: the retail edge of vision falls
+    // from 0.9 to 0.1 over ~3 tiles (fitted on 135051 / 135020).
+    let sub = FOG_SUB;
+    let (gw, gh) = (tw * sub, th * sub);
+    let mut fine = vec![0f32; (gw * gh) as usize];
+    for y in 0..gh {
+        for x in 0..gw {
+            fine[(y * gw + x) as usize] = grid[((y / sub) * tw + x / sub) as usize];
+        }
+    }
+    gaussian_blur(&mut fine, gw as usize, gh as usize, FOG_SIGMA * sub as f32);
+    let at = |i: i32, j: i32| fine[(j.clamp(0, gh - 1) * gw + i.clamp(0, gw - 1)) as usize];
+    let step = TILE_PX as f32 / sub as f32;
+    for y in dy.max(0)..(dy + dh).min(fb.height) {
+        let gy = cam.1 as f32 + (y - dy) as f32 / s;
+        let fy = (gy - (ty0 * TILE_PX) as f32) / step - 0.5;
+        let j = fy.floor() as i32;
+        let wy = fy - j as f32;
+        for x in dx.max(0)..(dx + dw).min(fb.width) {
+            let gx = cam.0 as f32 + (x - dx) as f32 / s;
+            let fx = (gx - (tx0 * TILE_PX) as f32) / step - 0.5;
+            let i = fx.floor() as i32;
+            let wx = fx - i as f32;
+            let top = at(i, j) + (at(i + 1, j) - at(i, j)) * wx;
+            let bottom = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * wx;
+            let a = top + (bottom - top) * wy;
+            if a > 0.5 {
+                let c = fb.get(x, y);
+                fb.put(x, y, c.blend(Rgb::new(0, 0, 0), a.round().min(255.0) as u8));
+            }
+        }
+    }
+}
+
+/// MTXM entry of a creep tile: cv5 group 1 holds the 13 creep megatiles.
+/// INFERENCE: retail picks the variant with its own generator; a fixed
+/// per-tile hash stands in for it (the variants share one texture).
+pub fn creep_mtxm(tx: i32, ty: i32) -> u16 {
+    let h = (tx as u32).wrapping_mul(0x9e37_79b9) ^ (ty as u32).wrapping_mul(0x85eb_ca6b);
+    let h = h ^ (h >> 15);
+    (1 << 4) | (h % 13) as u16
+}
+
+/// Alpha-blend a square ARGB tile clipped to `clip` (`x0, y0, x1, y1`).
+fn blit_tile(
+    fb: &mut Framebuffer,
+    px: &[u32],
+    size: usize,
+    sx: i32,
+    sy: i32,
+    clip: (i32, i32, i32, i32),
+) {
+    for y in 0..size as i32 {
+        let py = sy + y;
+        if py < clip.1 || py >= clip.3 {
+            continue;
+        }
+        for x in 0..size as i32 {
+            let qx = sx + x;
+            if qx < clip.0 || qx >= clip.2 {
+                continue;
+            }
+            let p = px[y as usize * size + x as usize];
+            let a = (p >> 24) as u8;
+            if a == 0 {
+                continue;
+            }
+            let fg = Rgb(p & 0x00ff_ffff);
+            if a == 255 {
+                fb.put(qx, py, fg);
+            } else {
+                let bgc = fb.get(qx, py);
+                fb.put(qx, py, bgc.blend(fg, a));
+            }
+        }
+    }
+}
+
 /// Box-filter an image down to `w`x`h`, keeping the alpha channel.
 fn downsample_rgba(img: &crate::dds::DdsImage, w: usize, h: usize) -> Box<[u32]> {
     let mut out = vec![0u32; w * h];
@@ -541,8 +820,13 @@ impl Tileset {
         Some(ts)
     }
 
+    /// The tileset's `cv5` group table (MTXM entry -> megatile).
+    pub fn cv5(&self) -> &[u8] {
+        &self.cv5
+    }
+
     #[inline]
-    fn megatile(&self, mtxm: u16) -> u16 {
+    pub fn megatile(&self, mtxm: u16) -> u16 {
         let group = ((mtxm >> 4) & 0x7ff) as usize;
         let index = (mtxm & 0x0f) as usize;
         u16_at(&self.cv5, group * 52 + 20 + index * 2).unwrap_or(0)
@@ -554,7 +838,7 @@ impl Tileset {
     /// mostly transparent (cliffs, edges, space), so without this layer the
     /// holes show whatever was in the framebuffer (black).
     #[inline]
-    fn background_megatile(&self, group: usize) -> u16 {
+    pub fn background_megatile(&self, group: usize) -> u16 {
         u16_at(&self.cv5, group * 52 + 10).unwrap_or(0)
     }
 
@@ -1356,5 +1640,48 @@ pub fn asset_root() -> PathBuf {
         manifest
     } else {
         PathBuf::from("assets")
+    }
+}
+
+#[cfg(test)]
+mod hd_terrain_tests {
+    use super::HdTerrain;
+
+    /// One 4x4 DXT1 record whose single block is solid red.
+    fn record() -> Vec<u8> {
+        let mut dds = b"DDS ".to_vec();
+        let mut hdr = [0u8; 124];
+        hdr[0] = 124;
+        hdr[8..12].copy_from_slice(&4u32.to_le_bytes()); // height
+        hdr[12..16].copy_from_slice(&4u32.to_le_bytes()); // width
+        hdr[72] = 32; // pixel format size
+        hdr[76] = 4; // DDPF_FOURCC
+        hdr[80..84].copy_from_slice(b"DXT1");
+        dds.extend_from_slice(&hdr);
+        dds.extend_from_slice(&[0x00, 0xf8, 0x00, 0xf8, 0, 0, 0, 0]);
+        let mut r = Vec::new();
+        r.extend_from_slice(&0u32.to_le_bytes());
+        r.extend_from_slice(&4u16.to_le_bytes());
+        r.extend_from_slice(&4u16.to_le_bytes());
+        r.extend_from_slice(&(dds.len() as u32).to_le_bytes());
+        r.extend_from_slice(&dds);
+        r
+    }
+
+    #[test]
+    fn archive_index_skips_the_eight_byte_header() {
+        let mut bytes = vec![0u8; 8];
+        bytes[4] = 2;
+        bytes.extend(record());
+        bytes.extend(record());
+        let total = bytes.len() as u32;
+        bytes[0..4].copy_from_slice(&total.to_le_bytes());
+        let t = HdTerrain::parse(bytes).expect("index");
+        assert_eq!(t.len(), 2);
+        let px = t.tile(1, 2).expect("decode");
+        assert_eq!(px.len(), 4);
+        // Solid red, scaled by the measured terrain gain (255 * 0.91).
+        assert_eq!(px[0] & 0x00ff_ffff, 0x00e8_0000, "red after resample");
+        assert!(HdTerrain::parse(vec![0u8; 8]).is_none());
     }
 }

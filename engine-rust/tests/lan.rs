@@ -58,7 +58,12 @@ fn world_for(races: &[Race]) -> World {
     for i in 0..16 {
         vf4[64 + i * 2] = 1;
     }
-    World::from_scenario(Arc::new(data()), &sc, &vf4, races)
+    World::from_scenario(
+        Arc::new(data()),
+        &sc,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        races,
+    )
 }
 
 fn first_unit_of(w: &World, owner: u8) -> u32 {

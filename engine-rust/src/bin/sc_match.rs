@@ -117,6 +117,12 @@ fn main() {
             });
         std::fs::write("/tmp/sc_match_mpq.chk", &raw).ok();
         std::fs::write("/tmp/sc_match_mpq.vf4", &vf4_bytes).ok();
+        if let Some(cv5) = install.read(&format!(
+            "TileSet/{}.cv5",
+            galaxycraft::render::era_name(scenario.era)
+        )) {
+            std::fs::write("/tmp/sc_match_mpq.cv5", cv5).ok();
+        }
         chk = Some("/tmp/sc_match_mpq.chk".into());
         vf4 = Some("/tmp/sc_match_mpq.vf4".into());
     }
@@ -129,8 +135,9 @@ fn main() {
     let mut world = if let (Some(chk), Some(vf4)) = (chk, vf4) {
         let chk = std::fs::read(chk).expect("scenario.chk");
         let scenario = Scenario::parse(&chk).expect("valid CHK");
-        let vf4 = std::fs::read(vf4).expect("tileset vf4");
-        World::from_scenario(data, &scenario, &vf4, &races)
+        let tiles = galaxycraft::map::TileTables::read_vf4(std::path::Path::new(&vf4))
+            .expect("tileset vf4 + cv5");
+        World::from_scenario(data, &scenario, &tiles.data(), &races)
     } else {
         let mut w = World::new(data, Terrain::open(64, 64), races.len());
         for (p, race) in races.iter().enumerate() {

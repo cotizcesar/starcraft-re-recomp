@@ -114,7 +114,12 @@ fn make(args: &[String]) -> ExitCode {
         vf4[64 + i * 2] = 1;
     }
     let seed = 0x9E37_79B9_7F4A_7C15u64;
-    let mut world = World::from_scenario(Arc::new(data()), &scenario, &vf4, &races);
+    let mut world = World::from_scenario(
+        Arc::new(data()),
+        &scenario,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &races,
+    );
     world.recorder = Some(galaxycraft::replay::Recorder::new());
     world.rng = seed;
     let mut ais: Vec<SimpleAi> = (0..races.len()).map(|s| SimpleAi::new(s as u8)).collect();
@@ -180,7 +185,12 @@ fn informational(file: &str) -> Option<(SaveFile, u64)> {
         vf4[64 + i * 2] = 1;
     }
     let scenario = Scenario::parse(&save.map_chk).ok()?;
-    let mut world = World::from_scenario(Arc::new(data()), &scenario, &vf4, &save.races);
+    let mut world = World::from_scenario(
+        Arc::new(data()),
+        &scenario,
+        &galaxycraft::map::TileData::synthetic(&vf4),
+        &save.races,
+    );
     world.rng = save.rec.seed;
     replay_to(&mut world, &save.rec, save.tick);
     let hash = state_hash(&world);

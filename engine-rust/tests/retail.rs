@@ -187,10 +187,13 @@ fn retail_tables_drive_a_world_from_an_mpq_map() {
     let vf4 = install
         .read(&format!("TileSet/{}.vf4", era_name(scenario.era)))
         .expect("vf4");
+    let cv5 = install
+        .read(&format!("TileSet/{}.cv5", era_name(scenario.era)))
+        .expect("cv5");
     let mut world = World::from_scenario(
         Arc::new(data),
         &scenario,
-        &vf4,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
         &[Race::Terran, Race::Protoss],
     );
     for _ in 0..240 {
@@ -240,7 +243,8 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
         "{} console files",
         report.console_files
     );
-    assert_eq!(report.ui_files, 31);
+    // 31 dialogs + `minimap.ui.json` (the HUD's left-anchored radar).
+    assert_eq!(report.ui_files, 32);
     assert_eq!(report.music_files, 23);
     assert!(report.voice_files > 1000, "{} voices", report.voice_files);
     assert!(report.missing_sounds.is_empty());

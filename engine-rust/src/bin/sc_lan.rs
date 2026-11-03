@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use galaxycraft::data::GameData;
 use galaxycraft::map::Scenario;
+use galaxycraft::map::{TileData, TileTables};
 use galaxycraft::net::{
     client_turn, connect, host_turn, udp_accept, udp_join, Lobby, Lockstep, Msg, Transport,
 };
@@ -31,7 +32,7 @@ fn parse_race(s: &str) -> Race {
     }
 }
 
-fn load_world(chk: &[u8], vf4: &[u8], races: &[Race]) -> Result<World, String> {
+fn load_world(chk: &[u8], vf4: &TileData, races: &[Race]) -> Result<World, String> {
     let sc = Scenario::parse(chk).map_err(|e| format!("bad CHK: {e}"))?;
     Ok(World::from_scenario(
         Arc::new(GameData::bundled().map_err(|e| format!("tables: {e}"))?),
@@ -173,8 +174,8 @@ fn main() {
         eprintln!("cannot read {chk_path}: {e}");
         std::process::exit(1)
     });
-    let vf4 = std::fs::read(&vf4_path).unwrap_or_else(|e| {
-        eprintln!("cannot read {vf4_path}: {e}");
+    let tables = TileTables::read_vf4(std::path::Path::new(&vf4_path)).unwrap_or_else(|e| {
+        eprintln!("cannot read {vf4_path} (+ .cv5): {e}");
         std::process::exit(1)
     });
     let mut map_hash = [0u8; 32];
@@ -186,7 +187,7 @@ fn main() {
     let m = Match {
         udp,
         chk: &chk,
-        vf4: &vf4,
+        vf4: &tables.data(),
         map_hash: &map_hash,
         seed,
         total_turns,
@@ -211,7 +212,7 @@ fn main() {
 struct Match<'a> {
     udp: bool,
     chk: &'a [u8],
-    vf4: &'a [u8],
+    vf4: &'a TileData<'a>,
     map_hash: &'a [u8; 32],
     seed: u64,
     total_turns: u32,

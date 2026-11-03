@@ -308,16 +308,17 @@ fn verify(install: &RetailInstall) -> ExitCode {
                 match read_chk(install, map) {
                     Ok(raw) => match Scenario::parse(&raw) {
                         Ok(scenario) => {
+                            let era = galaxycraft::render::era_name(scenario.era);
                             let vf4 = install
-                                .read(&format!(
-                                    "TileSet/{}.vf4",
-                                    galaxycraft::render::era_name(scenario.era)
-                                ))
+                                .read(&format!("TileSet/{era}.vf4"))
+                                .unwrap_or_default();
+                            let cv5 = install
+                                .read(&format!("TileSet/{era}.cv5"))
                                 .unwrap_or_default();
                             let mut world = galaxycraft::sim::World::from_scenario(
                                 std::sync::Arc::new(data),
                                 &scenario,
-                                &vf4,
+                                &galaxycraft::map::TileData::new(&cv5, &vf4),
                                 &[
                                     galaxycraft::sim::Race::Terran,
                                     galaxycraft::sim::Race::Protoss,

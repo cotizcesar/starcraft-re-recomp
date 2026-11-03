@@ -88,10 +88,20 @@ fn creep_overlay_is_animated_from_the_gameplay_maturity_grid() {
         galaxycraft::render::era_name(scenario.era)
     )))
     .expect("vf4");
+    let cv5 = fs::read(assets.join("TileSet").join(format!(
+        "{}.cv5",
+        galaxycraft::render::era_name(scenario.era)
+    )))
+    .expect("cv5");
     let data = Arc::new(galaxycraft::data::GameData::bundled().unwrap());
     let slots = scenario.player_slots();
     let races: Vec<Race> = slots.iter().map(|s| s.race(Race::Terran)).collect();
-    let mut world = World::from_scenario(data, &scenario, &vf4, &races);
+    let mut world = World::from_scenario(
+        data,
+        &scenario,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &races,
+    );
     // The shipped mission places Zerg structures; finish them so creep exists
     // even on the first tick, as it would in a running match.
     for u in &mut world.units {
@@ -169,11 +179,21 @@ fn bundled_map_pack_loads_and_runs_with_the_playable_assets() {
             galaxycraft::render::era_name(scenario.era)
         )))
         .expect("vf4");
+        let cv5 = fs::read(assets.join("TileSet").join(format!(
+            "{}.cv5",
+            galaxycraft::render::era_name(scenario.era)
+        )))
+        .expect("cv5");
         let starts = scenario.start_locations().len();
         let players = if starts > 0 { starts.clamp(2, 8) } else { 2 };
         let races = vec![Race::Terran; players];
         let data = Arc::new(galaxycraft::data::GameData::bundled().unwrap());
-        let mut world = World::from_scenario(data, &scenario, &vf4, &races);
+        let mut world = World::from_scenario(
+            data,
+            &scenario,
+            &galaxycraft::map::TileData::new(&cv5, &vf4),
+            &races,
+        );
         world.enable_fog();
         for _ in 0..120 {
             world.step();

@@ -41,6 +41,15 @@ fn load_ui(root: &Path, name: &str) -> Option<UiDialog> {
     UiDialog::from_path(&root.join("ui").join(format!("{name}.ui.json")))
 }
 
+/// Classic-console x of the centre plate (game px), measured: 729.5 / 3 -
+/// 106.67 on the 16:9 references.
+pub const CONSOLE_CENTER_X: f32 = 136.5;
+
+/// Screen px per game px for a content box `height` px tall (480 game px).
+pub fn console_scale(height: i32) -> f32 {
+    (height as f32 / 480.0).max(0.5)
+}
+
 /// The three-part bottom console plus its overlays for one race.
 pub struct ConsoleArt {
     pub race: &'static str,
@@ -58,6 +67,11 @@ pub struct ConsoleArt {
     pub command_icons_hd: Option<dds::DdsGrp>,
     pub command_icons: Option<Grp>,
     pub wireframe: Option<Grp>,
+    /// 4x HD resource icons (`game/icons.dds.grp`), command glyphs
+    /// (`unit/cmdicons/cmdicons.dds.grp`) and wireframes.
+    pub icons4: Option<dds::DdsGrp>,
+    pub cmdicons4: Option<dds::DdsGrp>,
+    pub wireframe4: Option<dds::DdsGrp>,
     /// Source sub-rectangle of the right plate that carries the 3x3 command
     /// wells (measured on the art: Terran 1283..1730 x 185..530 of 2286x700,
     /// scaled per race from its own proportions).
@@ -119,6 +133,9 @@ impl ConsoleArt {
             command_icons_hd: load_dds_grp(root, "hd2/unit/cmdicons/cmdicons.dds.grp"),
             command_icons: load_grp(root, "unit/cmdicons/cmdicons.grp"),
             wireframe: load_grp(root, "unit/wirefram/wirefram.grp"),
+            icons4: load_dds_grp(root, "game/icons.dds.grp"),
+            cmdicons4: load_dds_grp(root, "unit/cmdicons/cmdicons.dds.grp"),
+            wireframe4: load_dds_grp(root, "unit/wirefram/wirefram.dds.grp"),
             palette,
             layouts,
         })
@@ -182,8 +199,36 @@ impl ConsoleArt {
         ((self.right.width as f32 * hud_h as f32) / self.right.height as f32).round() as i32
     }
 
-    /// Same, but confined to the 16:9 content box `[x0, x0 + w)` so the
-    /// console never bleeds into the pillarbox area.
+    /// Screen rectangles of the left, centre and right plates in a content
+    /// box `[x0, x0 + w)` whose bottom is `bottom`, for `s` screen px per game
+    /// px (3.0 at 1440p).  Retail draws the 4x HD art at `s / 4`, bottom
+    /// aligned: the left plate starts `(view - 640) / 2` game px left of the
+    /// box, the right plate ends as far right of it and the centre plate sits
+    /// at classic x 136.5 shifted by the same amount.  Measured on 134905 /
+    /// 135020 / 135051 (all three races): left x -318, right edge 2880,
+    /// centre x 729.5 at 2560x1440.
+    pub fn piece_rects(&self, x0: i32, w: i32, bottom: i32, s: f32) -> [(i32, i32, i32, i32); 3] {
+        let view = w as f32 / s;
+        let extra = (view - 640.0) / 2.0;
+        let size = |img: &DdsImage| {
+            (
+                (img.width as f32 * s / 4.0).round() as i32,
+                (img.height as f32 * s / 4.0).round() as i32,
+            )
+        };
+        let (lw, lh) = size(&self.left);
+        let (cw, ch) = size(&self.center);
+        let (rw, rh) = size(&self.right);
+        let at = |gx: f32| x0 + (gx * s).round() as i32;
+        [
+            (at(-extra), bottom - lh, lw, lh),
+            (at(CONSOLE_CENTER_X + extra), bottom - ch, cw, ch),
+            (at(view + extra) - rw, bottom - rh, rw, rh),
+        ]
+    }
+
+    /// Draw the three plates (left, right, then the centre plate on top, as
+    /// its frame overlaps both neighbours) into the content box.
     pub fn draw_plates_in(
         &self,
         fb: &mut crate::render::Framebuffer,
@@ -192,111 +237,16 @@ impl ConsoleArt {
         x0: i32,
         w: i32,
     ) {
-        // The three plates are drawn as one triptych scaled to the content
-        // width, with a per-race vertical calibration.
-        //
-        // A landmark layout (radar interior 458,1056 384x384, panel interior
-        // 1361,1146 582x292, right plate filling the remainder) was implemented
-        // and measured: band raw 0.3435 / 0.1160 / 0.1352 and card raw 0.298 /
-        // 0.088 / 0.033 for Terran / Zerg / Protoss, i.e. worse than this
-        // triptych (0.3649 / 0.1299 / 0.1511 and 0.295 / 0.174 / 0.138), so it
-        // was reverted.  The triptych keeps the plates' native aspect, which is
-        // what the NcC on the band rewards.
-        let Some((sizes, height)) = plate_layout(
-            [
-                (self.left.width, self.left.height),
-                (self.center.width, self.center.height),
-                (self.right.width, self.right.height),
-            ],
-            w.max(1) as usize,
-        ) else {
-            return;
-        };
-        // Per-race calibration measured by sweeping stretch/voff against each
-        // race's own reference band and keeping the best raw NCC: Terran
-        // 1.20/0 (0.365), Zerg 1.00/+20 (0.130), Protoss 1.40/-20 (0.151).
-        let (default_stretch, default_voff) = match self.race {
-            "zerg" => (1.00f32, 20i32),
-            "protoss" => (1.40, -20),
-            _ => (1.20, 0),
-        };
-        let stretch: f32 = std::env::var("GC_HUD_STRETCH")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default_stretch);
-        let voff: i32 = std::env::var("GC_HUD_VOFF")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default_voff);
-        let height = ((height as f32 * stretch).round() as i32).max(1);
-        let top = hud_top + hud_h - height + voff;
-        let mut x = x0;
-        for (i, (img, (dw, dh))) in [&self.left, &self.center, &self.right]
-            .into_iter()
-            .zip(sizes.iter().copied())
-            .enumerate()
-        {
-            let mut dh = ((dh as f32 * stretch).round() as i32).max(1);
-            let mut px = x;
-            let mut py = top;
-            if i == 1 {
-                // Centre plate (info panel): per-race scale/offset measured on
-                // the panel region (x 1000..2100, y 1100..1440).  Panel raw NC:
-                // Terran 0.326, Protoss 0.170.  Zerg's organic frame does not
-                // correlate (best 0.002) and moving it covers the command card,
-                // so it keeps the identity transform.
-                let (cs, cdx, cdy) = match self.race {
-                    "protoss" => (1.06f32, 0.010f32, 0.0f32),
-                    "zerg" => (1.0, 0.0, 0.0),
-                    _ => (1.06, -0.010, 0.0),
-                };
-                let (cs, cdx, cdy) = std::env::var("GC_HUD_CENTRE")
-                    .ok()
-                    .and_then(|raw| {
-                        let v: Vec<f32> = raw
-                            .split(',')
-                            .filter_map(|t| t.trim().parse().ok())
-                            .collect();
-                        (v.len() == 3).then(|| (v[0], v[1], v[2]))
-                    })
-                    .unwrap_or((cs, cdx, cdy));
-                dh = ((dh as f32 * cs).round() as i32).max(1);
-                px += (w as f32 * cdx).round() as i32;
-                py += (hud_h as f32 * cdy).round() as i32;
-            }
-            if i == 2 {
-                // The right plate is drawn cropped to the region that carries
-                // the command card and the MENU/portrait block (swept per race
-                // on the card region: Terran 0.207 -> 0.295, Zerg 0.168 ->
-                // 0.174, Protoss 0.134 -> 0.138).
-                let (sw, sh) = (img.width as f32, img.height as f32);
-                let (u0, v0, u1, v1) = std::env::var("GC_HUD_RIGHT_SRC")
-                    .ok()
-                    .and_then(|raw| {
-                        let v: Vec<f32> = raw
-                            .split(',')
-                            .filter_map(|t| t.trim().parse().ok())
-                            .collect();
-                        (v.len() == 4).then(|| (v[0], v[1], v[2], v[3]))
-                    })
-                    .unwrap_or(self.right_src);
-                let src = (
-                    (sw * u0) as i32,
-                    (sh * v0) as i32,
-                    (sw * (u1 - u0)) as i32,
-                    (sh * (v1 - v0)) as i32,
-                );
-                img.draw_sub(fb, src, (px, py, dw, dh));
-            } else {
-                img.draw_scaled(fb, px, py, dw, dh);
-            }
-            x += dw;
-        }
+        let bottom = hud_top + hud_h;
+        let s = console_scale(bottom);
+        let [l, c, r] = self.piece_rects(x0, w, bottom, s);
+        self.left.draw_scaled(fb, l.0, l.1, l.2, l.3);
+        self.right.draw_scaled(fb, r.0, r.1, r.2, r.3);
+        self.center.draw_scaled(fb, c.0, c.1, c.2, c.3);
     }
 
     /// Interior rectangle of the centre plate (the info panel), in window
-    /// pixels.  Mirrors `draw_plates_in` exactly so text and slots can never
-    /// drift from the frame they belong to.
+    /// pixels, from the same geometry as [`Self::draw_plates_in`].
     pub fn center_interior(
         &self,
         hud_top: i32,
@@ -304,38 +254,12 @@ impl ConsoleArt {
         x0: i32,
         w: i32,
     ) -> (i32, i32, i32, i32) {
-        let Some((sizes, height)) = plate_layout(
-            [
-                (self.left.width, self.left.height),
-                (self.center.width, self.center.height),
-                (self.right.width, self.right.height),
-            ],
-            w.max(1) as usize,
-        ) else {
-            return (x0, hud_top, w.max(1), hud_h.max(1));
-        };
-        let (default_stretch, default_voff) = match self.race {
-            "zerg" => (1.00f32, 20i32),
-            "protoss" => (1.40, -20),
-            _ => (1.20, 0),
-        };
-        let stretch: f32 = std::env::var("GC_HUD_STRETCH")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default_stretch);
-        let voff: i32 = std::env::var("GC_HUD_VOFF")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default_voff);
-        let h = ((height as f32 * stretch).round() as i32).max(1);
-        let top = hud_top + hud_h - h + voff;
-        let cx = x0 + sizes[0].0;
-        let (dw, dh) = sizes[1];
-        let dh = ((dh as f32 * stretch).round() as i32).max(1);
+        let bottom = hud_top + hud_h;
+        let [_, (cx, cy, dw, dh), _] = self.piece_rects(x0, w, bottom, console_scale(bottom));
         // Interior of console_center.dds: x 52..1086, y 87..509 of 1156x512.
         let (nw, nh) = (self.center.width as f32, self.center.height as f32);
         let ix = cx + (52.0 / nw * dw as f32).round() as i32;
-        let iy = top + (87.0 / nh * dh as f32).round() as i32;
+        let iy = cy + (87.0 / nh * dh as f32).round() as i32;
         let iw = ((1086.0 - 52.0) / nw * dw as f32).round() as i32;
         let ih = ((509.0 - 87.0) / nh * dh as f32).round() as i32;
         (ix, iy, iw, ih)
@@ -868,6 +792,9 @@ mod wireframe_tests {
             command_icons_hd: None,
             command_icons: None,
             wireframe: Some(one_pixel_grp(208)),
+            icons4: None,
+            cmdicons4: None,
+            wireframe4: None,
         };
         let mut fb = Framebuffer::new(1, 1);
         assert!(console.draw_wireframe(&mut fb, 0, (0, 0, 1, 1), None));
