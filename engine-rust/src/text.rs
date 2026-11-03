@@ -750,6 +750,63 @@ impl UiFont {
         w
     }
 
+    /// Horizontal `kern` table adjustment between two characters, in pixels
+    /// at `px`.  The retail glue (native, not CEF) lays its labels out with
+    /// the `font/*.ttf` kern pairs: `Terran` is 4.6 px narrower and
+    /// `Protoss` 2.7 px wider at 47.5 px/em on 130744.
+    pub fn kerning(&self, a: char, b: char, px: f32) -> f32 {
+        let Ok(face) = ttf_parser::Face::parse(&self.bytes, 0) else {
+            return 0.0;
+        };
+        let (Some(l), Some(r)) = (face.glyph_index(a), face.glyph_index(b)) else {
+            return 0.0;
+        };
+        let s = px / face.units_per_em() as f32;
+        if let Some(kern) = face.tables().kern {
+            for sub in kern.subtables {
+                if sub.horizontal && !sub.variable {
+                    if let Some(v) = sub.glyphs_kerning(l, r) {
+                        return v as f32 * s;
+                    }
+                }
+            }
+        }
+        0.0
+    }
+
+    /// Ink box of `text` laid out like [`Self::draw_cef`] from pen 0 on
+    /// baseline 0: `(x0, x1, top, bottom)` with y growing downwards.  The
+    /// retail glue centres button labels on this box (`FB_HTEXTCENTER |
+    /// FB_VTEXTCENTER`), so descenders lift `Play Custom` and `Load Replay`.
+    pub fn ink_bounds_cef(
+        &self,
+        text: &str,
+        px: f32,
+        tracking: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let face = ttf_parser::Face::parse(&self.bytes, 0).ok()?;
+        let s = px / face.units_per_em() as f32;
+        let mut pen = 0.0f32;
+        let mut bounds: Option<(f32, f32, f32, f32)> = None;
+        for ch in text.chars() {
+            let id = face.glyph_index(ch).unwrap_or(ttf_parser::GlyphId(0));
+            if let Some(bb) = face.glyph_bounding_box(id) {
+                let g = (
+                    pen + bb.x_min as f32 * s,
+                    pen + bb.x_max as f32 * s,
+                    -(bb.y_max as f32) * s,
+                    -(bb.y_min as f32) * s,
+                );
+                bounds = Some(match bounds {
+                    None => g,
+                    Some(b) => (b.0.min(g.0), b.1.max(g.1), b.2.min(g.2), b.3.max(g.3)),
+                });
+            }
+            pen += face.glyph_hor_advance(id).unwrap_or(0) as f32 * s + tracking;
+        }
+        bounds
+    }
+
     /// Draw `text` the way the retail Chromium (CEF) front-end does: every
     /// glyph is rasterised from its outline at its exact sub-pixel pen and
     /// baseline (no bitmap shifting, which blurs stems), with exact-area

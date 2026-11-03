@@ -1,8 +1,11 @@
 # PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
 
-Última actualización: 2026-11-02 (pantalla de episodios/misión y las 4
-familias CEF cerradas 1:1; puerta visual 43/43 cruda y 43/43 a 0.00 con
-capas regeneradas, `ui_diff` 39/39).
+Última actualización: 2026-11-03 (campaña 1:1 en comportamiento: tabla
+`MenuEntry` del dump + cliente vivo → `campaign_progress.rs`, bloqueo con
+`glupokcancel`, lista con scroll/selección retail, Cancel → Registry; glue
+nativo con TTF+kern; capturas headless deterministas; puerta visual 43/43
+cruda y calibrada, campaña 1.38–1.92 en crudo; pruebas en
+`engine-rust/docs/new_screenshots/`).
 
 1. Objetivo general: reconstrucción verificable del comportamiento (código,
    datos, contenido) hasta donde sea técnica y legalmente posible.

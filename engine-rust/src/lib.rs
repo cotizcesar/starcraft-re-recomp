@@ -18,6 +18,7 @@ pub mod aiscript;
 pub mod audio;
 pub mod calibration;
 pub mod campaign;
+pub mod campaign_progress;
 pub mod cinematic;
 pub mod combat;
 pub mod data;

@@ -653,6 +653,9 @@ pub struct GlueArt {
     /// Mission-history modal (`glue/campaign/phist.dds`): the whole frame,
     /// list box and Ok/Cancel buttons in one shipped plate.
     pub campaign_hist: Option<DdsImage>,
+    /// Two-button glue popup plate (`glue/palcs/pdpopup.dds`, 4x the
+    /// 360x200 `glupokcancel` dialog: frame and both button bays).
+    pub campaign_prompt: Option<DdsImage>,
     /// Campaign side rails framing the episode-select screen.
     pub campaign_topl: Option<DdsImage>,
     pub campaign_topr: Option<DdsImage>,
@@ -699,6 +702,7 @@ impl GlueArt {
             campaign_backl: load_dds(root, "glue/palcs/backgndl.dds"),
             campaign_backr: load_dds(root, "glue/palcs/backgndr.dds"),
             campaign_hist: load_dds(root, "glue/campaign/phist.dds"),
+            campaign_prompt: load_dds(root, "glue/palcs/pdpopup.dds"),
             campaign_topl: load_dds(root, "glue/campaign/ptopl.dds"),
             campaign_topr: load_dds(root, "glue/campaign/ptopr.dds"),
             create_map: load_dds(root, "glue/create/plistmap.dds"),

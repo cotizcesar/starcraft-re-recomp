@@ -46,11 +46,13 @@ CASES = {
         2.75,
         {"single": 2.75, "multi": 1.875, "exit": 3.0, "exiton": 6.4125},
     ),
-    "130933": ("options-speed", None, None),
-    "130938": ("options-sound", None, None),
-    "130942": ("options-video", None, None),
-    "130949": ("options-game", None, None),
-    "130954": ("options-network", None, None),
+    # Options composites the live menu clips: same phases as
+    # `ui_visual_diff.py` PHASES (1/8 s sweep, 2026-11-02).
+    "130933": ("options-speed", 2.875, {"single": 2.875, "multi": 2.375, "exit": 6.125}),
+    "130938": ("options-sound", 8.25, {"single": 8.25, "multi": 6.125, "exit": 4.375}),
+    "130942": ("options-video", 2.0, {"single": 2.0, "multi": 2.375, "exit": 1.375}),
+    "130949": ("options-game", 8.125, {"single": 8.125, "multi": 8.75, "exit": 0.5}),
+    "130954": ("options-network", 2.5, {"single": 2.5, "multi": 2.375, "exit": 4.875}),
     "131005": ("collections", None, None),
     "131015": ("hotkeys-terran", None, None),
     "131026": ("hotkeys-terran-scv", None, None),

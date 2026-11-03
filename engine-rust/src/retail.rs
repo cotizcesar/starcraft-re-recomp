@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v8 (consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v10 (consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -805,6 +805,8 @@ impl RetailInstall {
             "font/eurostileext-reg.ttf",
             "font/eurostile-reg.ttf",
             "font/blizzard-regular.ttf",
+            // BlizzardGlobal: the glue `RC_SMALLTEXT` and plain button face.
+            "font/bl.ttf",
         ] {
             let dst = dest.join(src);
             if dst.is_file() {
@@ -1089,6 +1091,8 @@ pub const GLUE_ART: &[&str] = &[
     "glue/campaign/ptopl.dds",
     "glue/campaign/ptopr.dds",
     "glue/campaign/phist.dds",
+    // Locked-campaign prompt plate (`glupokcancel`).
+    "glue/palcs/pdpopup.dds",
     "glue/palcs/backgndl.dds",
     "glue/palcs/backgndr.dds",
     // Create-game chrome: map-list plate, player slots, map-info column,

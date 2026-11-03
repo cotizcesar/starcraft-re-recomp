@@ -22,7 +22,7 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -239,6 +239,11 @@ fn save_dirs() -> (PathBuf, PathBuf) {
                 .join("galaxycraft")
         });
     (base.join("saves"), base.join("replays"))
+}
+
+/// Per-profile campaign progress (`GCPR`), next to `hotkeys.bin`.
+fn progress_save_path() -> Option<PathBuf> {
+    save_dirs().0.parent().map(|p| p.join("campaign.bin"))
 }
 
 fn hotkey_save_path() -> Option<PathBuf> {
@@ -552,24 +557,17 @@ impl MenuClip {
         let first = self.current.is_none() && self.buffer.is_empty();
         if self.decoded < want && self.buffer.len() <= self.chunk * 2 {
             if let Some(rx) = &self.rx {
-                // Headless captures may wait for the very first frame; live
-                // playback must never stall the render thread for a chunk.
-                let mut attempts = if first && self.frozen { 100 } else { 1 };
-                loop {
-                    match rx.try_recv() {
-                        Ok(frames) => {
-                            self.buffer.extend(frames);
-                            break;
-                        }
-                        Err(TryRecvError::Empty) => {
-                            attempts -= 1;
-                            if attempts <= 0 {
-                                break;
-                            }
-                            std::thread::sleep(Duration::from_millis(20));
-                        }
-                        Err(TryRecvError::Disconnected) => break,
-                    }
+                // A frozen clip (`--menu-at` / `--menu-phase` captures) blocks
+                // until the decoder delivers: the old 2 s poll gave up under
+                // CPU load and drew an empty layer, so identical captures
+                // differed.  Live playback never stalls the render thread.
+                let got = if first && self.frozen {
+                    rx.recv_timeout(FROZEN_CLIP_WAIT).ok()
+                } else {
+                    rx.try_recv().ok()
+                };
+                if let Some(frames) = got {
+                    self.buffer.extend(frames);
                 }
             }
         }
@@ -614,6 +612,9 @@ fn send_or_stop(
         }
     }
 }
+
+/// Longest wait for the first frame of a frozen (capture) clip.
+const FROZEN_CLIP_WAIT: Duration = Duration::from_secs(60);
 
 /// The six Remastered main-menu button clips (idle + hover).
 #[derive(Default)]
@@ -691,6 +692,9 @@ struct MenuInput {
     keys: Vec<Key>,
     mouse: Option<(i32, i32)>,
     mouse_down: bool,
+    /// Wheel notches this tick (positive = towards the user, i.e. scroll
+    /// the list down, as the live client does).
+    wheel: i32,
 }
 
 /// Control under the pointer on a sub-screen (shared by every branch so
@@ -728,6 +732,12 @@ struct App {
     glue: Option<GlueArt>,
     /// Remastered front-end face (`webui/dist/lib/fonts/eurostileext-reg.otf`).
     ui_font: Option<galaxycraft::text::UiFont>,
+    /// Glue faces (`font/eurostile-reg.ttf`, `font/eurostileext-reg.ttf`):
+    /// the native glue renders from the TTFs, kern pairs included.
+    glue_font: Option<galaxycraft::text::UiFont>,
+    glue_font_ext: Option<galaxycraft::text::UiFont>,
+    /// `font/bl.ttf` (BlizzardGlobal): `RC_SMALLTEXT` and plain buttons.
+    glue_font_small: Option<galaxycraft::text::UiFont>,
     /// Wide face for the lit main-menu labels (Eurostile Extended).
     ui_font_hover: Option<galaxycraft::text::UiFont>,
     /// Face used by the profile/build footer (HTML info text).
@@ -846,7 +856,14 @@ struct App {
     /// continue to the episode list instead of returning to the main menu.
     registry_after_gametype: bool,
     episode_sel: usize,
-    mission_sel: usize,
+    /// `Select starting mission` list box (selection + scroll).
+    mission_list: galaxycraft::campaign_progress::MissionList,
+    /// Locked campaign whose `glupokcancel` prompt is open.
+    campaign_prompt: Option<galaxycraft::campaign_progress::Campaign>,
+    /// Profile chosen in the Registry and every profile's campaign progress
+    /// (`~/.cache/galaxycraft/campaign.bin`, `GCPR`).
+    active_profile: String,
+    progress_book: galaxycraft::campaign_progress::ProgressBook,
     lobby_races: Vec<LobbyRace>,
     game_menu_sel: usize,
     #[allow(dead_code)]
@@ -2264,6 +2281,170 @@ fn aa_chevron(fb: &mut Framebuffer, cx: f32, top: f32, hw: f32, h: f32, c0: Rgb,
     }
 }
 
+/// Glue `RC_BIGTEXT` (Eurostile regular TTF, kern pairs on) at 1440p:
+/// 47.4 px/em, from the mission-row ink widths of 131132 (47.37..47.39).
+const GLUE_BIG_PX: f32 = 47.4;
+/// Glue text faces: `RC_SMALLTEXT` / plain buttons (BlizzardGlobal),
+/// `RC_BIGTEXT` (Eurostile) and `RC_BIGGERTEXT` (Eurostile Extended).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GlueFace {
+    Small,
+    Big,
+    Bigger,
+}
+
+/// Glue `RC_SMALLTEXT` / plain `FLCBTN` labels (BlizzardGlobal), fitted on
+/// 131132: title 33.4 px/em (ink 747..1086), Ok/Cancel 34.0 px/em.
+const GLUE_SMALL_PX: f32 = 33.4;
+const GLUE_SMALL_BUTTON_PX: f32 = 34.0;
+/// Glue `RC_BIGGERTEXT` (Eurostile Extended): 47.5 px/em, solved from the
+/// measured ink widths of the ten campaign labels (47.3..48.0).
+const GLUE_BIGGER_PX: f32 = 47.5;
+/// Cap height of both Eurostile faces (OS/2 `sCapHeight` 667/1000).
+const GLUE_CAP: f32 = 0.667;
+/// Glue colours: idle green, bright hotkey/selection green and the
+/// white-lavender info text (the `\x02` episode line, captions, prompts).
+const GLUE_GREEN: Rgb = Rgb::new(102, 227, 53);
+const GLUE_BRIGHT: Rgb = Rgb::new(208, 255, 131);
+const GLUE_INFO: Rgb = Rgb::new(198, 218, 255);
+/// Extra advance of the glue text, as for the CEF body text.
+const GLUE_TRACKING: f32 = 0.00125;
+/// Locked-slot caption baselines (130757: ink rows 616..656 / 680..720).
+const GLUE_CAPTION_BASE: f32 = 647.5;
+const GLUE_CAPTION_PITCH: f32 = 64.0;
+/// `glupokcancel` body: pen x, first baseline and line pitch (live 08:
+/// ink bottoms 506 / 570 / 699 for lines 1, 2 and 4).
+const GLUE_PROMPT_X: f32 = 771.5;
+const GLUE_PROMPT_BASE: f32 = 497.6;
+const GLUE_PROMPT_PITCH: f32 = 64.3;
+/// Offset of a plain `FLCBTN` label from its rect centre (content px).
+const GLUE_SMALL_BUTTON_DX: f32 = 2.0;
+const GLUE_SMALL_BUTTON_DY: f32 = 1.0;
+/// Mission list rows: pen x and first baseline (57 px pitch).
+const GLUE_ROW_X: f32 = 750.6;
+const GLUE_ROW_BASE: f32 = 510.3;
+
+/// Anti-aliased fill of closed polygons (even-odd, 4x4 supersampling) in
+/// window pixels.
+fn aa_polygons(fb: &mut Framebuffer, polys: &[&[(f32, f32)]], color: Rgb) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for p in polys {
+        for &(x, y) in p.iter() {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    }
+    let inside = |px: f32, py: f32| {
+        let mut odd = false;
+        for p in polys {
+            let n = p.len();
+            for i in 0..n {
+                let (ax, ay) = p[i];
+                let (bx, by) = p[(i + 1) % n];
+                if (ay > py) != (by > py) && px < ax + (py - ay) * (bx - ax) / (by - ay) {
+                    odd = !odd;
+                }
+            }
+        }
+        odd
+    };
+    for y in y0.floor().max(0.0) as i32..(y1.ceil() as i32).min(fb.height) {
+        for x in x0.floor().max(0.0) as i32..(x1.ceil() as i32).min(fb.width) {
+            let mut n = 0;
+            for j in 0..4 {
+                for i in 0..4 {
+                    if inside(
+                        x as f32 + (i as f32 + 0.5) / 4.0,
+                        y as f32 + (j as f32 + 0.5) / 4.0,
+                    ) {
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                fb.put(
+                    x,
+                    y,
+                    fb.get(x, y)
+                        .blend(color, (n as f32 / 16.0 * 255.0).round() as u8),
+                );
+            }
+        }
+    }
+}
+
+/// Mission-list scrollbar, measured on the live client (content px):
+/// #6b0000 track box 1771..1818.8 x 516..876 (2.8 px), #e40000 arrow
+/// outlines (apex 461.3 / 930.6, 3 px base bars) and a #ff0000 octagonal
+/// thumb 1773.4..1815.9 x 42 (3.3 px stroke, 8.7 px chamfer) whose top
+/// runs from 519 to 834.
+fn draw_mission_scrollbar(fb: &mut Framebuffer, cx: i32, k: f32, thumb: f32) {
+    let p = |x: f32, y: f32| (cx as f32 + x * k, y * k);
+    let space = CefSpace {
+        cx: cx as f32,
+        kx: k,
+        ky: k,
+    };
+    cef_band(
+        fb,
+        space,
+        [1771.0, 516.0, 1818.8, 876.0],
+        0.0,
+        2.9,
+        Rgb::new(107, 0, 0),
+        1.0,
+        &[],
+    );
+    let arrow = Rgb::new(228, 0, 0);
+    let (l, r, mid, dx) = (1770.6f32, 1818.6f32, 1794.5f32, 0.491f32);
+    // Up: outer apex 461.3, base 510; inner apex 471.3, inner base 507
+    // (the 4.9 px horizontal stroke runs parallel to the outer edges).
+    let up_o = [p(mid, 461.3), p(r, 510.0), p(l, 510.0)];
+    let inner_half = mid - (1794.5 - dx * (507.0 - 461.3) + 4.9);
+    let up_i = [
+        p(mid, 471.3),
+        p(mid + inner_half, 507.0),
+        p(mid - inner_half, 507.0),
+    ];
+    aa_polygons(fb, &[&up_o, &up_i], arrow);
+    // Down: outer base 881.9, apex 930.6; inner base 885, apex 920.6.
+    let dn_half = mid - (1794.5 - dx * (930.6 - 885.0) + 4.9);
+    let dn_o = [p(l, 881.9), p(r, 881.9), p(mid, 930.6)];
+    let dn_i = [
+        p(mid - dn_half, 885.0),
+        p(mid + dn_half, 885.0),
+        p(mid, 920.6),
+    ];
+    aa_polygons(fb, &[&dn_o, &dn_i], arrow);
+    // Thumb.
+    let top = galaxycraft::menu::MISSION_THUMB_TOP.0
+        + (galaxycraft::menu::MISSION_THUMB_TOP.1 - galaxycraft::menu::MISSION_THUMB_TOP.0) * thumb;
+    let oct = |x0: f32, y0: f32, x1: f32, y1: f32, c: f32| {
+        [
+            p(x0 + c, y0),
+            p(x1 - c, y0),
+            p(x1, y0 + c),
+            p(x1, y1 - c),
+            p(x1 - c, y1),
+            p(x0 + c, y1),
+            p(x0, y1 - c),
+            p(x0, y0 + c),
+        ]
+    };
+    let t = 3.3f32;
+    let outer = oct(1773.4, top, 1815.9, top + 42.0, 8.7);
+    let inner = oct(
+        1773.4 + t,
+        top + 3.0,
+        1815.9 - t,
+        top + 39.0,
+        8.7 - t * 0.414,
+    );
+    aa_polygons(fb, &[&outer, &inner], Rgb::new(255, 0, 0));
+}
+
 /// Retail Options plate (130933..130954), content units: an L-shaped
 /// frame whose title strip and five tab boxes are separate rounded boxes
 /// (4.6 px #331f1f outer band r 3.5, 3 px #6c0000 inner band r 4, 7-9 px
@@ -2822,7 +3003,24 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     for (i, step) in script.split(',').map(str::trim).enumerate() {
         let mut keys = Vec::new();
         let mut down = false;
-        if step == "fixture:lan-peer" {
+        let mut wheel = 0;
+        if let Some(n) = step.strip_prefix("wheel:") {
+            wheel = n.parse().unwrap_or(0);
+        } else if let Some(rest) = step.strip_prefix("fixture:progress:") {
+            // Walkthrough fixture: give the active profile campaign history
+            // (`<episode>=<next mission>`), as a played profile has.
+            if let Some((ep, next)) = rest.split_once('=') {
+                let campaign = ep
+                    .parse()
+                    .ok()
+                    .and_then(galaxycraft::campaign_progress::Campaign::from_episode);
+                if let (Some(c), Ok(n)) = (campaign, next.parse()) {
+                    let mut p = app.progress();
+                    p.next[c.index()] = n;
+                    app.progress_book.set(&app.active_profile.clone(), p);
+                }
+            }
+        } else if step == "fixture:lan-peer" {
             // Walkthrough fixture: inject one discovered peer so the LAN row
             // action (select + join) can be exercised without a second host.
             let announce = galaxycraft::net::Announce {
@@ -2847,6 +3045,7 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             keys,
             mouse,
             mouse_down: down,
+            wheel,
         };
         app.update_view(fb);
         app.handle_menu_input(&input);
@@ -2927,6 +3126,14 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 }),
                 app.hotkey_reset,
                 app.hotkey_binding_error
+            ),
+            MenuScreen::Mission { episode } => format!(
+                "episode={episode} len={} sel={} top={} profile={}",
+                app.mission_list.len, app.mission_list.sel, app.mission_list.top, app.active_profile
+            ),
+            MenuScreen::Episode => format!(
+                "hover={:?} prompt={:?} profile={}",
+                app.episode_hover, app.campaign_prompt, app.active_profile
             ),
             MenuScreen::Lan => format!(
                 "lan_sel={} entries={} status={}",
@@ -3287,6 +3494,9 @@ fn main() {
         console,
         glue,
         ui_font: galaxycraft::text::UiFont::load_retail(&assets),
+        glue_font: galaxycraft::text::UiFont::load(&assets.join("font/eurostile-reg.ttf")),
+        glue_font_ext: galaxycraft::text::UiFont::load(&assets.join("font/eurostileext-reg.ttf")),
+        glue_font_small: galaxycraft::text::UiFont::load(&assets.join("font/bl.ttf")),
         ui_font_hover: galaxycraft::text::UiFont::load_retail_extended(&assets),
         ui_font_info: galaxycraft::text::UiFont::load(
             &std::env::var("GC_INFO_FONT")
@@ -3334,7 +3544,12 @@ fn main() {
         gametype_multi: false,
         registry_after_gametype: false,
         episode_sel: 0,
-        mission_sel: 0,
+        mission_list: galaxycraft::campaign_progress::MissionList::default(),
+        campaign_prompt: None,
+        active_profile: "REA".to_string(),
+        progress_book: progress_save_path()
+            .and_then(|p| galaxycraft::campaign_progress::ProgressBook::load(&p))
+            .unwrap_or_default(),
         lobby_races: vec![LobbyRace::Random; 8],
         game_menu_sel: 6,
         credits_scroll: 0,
@@ -3621,11 +3836,17 @@ fn main() {
             | "episode-hover-protoss"
             | "episode-expansion-hover-zerg"
             | "episode-expansion-hover-terran"
-            | "episode-expansion-hover-protoss" => {
+            | "episode-expansion-hover-protoss"
+            | "episode-locked-zerg" => {
                 let screen = shot_screen.as_str();
                 app.intro = false;
                 app.menu = true;
                 app.menu_screen = MenuScreen::Episode;
+                app.set_reference_progress();
+                if screen == "episode-locked-zerg" {
+                    // Live capture: the prompt after clicking the locked Zerg.
+                    app.campaign_prompt = Some(galaxycraft::campaign_progress::Campaign::Zerg);
+                }
                 let expansion = screen.contains("expansion");
                 app.episode_sel = galaxycraft::menu::episode_start(expansion);
                 // Slot order differs per campaign set: original is
@@ -3641,10 +3862,28 @@ fn main() {
                 };
                 app.draw_menu(&mut fb);
             }
-            "mission" => {
+            "mission" | "mission-live" | "mission-live-scrolled" => {
                 app.intro = false;
                 app.menu = true;
-                app.menu_screen = MenuScreen::Mission { episode: 1 };
+                app.set_reference_progress();
+                let terran = galaxycraft::campaign_progress::Campaign::Terran;
+                if shot_screen != "mission" {
+                    // Live profile LinKa: history up to `9. New Gettysburg`.
+                    let mut p = app.progress();
+                    p.next[terran.index()] = 10;
+                    app.progress_book.set(&app.active_profile.clone(), p);
+                }
+                app.enter_campaign(terran);
+                // 131132 was wheel-scrolled to the last page with the
+                // default selection (entry 0) out of view.
+                match shot_screen.as_str() {
+                    "mission" => app.mission_list.scroll(10),
+                    "mission-live-scrolled" => {
+                        app.mission_list.click_row(2);
+                        app.mission_list.scroll(1);
+                    }
+                    _ => {}
+                }
                 app.episode_hover = None;
                 app.draw_menu(&mut fb);
             }
@@ -5429,27 +5668,169 @@ impl App {
     #[allow(unreachable_code)]
     /// Start the selected campaign mission of `episode` (Enter or the Ok
     /// button); the screen-change cue is the retail `swishin` sound.
-    fn launch_mission(&mut self, episode: u8) {
-        let mut n = 0usize;
-        let mut target = None;
-        for (i, m) in self.maps.iter().enumerate() {
-            if let Some(c) = &m.campaign {
-                if galaxycraft::menu::episode_number(&c.episode).unwrap_or(0) == episode {
-                    if n == self.mission_sel {
-                        target = Some(i);
-                        break;
-                    }
-                    n += 1;
-                }
-            }
+    /// Campaign state of the profile on the reference captures: Terran
+    /// played up to `8. The Big Push` (131132), everything else fresh, so
+    /// Zerg/Protoss and Brood War Terran/Zerg are locked (130757/130804/
+    /// 130832/130840 hover captions).
+    fn set_reference_progress(&mut self) {
+        let mut p = galaxycraft::campaign_progress::Progress::default();
+        p.next[galaxycraft::campaign_progress::Campaign::Terran.index()] = 9;
+        self.progress_book.set(&self.active_profile.clone(), p);
+    }
+
+    /// Progress of the profile chosen in the Registry.
+    fn progress(&self) -> galaxycraft::campaign_progress::Progress {
+        self.progress_book.get(&self.active_profile)
+    }
+
+    fn capture_active_profile(&mut self) {
+        if let Some(name) = self.profiles.get(self.profile_sel) {
+            self.active_profile = name.clone();
         }
-        if let Some(idx) = target {
-            self.play("ui_click");
-            self.map_index = idx;
-            self.start_campaign_mission(idx);
+    }
+
+    /// Map list index of a mapdata mission (`campaign/<dir>/<key>`).
+    fn campaign_map_index(&self, mission: u16) -> Option<usize> {
+        let (dir, key) = galaxycraft::campaign_progress::mission_key(mission)?;
+        self.maps.iter().position(|m| {
+            m.campaign
+                .as_ref()
+                .is_some_and(|c| c.episode == dir && c.mission == key)
+        })
+    }
+
+    /// Mapdata mission of the map at `index`, for progress bookkeeping.
+    fn map_mission(&self, index: usize) -> Option<u16> {
+        let tag = self.maps.get(index)?.campaign.as_ref()?;
+        (1..=64u16).find(|&n| {
+            galaxycraft::campaign_progress::mission_key(n)
+                .is_some_and(|(dir, key)| tag.episode == dir && tag.mission == key)
+        })
+    }
+
+    /// Click on a campaign slot: a locked campaign asks first
+    /// (`strRACE_ERR_*`), an unlocked one is entered.
+    fn select_campaign(&mut self, campaign: galaxycraft::campaign_progress::Campaign) {
+        self.episode_sel = (campaign.episode() - 1) as usize;
+        // The modal takes the pointer: the slot under it is no longer
+        // hovered (live capture 08: Zerg dim under the prompt).
+        self.episode_hover = None;
+        if self.progress().blocker(campaign).is_some() {
+            self.campaign_prompt = Some(campaign);
         } else {
-            self.play("ui_click");
+            self.enter_campaign(campaign);
         }
+    }
+
+    /// Retail: a campaign with history opens `Select starting mission`
+    /// (first entry selected, list at the top); without history it starts
+    /// straight away.
+    fn enter_campaign(&mut self, campaign: galaxycraft::campaign_progress::Campaign) {
+        self.episode_sel = (campaign.episode() - 1) as usize;
+        let history = self.progress().history(campaign);
+        // Live capture 21: the Terran slot is dim under the list modal.
+        self.episode_hover = None;
+        if history.len() > 1 {
+            self.mission_list = galaxycraft::campaign_progress::MissionList::open(history.len());
+            self.menu_screen = MenuScreen::Mission {
+                episode: campaign.episode(),
+            };
+        } else if let Some(entry) = history.first() {
+            self.start_history_entry(entry);
+        }
+    }
+
+    /// Episode-screen command buttons (`glucmpgn` ids 5/10/11/9).
+    fn episode_command(&mut self, which: usize) {
+        self.menu_screen = match which {
+            0 => MenuScreen::SavedGames,
+            1 => MenuScreen::Lobby {
+                map: Some(self.map_index),
+            },
+            2 => MenuScreen::Replays,
+            // Live client: Cancel returns to the Registry.
+            _ => MenuScreen::Registry,
+        };
+    }
+
+    /// Start a history entry: a cinematic entry plays its movie and then
+    /// the mission it precedes.
+    fn start_history_entry(&mut self, entry: &galaxycraft::campaign_progress::HistEntry) {
+        let Some(idx) = self.campaign_map_index(entry.mission) else {
+            return;
+        };
+        self.map_index = idx;
+        match galaxycraft::campaign_progress::cinematic_clip(entry.cinematic) {
+            Some(clip) => self.begin_intro(vec![clip.to_string()], Some(idx)),
+            None => self.start_campaign_mission(idx),
+        }
+    }
+
+    fn launch_mission(&mut self, episode: u8) {
+        self.play("ui_click");
+        let Some(campaign) = galaxycraft::campaign_progress::Campaign::from_episode(episode) else {
+            return;
+        };
+        let history = self.progress().history(campaign);
+        if let Some(entry) = history.get(self.mission_list.sel) {
+            self.start_history_entry(entry);
+        }
+    }
+
+    /// Scrollbar of the mission list: arrows scroll one row, the track
+    /// pages.  Returns true when the press was consumed.
+    fn mission_scrollbar(&mut self, input: &MenuInput) -> bool {
+        let pressed = input.mouse_down && !self.mouse_was_down;
+        let Some((mx, my)) = input.mouse.filter(|_| pressed) else {
+            return false;
+        };
+        let (cx, _cy, cw, ch) = self.content_box;
+        let fx = (mx - cx) as f32 * 2560.0 / cw.max(1) as f32;
+        let fy = my as f32 * 1440.0 / ch.max(1) as f32;
+        let Some(hit) = galaxycraft::menu::mission_scrollbar_hit(fx, fy, self.mission_list.thumb())
+        else {
+            return false;
+        };
+        self.mouse_was_down = true;
+        let page = galaxycraft::campaign_progress::MissionList::ROWS as i32;
+        self.mission_list.scroll(match hit {
+            galaxycraft::menu::ScrollHit::Up => -1,
+            galaxycraft::menu::ScrollHit::Down => 1,
+            galaxycraft::menu::ScrollHit::PageUp => -page,
+            galaxycraft::menu::ScrollHit::PageDown => page,
+            galaxycraft::menu::ScrollHit::Thumb => 0,
+        });
+        self.play("ui_click");
+        true
+    }
+
+    /// Pointer state of the `glupokcancel` prompt: Some(true) over Ok,
+    /// Some(false) over Cancel, and whether this tick is a press.
+    fn campaign_prompt_pointer(&mut self, input: &MenuInput) -> (Option<bool>, bool) {
+        let pressed = input.mouse_down && !self.mouse_was_down;
+        if !input.mouse_down {
+            self.mouse_was_down = false;
+        }
+        let Some((mx, my)) = input.mouse else {
+            return (None, false);
+        };
+        let (cx, cy, cw, ch) = self.content_box;
+        let (scale, ox) = galaxycraft::menu::campaign_scale(cw, ch);
+        let inside = |r: (f32, f32, f32, f32)| {
+            let (x, y, w, h) = galaxycraft::menu::campaign_rect(r, scale, ox, cx, cy);
+            mx >= x && mx < x + w && my >= y && my < y + h
+        };
+        let hit = if inside(galaxycraft::menu::PROMPT_BUTTONS[0]) {
+            Some(true)
+        } else if inside(galaxycraft::menu::PROMPT_BUTTONS[1]) {
+            Some(false)
+        } else {
+            None
+        };
+        if pressed {
+            self.mouse_was_down = true;
+        }
+        (hit, pressed)
     }
 
     /// Input snapshot for one menu tick.  Live play fills it from the window;
@@ -5462,6 +5843,10 @@ impl App {
                 .get_unscaled_mouse_pos(MouseMode::Clamp)
                 .map(|(x, y)| (x as i32, y as i32)),
             mouse_down: window.get_mouse_down(MouseButton::Left),
+            wheel: window
+                .get_scroll_wheel()
+                .map(|(_, y)| -(y.signum() as i32))
+                .unwrap_or(0),
         };
         self.handle_menu_input(&input);
     }
@@ -5564,6 +5949,7 @@ impl App {
                     if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if hit(0.638, 0.788, 0.822, 0.848) {
+                            self.capture_active_profile();
                             if self.registry_after_gametype {
                                 self.registry_after_gametype = false;
                                 self.episode_sel = galaxycraft::menu::episode_start(false);
@@ -5628,6 +6014,7 @@ impl App {
                             self.play("ui_click");
                         }
                         Key::Enter | Key::Space => {
+                            self.capture_active_profile();
                             if self.registry_after_gametype {
                                 self.registry_after_gametype = false;
                                 self.episode_sel = galaxycraft::menu::episode_start(false);
@@ -5712,6 +6099,27 @@ impl App {
                 }
             }
             MenuScreen::Episode => {
+                // `glupokcancel` prompt over a locked campaign: Ok (O,
+                // Enter) plays it anyway, Cancel (C, Esc) closes it.
+                if let Some(campaign) = self.campaign_prompt {
+                    let (hit, clicked) = self.campaign_prompt_pointer(input);
+                    let mut choice = if clicked { hit } else { None };
+                    for key in input.keys.iter().copied() {
+                        match key {
+                            Key::O | Key::Enter => choice = Some(true),
+                            Key::C | Key::Escape => choice = Some(false),
+                            _ => {}
+                        }
+                    }
+                    if let Some(ok) = choice {
+                        self.campaign_prompt = None;
+                        self.play("ui_click");
+                        if ok {
+                            return self.enter_campaign(campaign);
+                        }
+                    }
+                    return;
+                }
                 // Mouse: the three episode slots and the four shipped command
                 // controls (`glucmpgn` ids 8/7/6/5/10/11/9).
                 if let Some((mx, my)) = input.mouse {
@@ -5728,40 +6136,24 @@ impl App {
                         mx >= x && mx < x + w && my >= y && my < y + h
                     };
                     let slot = slots.iter().position(|s| inside(s.button));
+                    if slot.is_some() && slot != self.episode_hover {
+                        self.play("ui_move");
+                    }
                     self.episode_hover = slot;
                     if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if let Some(idx) = slot {
-                            // Clicking a race selects that episode and opens
-                            // its mission list (reference 131132).
-                            self.episode_sel = if expansion {
-                                [4usize, 3, 5][idx]
-                            } else {
-                                [1usize, 0, 2][idx]
-                            };
-                            self.menu_screen = MenuScreen::Mission {
-                                episode: (self.episode_sel + 1) as u8,
-                            };
-                            self.mission_sel = 0;
                             self.play("ui_click");
-                        } else if galaxycraft::menu::CAMPAIGN_BUTTONS
+                            let campaign =
+                                galaxycraft::campaign_progress::Campaign::of_slot(expansion, idx);
+                            return self.select_campaign(campaign);
+                        }
+                        let which = galaxycraft::menu::CAMPAIGN_BUTTONS
                             .iter()
-                            .any(|b| inside(b.rect))
-                        {
-                            let which = galaxycraft::menu::CAMPAIGN_BUTTONS
-                                .iter()
-                                .position(|b| inside(b.rect));
-                            match which {
-                                Some(0) => self.menu_screen = MenuScreen::SavedGames,
-                                Some(1) => {
-                                    self.menu_screen = MenuScreen::Lobby {
-                                        map: Some(self.map_index),
-                                    }
-                                }
-                                Some(2) => self.menu_screen = MenuScreen::Replays,
-                                _ => self.menu_screen = MenuScreen::Main,
-                            }
+                            .position(|b| inside(b.rect));
+                        if let Some(which) = which {
                             self.play("ui_click");
+                            self.episode_command(which);
                         }
                         return;
                     }
@@ -5769,7 +6161,24 @@ impl App {
                 if !input.mouse_down {
                     self.mouse_was_down = false;
                 }
+                let expansion = self.episode_sel >= 3;
                 for key in input.keys.iter().copied() {
+                    use galaxycraft::campaign_progress::Campaign as C;
+                    // Slot hotkeys come from the shipped strings
+                    // (`t\x04T\x01erran`, `z..`, `p..`).
+                    let race = match (key, expansion) {
+                        (Key::T, false) => Some(C::Terran),
+                        (Key::Z, false) => Some(C::Zerg),
+                        (Key::P, false) => Some(C::Protoss),
+                        (Key::T, true) => Some(C::ExpTerran),
+                        (Key::Z, true) => Some(C::ExpZerg),
+                        (Key::P, true) => Some(C::ExpProtoss),
+                        _ => None,
+                    };
+                    if let Some(c) = race {
+                        self.play("ui_click");
+                        return self.select_campaign(c);
+                    }
                     match key {
                         Key::Up => {
                             self.episode_sel = (self.episode_sel + 5) % 6;
@@ -5780,37 +6189,42 @@ impl App {
                             self.play("ui_move");
                         }
                         Key::Enter | Key::Space => {
-                            self.menu_screen = MenuScreen::Mission {
-                                episode: (self.episode_sel + 1) as u8,
-                            };
-                            self.mission_sel = 0;
                             self.play("ui_click");
+                            if let Some(c) = galaxycraft::campaign_progress::Campaign::from_episode(
+                                (self.episode_sel + 1) as u8,
+                            ) {
+                                return self.select_campaign(c);
+                            }
                         }
+                        // `l\x04L\x01oad Saved`, `rLoad \x04R\x01eplay`,
+                        // `uPlay C\x04u\x01stom`, `c\x04C\x01ancel`.
                         Key::L => {
-                            self.menu_screen = MenuScreen::SavedGames;
                             self.play("ui_click");
+                            return self.episode_command(0);
                         }
-                        Key::C => {
-                            self.menu_screen = MenuScreen::Lobby {
-                                map: Some(self.map_index),
-                            };
+                        Key::U => {
                             self.play("ui_click");
+                            return self.episode_command(1);
                         }
                         Key::R => {
-                            self.menu_screen = MenuScreen::Replays;
                             self.play("ui_click");
+                            return self.episode_command(2);
                         }
-                        Key::Escape => {
-                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
-                                self.menu_screen = t;
-                            }
+                        Key::C | Key::Escape => {
                             self.play("ui_click");
+                            return self.episode_command(3);
                         }
                         _ => {}
                     }
                 }
             }
             MenuScreen::Mission { episode } => {
+                if self.mission_scrollbar(input) {
+                    return;
+                }
+                if input.wheel != 0 {
+                    self.mission_list.scroll(input.wheel);
+                }
                 let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
@@ -5819,8 +6233,7 @@ impl App {
                             self.menu_screen = MenuScreen::Episode;
                             self.play("ui_click");
                         }
-                        Some(MenuHit::Row(i)) if i != self.mission_sel => {
-                            self.mission_sel = i;
+                        Some(MenuHit::Row(i)) if self.mission_list.click_row(i) => {
                             self.play("ui_click");
                         }
                         _ => {}
@@ -5829,18 +6242,17 @@ impl App {
                 for key in input.keys.iter().copied() {
                     match key {
                         Key::Up => {
-                            self.mission_sel = self.mission_sel.saturating_sub(1);
+                            self.mission_list.step(-1);
                             self.play("ui_move");
                         }
                         Key::Down => {
-                            self.mission_sel = self.mission_sel.saturating_add(1).min(7);
+                            self.mission_list.step(1);
                             self.play("ui_move");
                         }
-                        Key::Enter | Key::Space => return self.launch_mission(episode),
-                        Key::Escape => {
-                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
-                                self.menu_screen = t;
-                            }
+                        // `o\x04O\x01k` / `c\x04C\x01ancel` (GLUHIST-2/3).
+                        Key::Enter | Key::Space | Key::O => return self.launch_mission(episode),
+                        Key::Escape | Key::C => {
+                            self.menu_screen = MenuScreen::Episode;
                             self.play("ui_click");
                         }
                         _ => {}
@@ -8628,6 +9040,16 @@ impl App {
                 self.game_result = Some(won);
                 if won {
                     self.next_map = self.resolve_next_map();
+                    if let Some(mission) = self.map_mission(self.map_index) {
+                        let mut p = self.progress();
+                        p.record_win(mission);
+                        self.progress_book.set(&self.active_profile.clone(), p);
+                        if let Some(path) = progress_save_path() {
+                            if let Err(e) = self.progress_book.save(&path) {
+                                eprintln!("campaign progress not saved: {e}");
+                            }
+                        }
+                    }
                 }
                 self.play(if won { "victory" } else { "defeat" });
                 self.result_panel =
@@ -10819,7 +11241,7 @@ impl App {
     /// animated disk/portrait/mouse-over clips, the measured labels and the
     /// four command buttons drawn as text centred in their shipped rects.
     fn draw_episode(&mut self, fb: &mut Framebuffer) {
-        use galaxycraft::menu::{CampaignSlot, LabelAlign};
+        use galaxycraft::menu::CampaignSlot;
         let (cx, cy, cw, ch) = Self::content_rect(fb);
         let (scale, oxf) = galaxycraft::menu::campaign_scale(cw, ch);
         let ox = oxf as i32;
@@ -10936,134 +11358,151 @@ impl App {
                     }
                 }
             }
-            // Labels: race (bright hotkey cap + regular rest) and episode
-            // (lavender), centred on the measured ink centres.
+            // Labels (`t\x04T\x01erran\n\x02Episode I\x01`): both lines in
+            // `RC_BIGGERTEXT`; race green with the bright hotkey cap (the
+            // whole word bright on hover/selection), episode lavender.
             let (label_x, label_y) = slot.label;
             let hovered = hover == Some(i);
             let race_color = if hovered || selected_slot == i {
-                Rgb::new(196, 255, 124)
+                GLUE_BRIGHT
             } else {
-                Rgb::new(102, 227, 53)
+                GLUE_GREEN
             };
-            let race_bright = Rgb::new(208, 255, 131);
-            self.draw_campaign_label(
+            // Advance-centred on the `TEXTBOX` (or button) like the
+            // command buttons: 3.1 px left of the box centre on 130744.
+            let _ = label_x;
+            let center = 320.0 + slot.text_center() * 3.0 - 3.1;
+            self.glue_label(
                 fb,
                 slot.race,
-                label_x,
-                label_y,
-                slot.label_width.0,
-                16.0,
-                race_bright,
+                center,
+                label_y * 3.0,
                 race_color,
-                scale,
-                ox,
-                cy,
+                Some((0, GLUE_BRIGHT)),
+                true,
             );
-            self.draw_hd_text(
+            self.glue_label(
                 fb,
                 slot.episode,
-                label_x,
-                label_y + 21.0,
-                LabelAlign::Center,
-                slot.label_width.1,
-                16.0,
-                scale,
-                ox,
-                cy,
-                Rgb::new(162, 177, 245),
-                false,
-            );
-        }
-        // Bottom command buttons: text centred in the shipped control rects
-        // (measured ink centre and cap line).
-        for button in galaxycraft::menu::CAMPAIGN_BUTTONS {
-            let center = button.rect.0 + button.rect.2 / 2.0;
-            let top = button.rect.1 + button.rect.3 / 2.0 - 5.7;
-            self.draw_campaign_label(
-                fb,
-                button.label,
                 center,
-                top,
-                button.ink_width,
-                16.0,
-                Rgb::new(208, 255, 131),
-                Rgb::new(102, 227, 53),
-                scale,
-                ox,
-                cy,
-            );
-        }
-    }
-
-    /// Two-tone retail label: first glyph (the hotkey cap) uses the bright
-    /// Extended face, the rest the regular face, both centred on `center_x`.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_campaign_label(
-        &mut self,
-        fb: &mut Framebuffer,
-        text: &str,
-        center_x: f32,
-        top: f32,
-        width: f32,
-        font_ui: f32,
-        bright: Rgb,
-        normal: Rgb,
-        scale: f32,
-        ox: i32,
-        oy: i32,
-    ) {
-        use galaxycraft::menu::LabelAlign;
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return;
-        };
-        let rest = chars.as_str();
-        let first_string = first.to_string();
-        let advance = self.hd_advance_ui_at(&first_string, scale, true, font_ui);
-        let left = center_x - width / 2.0;
-        self.draw_hd_text(
-            fb,
-            &first_string,
-            left,
-            top,
-            LabelAlign::Left,
-            1.0,
-            font_ui,
-            scale,
-            ox,
-            oy,
-            bright,
-            true,
-        );
-        if !rest.is_empty() {
-            self.draw_hd_text(
-                fb,
-                rest,
-                left + advance,
-                top,
-                LabelAlign::Left,
-                (width - advance).max(1.0),
-                font_ui,
-                scale,
-                ox,
-                oy,
-                normal,
+                (label_y + 21.0) * 3.0,
+                GLUE_INFO,
+                None,
                 true,
             );
         }
+        // Bottom command buttons: text centred in the shipped control rects,
+        // the hotkey glyph bright (`l\x04L\x01oad Saved`, `rLoad
+        // \x04R\x01eplay`, `uPlay C\x04u\x01stom`, `c\x04C\x01ancel`).
+        for button in galaxycraft::menu::CAMPAIGN_BUTTONS {
+            // Advance centred 3.1 px left of the rect centre and ink centred
+            // 1.5 px above it: all four buttons of 130744 within 0.3 px.
+            let center = 320.0 + (button.rect.0 + button.rect.2 / 2.0) * 3.0 - 3.1;
+            let middle = (button.rect.1 + button.rect.3 / 2.0) * 3.0 - 1.5;
+            self.glue_ink_centered(
+                fb,
+                button.label,
+                center,
+                middle,
+                GLUE_BIGGER_PX,
+                GLUE_GREEN,
+                Some((button.hot, GLUE_BRIGHT)),
+                GlueFace::Bigger,
+            );
+        }
+        // Locked slot under the pointer: `<Race> Campaign\nincomplete`
+        // (`gluCmpgn-8/9/10`, CTEXT 200x50 at x 10 or 440).
+        let campaign_at =
+            |i: usize| galaxycraft::campaign_progress::Campaign::of_slot(expansion, i);
+        if let Some(i) = hover {
+            if let Some(caption) = self.progress().lock_caption(campaign_at(i)) {
+                let center = 320.0 + if i == 0 { 110.0 } else { 540.0 } * 3.0 - 3.0;
+                for (line, text) in caption.split('\n').enumerate() {
+                    let w = self.glue_measure(text, GLUE_BIG_PX, GlueFace::Big);
+                    self.glue_text(
+                        fb,
+                        center - w / 2.0,
+                        GLUE_CAPTION_BASE + line as f32 * GLUE_CAPTION_PITCH,
+                        text,
+                        GLUE_BIG_PX,
+                        GLUE_INFO,
+                        None,
+                    );
+                }
+            }
+        }
+        if let Some(campaign) = self.campaign_prompt {
+            self.draw_campaign_prompt(fb, campaign);
+        }
     }
 
-    /// [`Self::hd_advance_ui`] with an explicit em size.
-    fn hd_advance_ui_at(&mut self, text: &str, scale: f32, hover_face: bool, font_ui: f32) -> f32 {
-        let px = (font_ui * scale).max(7.0);
-        let use_hover = hover_face && self.ui_font_hover.is_some();
-        let font = if use_hover {
-            self.ui_font_hover.as_mut()
+    /// `glupokcancel` over the episode screen (live capture): the
+    /// `glue/palcs/pdpopup.dds` plate at (140,140) of the 640x480 dialog,
+    /// the `strRACE_ERR_*` text wrapped in its 340 px box and the Ok /
+    /// Cancel labels with their hotkey glyph bright.  Nothing is dimmed.
+    fn draw_campaign_prompt(
+        &mut self,
+        fb: &mut Framebuffer,
+        campaign: galaxycraft::campaign_progress::Campaign,
+    ) {
+        let (cx, cy, _cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let (x, y, w, h) = galaxycraft::menu::PROMPT_RECT;
+        let r = |v: f32| (v * 3.0 * k).round() as i32;
+        if let Some(art) = self.glue.as_ref().and_then(|g| g.campaign_prompt.as_ref()) {
+            art.draw_scaled(fb, cx + r(320.0 / 3.0 + x), cy + r(y), r(w), r(h));
         } else {
-            self.ui_font.as_mut()
-        };
-        font.map(|f| f.measure(text, px, 0.0) as f32 / scale)
-            .unwrap_or(text.chars().count() as f32 * 8.0)
+            fill_alpha_rect(fb, cx + r(320.0 / 3.0 + x), cy + r(y), r(w), r(h), 230);
+        }
+        let text = galaxycraft::campaign_progress::lock_prompt(campaign);
+        let box_w = galaxycraft::menu::PROMPT_TEXT.2 * 3.0;
+        let mut lines: Vec<String> = Vec::new();
+        for para in text.split('\n') {
+            let mut line = String::new();
+            for word in para.split(' ').filter(|w| !w.is_empty()) {
+                let candidate = if line.is_empty() {
+                    word.to_string()
+                } else {
+                    format!("{line} {word}")
+                };
+                if !line.is_empty()
+                    && self.glue_measure(&candidate, GLUE_BIG_PX, GlueFace::Big) > box_w
+                {
+                    lines.push(std::mem::take(&mut line));
+                    line = word.to_string();
+                } else {
+                    line = candidate;
+                }
+            }
+            lines.push(line);
+        }
+        for (i, line) in lines.iter().enumerate() {
+            self.glue_text(
+                fb,
+                GLUE_PROMPT_X,
+                GLUE_PROMPT_BASE + i as f32 * GLUE_PROMPT_PITCH,
+                line,
+                GLUE_BIG_PX,
+                GLUE_INFO,
+                None,
+            );
+        }
+        for (label, rect) in ["Ok", "Cancel"]
+            .into_iter()
+            .zip(galaxycraft::menu::PROMPT_BUTTONS)
+        {
+            self.glue_ink_centered(
+                fb,
+                label,
+                320.0 + (rect.0 + rect.2 / 2.0) * 3.0 + GLUE_SMALL_BUTTON_DX,
+                (rect.1 + rect.3 / 2.0) * 3.0 + GLUE_SMALL_BUTTON_DY,
+                GLUE_SMALL_BUTTON_PX,
+                GLUE_GREEN,
+                Some((0, GLUE_BRIGHT)),
+                GlueFace::Small,
+            );
+        }
+        let _ = cy;
     }
 
     /// Build the streamed campaign clips for the active campaign set.  The
@@ -11105,6 +11544,154 @@ impl App {
         self.campaign_layers = Some(layers);
     }
 
+    /// Glue text in 2560x1440 content units through the outline rasteriser
+    /// (`UiFont::draw_cef`, Eurostile regular): pen `x`, baseline `base`,
+    /// em size `ppem`; `hot` paints one glyph in another colour (the
+    /// `\x04..\x01` hotkey span of the shipped strings).
+    #[allow(clippy::too_many_arguments)]
+    fn glue_text(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: f32,
+        base: f32,
+        text: &str,
+        ppem: f32,
+        color: Rgb,
+        hot: Option<(usize, Rgb)>,
+    ) -> f32 {
+        self.glue_text_face(fb, x, base, text, ppem, color, hot, GlueFace::Big)
+    }
+
+    /// [`Self::glue_text`] in any glue face.
+    #[allow(clippy::too_many_arguments)]
+    fn glue_text_face(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: f32,
+        base: f32,
+        text: &str,
+        ppem: f32,
+        color: Rgb,
+        hot: Option<(usize, Rgb)>,
+        face: GlueFace,
+    ) -> f32 {
+        let (cx, _cy, _cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let font = match face {
+            GlueFace::Small => self.glue_font_small.as_mut().or(self.ui_font.as_mut()),
+            GlueFace::Big => self.glue_font.as_mut().or(self.ui_font.as_mut()),
+            GlueFace::Bigger => self.glue_font_ext.as_mut().or(self.ui_font_hover.as_mut()),
+        };
+        let Some(font) = font else {
+            return x;
+        };
+        let mut pen = cx as f32 + x * k;
+        let base = base * k;
+        let px = ppem * k;
+        let tr = px * GLUE_TRACKING;
+        let mut prev: Option<char> = None;
+        for (i, ch_) in text.char_indices() {
+            if let Some(p) = prev {
+                pen += font.kerning(p, ch_, px);
+            }
+            prev = Some(ch_);
+            let c = match hot {
+                Some((h, hc)) if text[..i].chars().count() == h => hc,
+                _ => color,
+            };
+            let glyph = &text[i..i + ch_.len_utf8()];
+            pen = font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c) + tr;
+        }
+        (pen - cx as f32) / k
+    }
+
+    /// Width of glue text in content units.
+    fn glue_measure(&self, text: &str, ppem: f32, face: GlueFace) -> f32 {
+        let Some(font) = self.glue_face(face) else {
+            return 0.0;
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let kern: f32 = chars
+            .windows(2)
+            .map(|w| font.kerning(w[0], w[1], ppem))
+            .sum();
+        font.measure_cef(text, ppem, ppem * GLUE_TRACKING) + kern
+    }
+
+    fn glue_face(&self, face: GlueFace) -> Option<&galaxycraft::text::UiFont> {
+        match face {
+            GlueFace::Small => self.glue_font_small.as_ref().or(self.ui_font.as_ref()),
+            GlueFace::Big => self.glue_font.as_ref().or(self.ui_font.as_ref()),
+            GlueFace::Bigger => self.glue_font_ext.as_ref().or(self.ui_font_hover.as_ref()),
+        }
+    }
+
+    /// Glue button label (`FB_HTEXTCENTER | FB_VTEXTCENTER`): the advance
+    /// width is centred on `cx` and the ink box on `cy` (content px), which
+    /// is how descenders lift `Play Custom` / `Load Replay` on 130744.
+    #[allow(clippy::too_many_arguments)]
+    fn glue_ink_centered(
+        &mut self,
+        fb: &mut Framebuffer,
+        text: &str,
+        cx: f32,
+        cy: f32,
+        px: f32,
+        color: Rgb,
+        hot: Option<(usize, Rgb)>,
+        face: GlueFace,
+    ) {
+        let Some((x0, x1, top, bottom)) = self
+            .glue_face(face)
+            .and_then(|f| f.ink_bounds_cef(text, px, px * GLUE_TRACKING))
+        else {
+            return;
+        };
+        let _ = (x0, x1);
+        let advance = self.glue_measure(text, px, face);
+        self.glue_text_face(
+            fb,
+            cx - advance / 2.0,
+            cy - (top + bottom) / 2.0,
+            text,
+            px,
+            color,
+            hot,
+            face,
+        );
+    }
+
+    /// Glue label whose advance is centred on `center` with its cap line at
+    /// `cap_top` (content px): the race / episode lines of the slots.
+    #[allow(clippy::too_many_arguments)]
+    fn glue_label(
+        &mut self,
+        fb: &mut Framebuffer,
+        text: &str,
+        center: f32,
+        cap_top: f32,
+        color: Rgb,
+        hot: Option<(usize, Rgb)>,
+        extended: bool,
+    ) {
+        let (px, face) = if extended {
+            (GLUE_BIGGER_PX, GlueFace::Bigger)
+        } else {
+            (GLUE_BIG_PX, GlueFace::Big)
+        };
+        let advance = self.glue_measure(text, px, face);
+        self.glue_text_face(
+            fb,
+            center - advance / 2.0,
+            cap_top + px * GLUE_CAP,
+            text,
+            px,
+            color,
+            hot,
+            face,
+        );
+    }
+
     /// Retail `Select starting mission` modal (`glue/campaign/phist.dds`):
     /// the shipped plate already carries the metal frame, the list box and
     /// the Ok/Cancel buttons; only the title and the mission rows are text.
@@ -11112,7 +11699,6 @@ impl App {
         // Episode select stays behind the modal (reference 131132): the
         // retail client does not dim it (measured gain 1.000).
         self.draw_episode(fb);
-        use galaxycraft::menu::LabelAlign;
         let (cx, cy, _cw, ch) = Self::content_rect(fb);
         let k = ch as f32 / 1440.0;
         let px = |x: f32| cx + (x * k).round() as i32;
@@ -11141,94 +11727,63 @@ impl App {
             );
             fb.rect_outline(px(708.0), py(342.0), pw(1140.0), pw(753.0), CSS_INNER);
         }
-        // Title ink measured at (746..1086, 386..414) on the reference.
-        let (scale, oxf) = galaxycraft::menu::campaign_scale(_cw, ch);
-        let ox = oxf as i32;
-        self.draw_hd_text(
+        // Title (`GLUHIST-1`, LTEXT `RC_SMALLTEXT`): BlizzardGlobal in the
+        // info colour, fitted on 131132 (pen 744.8, baseline 409.5).
+        self.glue_text_face(
             fb,
+            744.8,
+            409.5,
             "Select starting mission:",
-            (746.0 - 320.0) / 3.0,
-            386.0 / 3.0,
-            LabelAlign::Left,
-            341.0 / 3.0,
-            11.0,
-            scale,
-            ox,
-            cy,
-            Rgb::new(162, 177, 245),
-            false,
+            GLUE_SMALL_PX,
+            GLUE_INFO,
+            None,
+            GlueFace::Small,
         );
-        let ep = (self.episode_sel + 1) as u8;
-        let mut lines: Vec<String> = Vec::new();
-        if ep == 1 {
-            lines = [
-                "Cinematic: Wasteland Patrol",
-                "3. Desperate Alliance",
-                "4. The Jacobs Installation",
-                "5. Revolution",
-                "Cinematic: The Downing of Norad II",
-                "6. Norad II",
-                "7. The Trump Card",
-                "8. The Big Push",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        } else {
-            for m in self.maps.iter() {
-                if let Some(c) = &m.campaign {
-                    let num = galaxycraft::menu::episode_number(&c.episode).unwrap_or(0);
-                    if num == ep {
-                        lines.push(format!("{}. {}", lines.len() + 1, m.name));
-                        if lines.len() >= 10 {
-                            break;
-                        }
-                    }
-                }
+        // Rows: the profile's history (`gluhist`), 8 visible from the
+        // scroll position; the selected entry is the bright glue green.
+        let campaign = match self.menu_screen {
+            MenuScreen::Mission { episode } => {
+                galaxycraft::campaign_progress::Campaign::from_episode(episode)
             }
+            _ => None,
         }
-        if lines.is_empty() {
-            lines.push("(no missions)".to_string());
-        }
-        // Mission rows: ink top 478 and a 57 px pitch at 2560x1440.
-        for (i, line) in lines.iter().take(8).enumerate() {
-            let top = (478.0 + i as f32 * 57.0) / 3.0;
-            let _sel = i == self.mission_sel.min(lines.len().saturating_sub(1));
-            let color = Rgb::new(102, 227, 53);
-            // Retail rows sit at the natural 16 UI px advance (measured
-            // 558 px for row 1); the old label path compressed them.
-            let natural = self.hd_advance_ui(line, scale, false);
-            self.draw_hd_text(
+        .unwrap_or(galaxycraft::campaign_progress::Campaign::Terran);
+        let history = self.progress().history(campaign);
+        let list = self.mission_list;
+        for row in 0..galaxycraft::campaign_progress::MissionList::ROWS {
+            let idx = list.top + row;
+            let Some(entry) = history.get(idx) else {
+                break;
+            };
+            let color = if idx == list.sel {
+                Rgb::new(208, 255, 131)
+            } else {
+                Rgb::new(102, 227, 53)
+            };
+            self.glue_text(
                 fb,
-                line,
-                (751.0 - 320.0) / 3.0,
-                top,
-                LabelAlign::Left,
-                natural,
-                16.0,
-                scale,
-                ox,
-                cy,
+                GLUE_ROW_X,
+                GLUE_ROW_BASE + row as f32 * 57.0,
+                entry.label,
+                GLUE_BIG_PX,
                 color,
-                false,
+                None,
             );
         }
-        // Ok/Cancel ink measured at y 1003..1029, centred in the shipped
-        // button rects (910..1265 and 1300..1655 at 2560x1440).
-        for (label, center_x, width) in [("Ok", 1090.0, 40.0), ("Cancel", 1478.0, 106.0)] {
-            let natural = self.hd_advance_ui(label, scale, false);
-            self.draw_campaign_label(
+        draw_mission_scrollbar(fb, cx, k, list.thumb());
+        // Ok/Cancel (`o\x04O\x01k`, `c\x04C\x01ancel`): plain FLCBTN labels
+        // centred in the `gluhist` rects (65,210) / (195,210), 123x29, of
+        // the 380x251 dialog at (708,342).
+        for (label, bx) in [("Ok", 65.0f32), ("Cancel", 195.0)] {
+            self.glue_ink_centered(
                 fb,
                 label,
-                (center_x - 320.0) / 3.0,
-                1003.0 / 3.0,
-                natural.max(width / 3.0 * 0.8),
-                12.5,
-                Rgb::new(208, 255, 131),
-                Rgb::new(102, 227, 53),
-                scale,
-                ox,
-                cy,
+                708.0 + (bx + 61.5) * 3.0 + GLUE_SMALL_BUTTON_DX,
+                342.0 + (210.0 + 14.5) * 3.0 + GLUE_SMALL_BUTTON_DY,
+                GLUE_SMALL_BUTTON_PX,
+                GLUE_GREEN,
+                Some((0, GLUE_BRIGHT)),
+                GlueFace::Small,
             );
         }
     }
@@ -14563,6 +15118,33 @@ mod menu_frame_tests {
                 "stale pixel at ({x},{y}) in the menu frame"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod mission_scrollbar_tests {
+    use super::{draw_mission_scrollbar, Framebuffer};
+
+    /// Live capture 21 (list at the top): thumb rows 519..560 are #ff0000,
+    /// the track at y 700 is #6b0000 at x 1771, the arrow apex is red.
+    #[test]
+    fn scrollbar_matches_the_live_capture_geometry() {
+        let mut fb = Framebuffer::new(2560, 1440);
+        draw_mission_scrollbar(&mut fb, 0, 1.0, 0.0);
+        let red = |x: i32, y: i32| fb.get(x, y).0 >> 16 & 0xff;
+        assert!(red(1790, 521) > 240, "thumb top stroke");
+        assert!(red(1794, 540) < 20, "thumb interior is hollow");
+        assert!(
+            red(1771, 700) > 90 && red(1771, 700) < 120,
+            "dark track box"
+        );
+        assert!(red(1794, 465) > 200, "up arrow apex");
+        assert!(red(1794, 925) > 200, "down arrow apex");
+        // Last page: the thumb moves to 834..876 and leaves the top empty.
+        let mut end = Framebuffer::new(2560, 1440);
+        draw_mission_scrollbar(&mut end, 0, 1.0, 1.0);
+        assert!((end.get(1790, 836).0 >> 16 & 0xff) > 240);
+        assert!((end.get(1790, 521).0 >> 16 & 0xff) < 20);
     }
 }
 

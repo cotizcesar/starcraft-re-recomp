@@ -61,15 +61,41 @@ PHASES = {
     ),
     # Campaign screens: the disks, portraits and mouse-over clips are loop
     # animations; each capture pinned the phase measured by sweeping all 36
-    # disk frames (1/15 s) and the portrait/On loops.
-    "episode": (2.0, {"zerg": 0.6667, "terr": 4.2667, "prot": 4.2}),
-    "episode-hover-terran": (0.0, {"terron": 0.3333}),
-    "episode-hover-zerg": (2.3333, {"zergon": 0.0667}),
-    "episode-hover-protoss": (2.0667, {"proton": 1.4}),
-    "episode-expansion-hover-protoss": (1.8, {"xproton": 0.6}),
-    "episode-expansion-hover-terran": (0.0667, {"xterron": 0.0667}),
-    "episode-expansion-hover-zerg": (0.0667, {"xzergon": 0.0667}),
-    "mission": (2.3333, {}),
+    # disk frames (1/15 s) and the portrait/On loops.  Entries with one
+    # phase per clip come from scripts/campaign_phase_sweep.py (coordinate descent per
+    # clip, 1/10.5 s steps over each loop, scored on the slot, 2026-11-02).
+    "episode": (
+        2.0,
+        {"zerg": 4.0952, "terr": 4.2857, "prot": 1.7143, "diskzerg": 1.8095, "diskterr": 2.0952, "diskprot": 2.0},
+    ),
+    "episode-hover-terran": (
+        0.0,
+        {"terron": 0.381, "diskzerg": 2.381, "zerg": 4.0, "diskterr": 0.4762, "terr": 4.7619, "diskprot": 2.2857, "prot": 1.9048},
+    ),
+    "episode-hover-zerg": (
+        2.3333,
+        {"zergon": 0.0952, "diskzerg": 1.9048, "zerg": 0.6667, "diskterr": 0.8571, "terr": 2.0952, "diskprot": 2.381, "prot": 1.3333},
+    ),
+    "episode-hover-protoss": (
+        2.0667,
+        {"proton": 1.4286, "diskzerg": 0.2857, "zerg": 2.6667, "diskterr": 0.1905, "terr": 2.7619, "diskprot": 1.0476, "prot": 1.8095},
+    ),
+    "episode-expansion-hover-protoss": (
+        1.8,
+        {"xproton": 0.5714, "diskxterr": 0.7619, "xterr": 3.5238, "diskxprot": 2.0952, "xprot": 4.4762, "diskxzerg": 1.8095, "xzerg": 4.1905},
+    ),
+    "episode-expansion-hover-terran": (
+        0.0667,
+        {"xterron": 0.0952, "diskxterr": 2.1905, "xterr": 1.5238, "diskxprot": 1.5238, "xprot": 2.381, "diskxzerg": 2.381, "xzerg": 1.9048},
+    ),
+    "episode-expansion-hover-zerg": (
+        0.0667,
+        {"xzergon": 0.0952, "diskxterr": 2.0, "xterr": 3.2381, "diskxprot": 1.3333, "xprot": 4.5714, "diskxzerg": 2.381, "xzerg": 3.619},
+    ),
+    "mission": (
+        2.3333,
+        {"diskzerg": 1.7143, "zerg": 4.0952, "diskterr": 2.381, "terr": 4.7619, "diskprot": 2.381, "prot": 2.1905},
+    ),
     # Options: the CEF modal sits over the running menu, so its clips are
     # visible under the dim.  Phases from a 1/8 s sweep (0..14.4 s) of each
     # clip's own area against the five captures (2026-11-02).

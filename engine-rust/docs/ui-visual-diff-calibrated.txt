@@ -1,12 +1,12 @@
 ref      screen                mean   >30 px status
-130840   episode-expansion-hover-zerg    3.74    3.22% PASS
-130804   episode-hover-protoss    3.30    2.55% PASS
-130757   episode-hover-zerg    3.24    2.57% PASS
-131132   mission               3.11    2.69% PASS
-130832   episode-expansion-hover-terran    2.91    2.15% PASS
-130750   episode-hover-terran    2.88    2.18% PASS
-130824   episode-expansion-hover-protoss    2.76    2.11% PASS
-130744   episode               2.27    1.56% PASS
+130840   episode-expansion-hover-zerg    1.92    1.43% PASS
+130804   episode-hover-protoss    1.85    1.24% PASS
+130750   episode-hover-terran    1.83    1.28% PASS
+130757   episode-hover-zerg    1.80    1.26% PASS
+131132   mission               1.78    1.36% PASS
+130832   episode-expansion-hover-terran    1.61    1.10% PASS
+130824   episode-expansion-hover-protoss    1.60    1.13% PASS
+130744   episode               1.38    0.81% PASS
 115959   hotkeys-terran-scv-move-unbound    1.12    0.90% PASS
 120018   hotkeys-reset-dialog    1.08    0.50% PASS
 115943   hotkeys-terran-scv-move    1.07    0.79% PASS
@@ -23,13 +23,13 @@ ref      screen                mean   >30 px status
 131116   gametype              0.28    0.06% PASS
 130926   menu-hover-exit       0.24    0.23% PASS
 130637   menu                  0.10    0.08% PASS
+130942   options-video         0.10    0.08% PASS
 130712   menu-hover-multi      0.09    0.08% PASS
 130704   menu-hover-single     0.09    0.06% PASS
+130938   options-sound         0.05    0.04% PASS
+130949   options-game          0.05    0.03% PASS
 130734   registry              0.00    0.00% PASS
 130933   options-speed         0.00    0.00% PASS
-130938   options-sound         0.00    0.00% PASS
-130942   options-video         0.00    0.00% PASS
-130949   options-game          0.00    0.00% PASS
 130954   options-network       0.00    0.00% PASS
 131005   collections           0.00    0.00% PASS
 131015   hotkeys-terran        0.00    0.00% PASS

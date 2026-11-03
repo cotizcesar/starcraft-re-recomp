@@ -407,6 +407,19 @@ pub struct CampaignSlot {
     pub label: (f32, f32),
     /// Measured ink widths of the race and episode labels (dialog pixels).
     pub label_width: (f32, f32),
+    /// `TEXTBOX` child `[x0, x1]` (inclusive, relative to the button) that
+    /// centres the label; `None` centres it in the button rect.
+    pub textbox: Option<(f32, f32)>,
+}
+
+impl CampaignSlot {
+    /// Horizontal centre of the label text in dialog pixels.
+    pub fn text_center(&self) -> f32 {
+        match self.textbox {
+            Some((x0, x1)) => self.button.0 + (x0 + x1 + 1.0) / 2.0,
+            None => self.button.0 + self.button.2 / 2.0,
+        }
+    }
 }
 
 /// Club portrait opacity before hover (the `FLC_FADED` state).
@@ -425,6 +438,7 @@ pub const CAMPAIGN_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode II",
         label: (113.33, 335.33),
         label_width: (44.67, 84.67),
+        textbox: None,
     },
     CampaignSlot {
         button: (162.0, 4.0, 356.0, 278.0),
@@ -436,6 +450,7 @@ pub const CAMPAIGN_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode I",
         label: (318.33, 245.33),
         label_width: (62.33, 80.67),
+        textbox: Some((105.0, 210.0)),
     },
     CampaignSlot {
         button: (391.0, 7.0, 238.0, 364.0),
@@ -447,6 +462,7 @@ pub const CAMPAIGN_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode III",
         label: (540.0, 328.33),
         label_width: (77.0, 89.0),
+        textbox: Some((93.0, 205.0)),
     },
 ];
 
@@ -466,6 +482,7 @@ pub const CAMPAIGN_X_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode V",
         label: (123.17, 335.33),
         label_width: (62.67, 90.67),
+        textbox: None,
     },
     CampaignSlot {
         button: (220.0, 4.0, 356.0, 297.0),
@@ -477,6 +494,7 @@ pub const CAMPAIGN_X_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode IV",
         label: (327.33, 260.33),
         label_width: (77.0, 94.67),
+        textbox: Some((45.0, 170.0)),
     },
     CampaignSlot {
         button: (391.0, 7.0, 238.0, 364.0),
@@ -488,6 +506,7 @@ pub const CAMPAIGN_X_SLOTS: [CampaignSlot; 3] = [
         episode: "Episode VI",
         label: (539.17, 328.33),
         label_width: (44.67, 93.67),
+        textbox: Some((93.0, 205.0)),
     },
 ];
 
@@ -502,6 +521,9 @@ pub struct CampaignButton {
     /// Measured ink width in dialog pixels (320/349/334/185 screen px on
     /// capture 130744).
     pub ink_width: f32,
+    /// Index of the hotkey glyph drawn bright (`\x04..\x01` span of the
+    /// shipped `rc3.json` string).
+    pub hot: usize,
 }
 
 pub const CAMPAIGN_BUTTONS: [CampaignButton; 4] = [
@@ -509,21 +531,25 @@ pub const CAMPAIGN_BUTTONS: [CampaignButton; 4] = [
         label: "Load Saved",
         rect: (243.0, 368.0, 189.0, 20.0),
         ink_width: 106.7,
+        hot: 0,
     },
     CampaignButton {
         label: "Play Custom",
         rect: (226.0, 404.0, 206.0, 20.0),
         ink_width: 116.3,
+        hot: 6,
     },
     CampaignButton {
         label: "Load Replay",
         rect: (238.0, 443.0, 194.0, 20.0),
         ink_width: 111.3,
+        hot: 5,
     },
     CampaignButton {
         label: "Cancel",
         rect: (470.0, 404.0, 158.0, 20.0),
         ink_width: 61.7,
+        hot: 0,
     },
 ];
 
@@ -679,7 +705,8 @@ pub fn back_destination(screen: &MenuScreen) -> Option<MenuScreen> {
         MenuScreen::Main => None,
         MenuScreen::Registry => Some(MenuScreen::Main),
         MenuScreen::GameType => Some(MenuScreen::Main),
-        MenuScreen::Episode => Some(MenuScreen::GameType),
+        // Live client: Cancel on the campaign screen returns to the Registry.
+        MenuScreen::Episode => Some(MenuScreen::Registry),
         MenuScreen::Mission { .. } => Some(MenuScreen::Episode),
         MenuScreen::SavedGames | MenuScreen::Replays => Some(MenuScreen::Episode),
         MenuScreen::Lan => Some(MenuScreen::GameType),
@@ -721,8 +748,60 @@ pub type HitRect = (f32, f32, f32, f32);
 /// `Select starting mission` modal: Ok and Cancel bays of `phist.dds`.
 pub const MISSION_BUTTONS: [HitRect; 2] =
     [(910.0, 972.0, 355.0, 86.0), (1300.0, 972.0, 355.0, 86.0)];
-/// Mission list rows (8 lines, 57 px pitch, first ink top at 478).
-pub const MISSION_ROWS: HitRect = (748.0, 470.0, 1062.0, 8.0 * 57.0);
+/// Mission list rows (8 lines, 57 px pitch, first ink top at 478), left of
+/// the scrollbar column (x 1771..1819 on the live client).
+pub const MISSION_ROWS: HitRect = (748.0, 470.0, 1022.0, 8.0 * 57.0);
+
+/// Mission-list scrollbar, measured on the live client (2560x1440 content
+/// px): up arrow y 459..510, track box 516..876, down arrow 882..930,
+/// 42 px octagonal thumb whose top runs from 519 (top) to 834 (last page).
+pub const MISSION_SCROLL_X: (f32, f32) = (1771.0, 1819.0);
+pub const MISSION_SCROLL_UP: (f32, f32) = (459.0, 511.0);
+pub const MISSION_SCROLL_DOWN: (f32, f32) = (881.0, 931.0);
+pub const MISSION_THUMB_TOP: (f32, f32) = (519.0, 834.0);
+pub const MISSION_THUMB_H: f32 = 42.0;
+
+/// Part of the mission scrollbar under a content-box point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollHit {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Thumb,
+}
+
+/// Hit-test the mission scrollbar; `thumb` is the scroll fraction 0..=1.
+pub fn mission_scrollbar_hit(x: f32, y: f32, thumb: f32) -> Option<ScrollHit> {
+    if x < MISSION_SCROLL_X.0 || x >= MISSION_SCROLL_X.1 {
+        return None;
+    }
+    if y >= MISSION_SCROLL_UP.0 && y < MISSION_SCROLL_UP.1 {
+        return Some(ScrollHit::Up);
+    }
+    if y >= MISSION_SCROLL_DOWN.0 && y < MISSION_SCROLL_DOWN.1 {
+        return Some(ScrollHit::Down);
+    }
+    if y < MISSION_SCROLL_UP.1 || y >= MISSION_SCROLL_DOWN.0 {
+        return None;
+    }
+    let top = MISSION_THUMB_TOP.0 + (MISSION_THUMB_TOP.1 - MISSION_THUMB_TOP.0) * thumb;
+    Some(if y < top {
+        ScrollHit::PageUp
+    } else if y < top + MISSION_THUMB_H {
+        ScrollHit::Thumb
+    } else {
+        ScrollHit::PageDown
+    })
+}
+
+/// `glupokcancel` (360x200) centred in the 640x480 campaign dialog: Ok and
+/// Cancel bays (17,159) / (186,159), 158x29, in dialog pixels.
+pub const PROMPT_RECT: (f32, f32, f32, f32) = (140.0, 140.0, 360.0, 200.0);
+pub const PROMPT_BUTTONS: [(f32, f32, f32, f32); 2] =
+    [(157.0, 299.0, 158.0, 29.0), (326.0, 299.0, 158.0, 29.0)];
+/// Body text box of the prompt (`gluPOkCancel-2`, `RC_BIGTEXT`).
+pub const PROMPT_TEXT: (f32, f32, f32, f32) = (150.0, 150.0, 340.0, 140.0);
 
 /// Create/Replays/Lobby shell: Ok and Cancel bays of `pok`/`pcancel`.
 pub const CREATE_BUTTONS: [HitRect; 2] =
@@ -1244,9 +1323,10 @@ mod tests {
             back_destination(&MenuScreen::Mission { episode: 1 }),
             Some(MenuScreen::Episode)
         );
+        // Live client (2026-11-02): campaign Cancel returns to the Registry.
         assert_eq!(
             back_destination(&MenuScreen::Episode),
-            Some(MenuScreen::GameType)
+            Some(MenuScreen::Registry)
         );
     }
 
@@ -1299,6 +1379,38 @@ mod tests {
     }
 
     #[test]
+    fn mission_scrollbar_hits_follow_the_live_geometry() {
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 480.0, 0.0),
+            Some(ScrollHit::Up)
+        );
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 906.0, 0.0),
+            Some(ScrollHit::Down)
+        );
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 540.0, 0.0),
+            Some(ScrollHit::Thumb)
+        );
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 700.0, 0.0),
+            Some(ScrollHit::PageDown)
+        );
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 700.0, 1.0),
+            Some(ScrollHit::PageUp)
+        );
+        assert_eq!(
+            mission_scrollbar_hit(1794.0, 850.0, 1.0),
+            Some(ScrollHit::Thumb)
+        );
+        // Rows end before the scrollbar column; outside it nothing hits.
+        assert!(MISSION_ROWS.0 + MISSION_ROWS.2 <= MISSION_SCROLL_X.0);
+        assert_eq!(mission_scrollbar_hit(1700.0, 700.0, 0.0), None);
+        assert_eq!(mission_scrollbar_hit(1794.0, 440.0, 0.0), None);
+    }
+
+    #[test]
     fn menu_flow_round_trip_matches_the_capture_sequence() {
         // Main -> Single Player opens `Select Game Type` in single mode.
         assert_eq!(gametype_followup(false), GameTypeFollowup::Registry);
@@ -1307,13 +1419,15 @@ mod tests {
         // Original starts at Episode I, Expansion at Episode IV.
         assert_eq!(episode_start(false), 0);
         assert_eq!(episode_start(true), 3);
-        // Episode <-> Mission modal, then back to Game Type and the main menu.
+        // Episode <-> Mission modal, then back to the Registry and the main
+        // menu (live client: campaign Cancel -> Registry, Registry Cancel ->
+        // Main).
         assert_eq!(
             back_destination(&MenuScreen::Mission { episode: 1 }),
             Some(MenuScreen::Episode)
         );
         let mut screen = MenuScreen::Episode;
-        for want in [MenuScreen::GameType, MenuScreen::Main] {
+        for want in [MenuScreen::Registry, MenuScreen::Main] {
             screen = back_destination(&screen).expect("back path");
             assert_eq!(screen, want);
         }

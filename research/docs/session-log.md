@@ -3451,3 +3451,60 @@ Options fuera de los rectángulos de clip (el reloj real de los clips hace
 que dos ejecuciones difieran 0.041).  `cargo test` 342/342, clippy 0,
 `ui_diff.py` 39/39, puerta 19/19 cruda y calibrada, walkthrough PASS.
 Prueba: `engine-rust/docs/options-1to1-proof.png`.
+
+## 2026-11-03 (71) — Campaña y «Select starting mission» 1:1 (comportamiento)
+
+Objetivo del usuario: que el menú de campaña funcione exactamente como el
+original y dejar pruebas del objetivo anterior (Options) y de este en
+`engine-rust/docs/new_screenshots/`.
+
+**Evidencia.**  REA/dump: tabla `MenuEntry` en `work/sc_mem_menu_pe.exe`
+@ `0x952c88` (registros de 8 B: cadena gluHist, misión mapdata,
+cinemática, raza, oculta).  CASC: `rc3.json` (etiquetas con hotkey
+`\x04..\x01`), `network.json` (`strRACE_ERR_*`), `gluhist.json`,
+`arr/mapdata.tbl`, `glue/palcs/pdpopup.dds`, `font/bl.ttf`.  Cliente vivo
+64 bits (uinput + spectacle, perfiles REA y LinKa): bloqueo con leyenda y
+prompt sin oscurecer; sin historial arranca directa; lista abre arriba con
+la entrada 0; flechas/rueda no mueven la selección; Arriba/Abajo la traen a
+la vista; Cancel de campaña → Registry → Main.  Detalle:
+`research/analysis/investigations/episode-flow-re.md`.
+
+**Falsaciones.**  (1) Cancel de campaña → GameType: falso (→ Registry).
+(2) El hotkey es la primera letra: falso (`Play C`**u**`stom`, `Load
+`**R**`eplay`).  (3) El glue usa el rasterizado CEF: falso, usa los TTF
+con `kern`; el título y los botones lisos son BlizzardGlobal.  (4) Los
+renders headless son deterministas: falso bajo carga — un clip congelado
+esperaba 2 s y dibujaba la capa vacía (1 de 3 renders difería en 108 717
+px); ahora bloquea hasta el primer frame (`FROZEN_CLIP_WAIT`), 8 renders
+concurrentes idénticos.  (5) La prueba `docs/options-1to1-proof.png` citada
+en (70) no estaba en disco; la sustituyen las hojas de `new_screenshots`.
+
+**Código.**  `campaign_progress.rs` (tabla, progreso `GCPR` por perfil,
+lista, bloqueo; 10 tests), scrollbar y prompt en `menu.rs` (+ test de
+hit), manejadores y dibujo glue en `sc_view.rs` (+ test del scrollbar),
+caché retail v10.  Scripts: `campaign_phase_sweep.py` (fases por clip),
+`make_proof_sheets.py` (hojas retail | sc_view | diff×4 + `REPORT.md`);
+`menu_walkthrough.py` gana la sección campaña y trata GameType como
+pantalla sobre el menú vivo (tope de huella 30 %).
+
+**Resultado** (crudo): 130744 2.27→1.38, 130750 2.88→1.83, 130757
+3.24→1.80, 130804 3.30→1.85, 130824 2.76→1.60, 130832 2.91→1.61, 130840
+3.74→1.92, 131132 3.11→1.78; Options 0.71–1.08.  `cargo test` 354/354,
+clippy 0, `ui_diff.py` 39/39, `ui_visual_diff.py` 43/43 crudo y
+calibrado, walkthrough PASS (140 pasos).  Las PNG de prueba son locales
+(`*.png` gitignored por copyright); `REPORT.md` se versiona.
+
+Límites: victoria → progreso verificado solo por test (no se juegan
+misiones en el retail); arrastre del pulgar del scrollbar no implementado
+(no observado en vivo).
+
+Adenda (71, mismo día): (6) falsado «el slot pulsado sigue en hover bajo el
+modal» — en la captura viva 21 Terran queda apagado bajo la lista y Zerg
+bajo el prompt (el modal captura el puntero); `select_campaign` /
+`enter_campaign` limpian `episode_hover`.  (7) El walkthrough comparaba
+frames con los clips a reloj real: pasaba o no según lo que el decodificador
+tuviera listo.  Ahora el guion y las capturas de comparación fijan
+`--menu-at 2.0` (`WALK_MENU_AT`): 0 píxeles transitorios en Options y
+GameType, PASS 140 pasos.  Re-verificado tras ambos cambios: `cargo test`
+354/354, clippy 0, `ui_diff` 39/39, `ui_visual_diff` 43/43 crudo y
+calibrado, hojas de prueba regeneradas.

@@ -41,8 +41,9 @@ REF_DIR = ROOT / "engine-rust/docs/original_screenshots"
 # (race dropdowns) -> Main -> Options (five tabs, sliders, checks, Restore,
 # Ok) -> Main -> Collections (cells, Ok) -> Main -> Credits -> Main -> Hotkeys
 # (unit/action selection, rebind, restore dialog, race tabs) -> Main -> Single
-# Player -> GameType -> Registry -> Episode -> Mission -> Episode -> Saved ->
-# Episode -> Replays -> Episode -> Main.
+# Player -> GameType -> Registry -> Episode (locked-campaign prompt) ->
+# Mission (scroll/wheel/keys) -> Episode -> Saved -> Episode -> Replays ->
+# Episode -> Registry -> Main.
 SCRIPT = ",".join(
     [
         "move:700:700", "click",            # Multiplayer
@@ -104,8 +105,15 @@ SCRIPT = ",".join(
         "move:1103:618", "click",           # Game Type: Original
         "move:800:390", "click",            # Registry: select LinKa
         "move:1869:1178", "click",          # Ok -> Episode
-        "move:1262:666", "click",           # Episode slot -> Mission
-        "move:1200:670", "click",           # Mission row
+        "move:660:700",                     # hover locked Zerg: caption
+        "click",                            # locked -> strRACE_ERR_ZERG prompt
+        "move:1535:940", "click",           # prompt Cancel
+        "fixture:progress:1=10",            # LinKa: Terran up to New Gettysburg
+        "move:1262:666", "click",           # Terran -> Mission (13 entries)
+        "move:1794:906", "click",           # scrollbar down arrow: top 1
+        "wheel:2",                          # wheel: top 3, selection kept
+        "key:Down",                         # selection 1, scrolled into view
+        "move:1200:670", "click",           # Mission row 3 (entry 4)
         "move:1477:1015", "click",          # Cancel -> Episode
         "move:1332:1134", "click",          # Load Saved -> Saved Games
         "move:600:380", "click",            # saved row
@@ -113,7 +121,8 @@ SCRIPT = ",".join(
         "move:1325:1359", "click",          # Load Replay -> Replays
         "move:700:483", "click",            # replay row
         "move:1964:1288", "click",          # Cancel -> Episode
-        "move:1967:1242", "click",          # Cancel -> Main
+        "move:1967:1242", "click",          # Cancel -> Registry (live client)
+        "move:1869:1316", "click",          # Registry Cancel -> Main
     ]
 )
 
@@ -128,7 +137,7 @@ SCREEN_SHOTS = {
     "Hotkeys": "hotkeys-terran",
     "Registry": "registry",
     "Episode": "episode",
-    "Mission": "mission",
+    "Mission": "mission-live",
     "SavedGames": "saved",
     "Replays": "replays",
 }
@@ -137,7 +146,7 @@ EXPECTED_TRANSITIONS = [
     "GameType", "Lan", "GameType", "Lobby", "Main", "Options", "Main", "Collections", "Main",
     "Credits", "Main", "Hotkeys", "Main", "GameType", "Registry", "Episode",
     "Mission", "Episode", "SavedGames", "Episode", "Replays", "Episode",
-    "Main",
+    "Registry", "Main",
 ]
 
 CUE_PATHS = {
@@ -174,7 +183,11 @@ def shots_by_screen(rows: list[dict]) -> dict[str, int]:
 # Single/Multi/Exit clips under its modal, 130933..130954): their frame is
 # compared outside the pixels the clip phase can change, because the phase
 # depends on the wall-clock time the walkthrough reaches the screen.
-LIVE_MENU_SCREENS = {"Options"}
+# Screens drawn over the live main-menu backdrop (wall-clock clips).
+# Value: largest share of the frame the clip phase may change.  The Options
+# plate hides most of the backdrop; the small Game Type dialog leaves the
+# Single/Multi/Exit clips almost fully visible.
+LIVE_MENU_SCREENS = {"Options": 0.20, "GameType": 0.30}
 # One sample per second over the 14.4 s Single/Multi loop (Exit is 10 s).
 CLIP_PHASES = tuple(f"{t:.1f}" for t in range(15))
 # flc.json clip rectangles (Single/Multi/Exit and their On variants) at
@@ -183,11 +196,19 @@ CLIP_PHASES = tuple(f"{t:.1f}" for t in range(15))
 CLIP_RECTS = ((260, 0, 1535, 600), (368, 555, 1370, 1365), (1499, 948, 2111, 1440))
 
 
+# Clip clock of the walkthrough and of every comparison shot.  Without it the
+# menu/campaign clips show whatever the decoder had ready at that step, so a
+# frame could match or not depending on machine load.
+WALK_MENU_AT = "2.0"
+
+
 def run_shot(
     install: str, screen: str, out: Path, width: int = 2560, height: int = 1440,
     extra: tuple[str, ...] = (),
 ) -> np.ndarray:
     env = dict(os.environ, SC_NO_AUDIO="1")
+    if "--menu-at" not in extra:
+        extra = ("--menu-at", WALK_MENU_AT, *extra)
     subprocess.run(
         [str(BIN), "--install", install, "--shot", str(out), "--shot-screen", screen,
          "--no-intro", "--width", str(width), "--height", str(height), *extra],
@@ -211,7 +232,7 @@ def main() -> int:
     env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir))
     proc = subprocess.run(
         [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
-         "--height", "1440", "--menu-script", SCRIPT],
+         "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", SCRIPT],
         env=env, text=True, capture_output=True,
     )
     if proc.returncode != 0:
@@ -345,6 +366,26 @@ def main() -> int:
         "restore dialog confirmed, Protoss tab + Probe cell selected"
     )
 
+    # ---- 3d. Campaign selection (live-client behaviour) ------------------
+    ep = [r for r in rows if r["screen"] == "Episode" and "prompt=" in r["state"]]
+    if not any("prompt=Some(Zerg)" in r["state"] for r in ep):
+        fail("clicking the locked Zerg campaign did not open the strRACE_ERR prompt")
+    if not any("hover=Some(0)" in r["state"] and "prompt=None" in r["state"] for r in ep):
+        fail("locked Zerg slot was never hovered")
+    mis = [r["state"] for r in rows if r["screen"] == "Mission" and "len=" in r["state"]]
+    want = [
+        ("open", "len=13 sel=0 top=0"),
+        ("down arrow", "len=13 sel=0 top=1"),
+        ("wheel", "len=13 sel=0 top=3"),
+        ("Down key", "len=13 sel=1 top=1"),
+        ("row click", "len=13 sel=4 top=1"),
+    ]
+    for what, frag in want:
+        if not any(frag in st for st in mis):
+            fail(f"mission list state after {what} not observed ({frag}); saw {sorted(set(mis))}")
+    print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
+          "keep the selection, Down scrolls it into view, row click selects")
+
     # ---- 4. Lobby races -------------------------------------------------
     lobby = [r for r in rows if r["screen"] == "Lobby" and "races=" in r["state"]]
     if not lobby:
@@ -379,7 +420,7 @@ def main() -> int:
             ) > 0
             # The flc.json clip rectangles span ~45 % of the frame; the
             # phase changes well under a fifth of it (stars, ships, galaxy).
-            if clip.mean() > 0.20:
+            if clip.mean() > LIVE_MENU_SCREENS[screen]:
                 fail(f"{screen}: clip-phase mask covers {clip.mean():.1%} of the frame")
             in_rect = np.zeros(diff.shape, bool)
             for x0, y0, x1, y1 in CLIP_RECTS:

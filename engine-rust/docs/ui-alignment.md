@@ -458,3 +458,71 @@ rectángulos de clip de `flc.json` y ≤0.02 % de píxeles transitorios dentro.
 Verificación: `cargo test` 342/342, clippy 0, `ui_diff.py` 39/39,
 `ui_visual_diff.py --goal-only` 19/19 (crudo y calibrado),
 `menu_walkthrough.py` PASS.
+
+## Campaña: comportamiento 1:1 y glue nativo (2026-11-02/03, sesión 71)
+
+Informe completo (REA, cadenas, cliente vivo, falsaciones):
+`research/analysis/investigations/episode-flow-re.md`.  Pruebas visuales
+(retail | sc_view crudo | diff×4) y `REPORT.md`:
+`engine-rust/docs/new_screenshots/` (local, `*.png` gitignored), generadas
+con `scripts/make_proof_sheets.py`.
+
+### Comportamiento (cliente vivo + tabla `MenuEntry` del dump)
+
+- Historial = tabla retail en `sc_mem_menu_pe.exe` @ `0x952c88`
+  (`campaign_progress.rs`); progreso por perfil en `campaign.bin` (`GCPR`).
+- Campaña bloqueada: hover → `<Raza> Campaign\nincomplete`; clic →
+  `glupokcancel` (`strRACE_ERR_*`, placa `glue/palcs/pdpopup.dds`, sin
+  oscurecer el fondo); Ok la juega igualmente.
+- Sin historial la campaña arranca directa; con historial abre la lista con
+  la entrada 0 seleccionada y arriba.  Flechas/rueda desplazan sin mover la
+  selección; Arriba/Abajo la mueven y la traen a la vista; clic en fila
+  selecciona.  Scrollbar dibujado con la geometría medida
+  (`draw_mission_scrollbar`, `menu::mission_scrollbar_hit`).
+- Cancel de campaña → Registry → Main (antes iba a GameType: falsado).
+- Hotkeys de `rc3.json`: L, R (Load **R**eplay), u (Play C**u**stom), C,
+  T/Z/P; el glifo de hotkey va en (208,255,131).
+
+### Texto del glue (no CEF)
+
+`RC_BIGGERTEXT` = `font/eurostileext-reg.ttf` 47,5 px/em, `RC_BIGTEXT` =
+`font/eurostile-reg.ttf` 47,4, `RC_SMALLTEXT` y botones lisos =
+`font/bl.ttf` (BlizzardGlobal) 33,4 / 34,0, con pares `kern` del TTF.
+Etiquetas, filas y título quedan a ≤1 px del original (medido por caja de
+tinta).
+
+### Determinismo de las capturas
+
+Falsado: «los renders headless son deterministas».  Bajo carga de CPU un
+clip congelado (`--menu-at`/`--menu-phase`) esperaba solo 2 s al primer
+frame y dibujaba la capa vacía (130804 daba 2.48 o 2.64 según la carga; 1
+de 3 renders difería en 108 717 px).  Ahora un clip congelado bloquea hasta
+el decodificador (`FROZEN_CLIP_WAIT`, 60 s): 8 renders concurrentes
+idénticos byte a byte.
+
+### Fases de clip
+
+`scripts/campaign_phase_sweep.py`: descenso por coordenadas de la fase de
+cada clip (discos, retratos, On) en pasos de 1/10,5 s sobre su bucle,
+puntuado en el área del slot.  Resultados en `ui_visual_diff.py` PHASES.
+
+### Resultado (crudo, sin capas de calibración)
+
+```text
+ref     pantalla                          inicio   ahora
+130744  episode                           2.27     1.38
+130750  episode-hover-terran              2.88     1.83
+130757  episode-hover-zerg                3.24     1.80
+130804  episode-hover-protoss             3.30     1.85
+130824  episode-expansion-hover-protoss   2.76     1.60
+130832  episode-expansion-hover-terran    2.91     1.61
+130840  episode-expansion-hover-zerg      3.74     1.92
+131132  mission                           3.11     1.78
+vivo    mission-live / -scrolled / locked  —      3.46 / 3.40 / 3.42
+```
+
+Las capturas vivas difieren sobre todo en discos y retratos (fase de reloj
+real del cliente); lista, colores, selección, scrollbar, prompt y botones
+coinciden.  Verificación: `cargo test` 354/354, clippy 0, `ui_diff.py`
+39/39, `ui_visual_diff.py` 43/43 crudo y calibrado, `menu_walkthrough.py`
+PASS (140 pasos, sección campaña).
