@@ -2333,9 +2333,14 @@ const MINIMAP_VIEW_H: i32 = 368;
 const PLASMA_SHIELDS: u8 = 15;
 
 /// Upgrade level digit: pen x before the button's right edge and baseline
-/// above its bottom (content px; first pass, unmeasured).
-const UPGRADE_LEVEL_DX: f32 = 24.0;
-const UPGRADE_LEVEL_DY: f32 = 10.0;
+/// above its bottom (content px; measured on 135051: ink x 1120, y 1396).
+const UPGRADE_LEVEL_DX: f32 = 38.0;
+const UPGRADE_LEVEL_DY: f32 = 11.0;
+
+/// Drawn offsets of the upgrade button and the radar buttons from their
+/// `statdata` / `minimap` rects (content px; shift search on 135051).
+const UPGRADE_DRAW_SHIFT: (f32, f32) = (-6.0, -6.0);
+const MINIMAP_BUTTON_SHIFT: (f32, f32) = (8.0, 12.0);
 
 /// Portrait offset from `statport` control 1 (content px, measured).
 const PORTRAIT_SHIFT: (f32, f32) = (2.0, 15.0);
@@ -9914,12 +9919,12 @@ impl App {
     }
 
     /// Command-card dialog of the console race.
+    ///
+    /// Retail's HD console places the Zerg buttons like the others: the
+    /// `statbtnz` offsets (4,7 instead of 9,4) would put them 12 px left and
+    /// 8 px low of 134905 (shift search), so every race uses the default.
     fn card_dialog(&self) -> &'static str {
-        match self.console_race {
-            Race::Zerg => "statbtnz",
-            Race::Protoss => "statbtnp",
-            _ => "statbtnt",
-        }
+        "statbtndefault"
     }
 
     fn draw_hud(&mut self, fb: &mut Framebuffer) {
@@ -10483,8 +10488,13 @@ impl App {
     fn draw_hud_minimap_buttons(&mut self, fb: &mut Framebuffer) {
         let hover = self.hud_hover();
         let k = self.content_box.3 as f32 / 1440.0;
-        let terrain = self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24));
-        let other = self.hud_control("minimap", 3, UiRect::new(76, 320, 52, 24));
+        let shift = |mut r: UiRect| {
+            r.x += (MINIMAP_BUTTON_SHIFT.0 * k).round() as i32;
+            r.y += (MINIMAP_BUTTON_SHIFT.1 * k).round() as i32;
+            r
+        };
+        let terrain = shift(self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24)));
+        let other = shift(self.hud_control("minimap", 3, UiRect::new(76, 320, 52, 24)));
         let Some(sheet) = self.console.as_ref().and_then(|c| c.dlg4.as_ref()) else {
             return;
         };
@@ -10515,20 +10525,14 @@ impl App {
         if self.selected.len() != 1 || !self.data.unit(u.type_id).has_shields {
             return;
         }
-        let r = self.upgrade_button_rect();
         let k = self.content_box.3 as f32 / 1440.0;
+        // Drawn 6 px up-left of the hit rect (shift search on 135051).
+        let mut r = self.upgrade_button_rect();
+        r.x += (UPGRADE_DRAW_SHIFT.0 * k).round() as i32;
+        r.y += (UPGRADE_DRAW_SHIFT.1 * k).round() as i32;
         let Some(console) = &self.console else {
             return;
         };
-        if let Some(img) = console
-            .command_buttons_hd
-            .as_ref()
-            .and_then(|g| g.frame(12))
-        {
-            let w = (img.width as f32 * 0.75 * k).round() as i32;
-            let h = (img.height as f32 * 0.75 * k).round() as i32;
-            img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
-        }
         let icon = self
             .data
             .upgrade(PLASMA_SHIELDS)
@@ -10538,6 +10542,16 @@ impl App {
             .cmdicons4
             .as_ref()
             .and_then(|g| g.frame(icon as usize))
+        {
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+        }
+        // The button frame with its level box goes over the icon.
+        if let Some(img) = console
+            .command_buttons_hd
+            .as_ref()
+            .and_then(|g| g.frame(12))
         {
             let w = (img.width as f32 * 0.75 * k).round() as i32;
             let h = (img.height as f32 * 0.75 * k).round() as i32;

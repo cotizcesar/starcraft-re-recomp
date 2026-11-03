@@ -112,6 +112,7 @@ GOAL = {
     "130848", "130858", "130907", "134831", "134843",
 }
 CALIBRATED = GOAL | {"130637", "130704", "130712", "130727"}
+INGAME = {"134905", "134919", "134931", "135020", "135051", "135109", "135114", "135121"}
 
 # Reference id -> --shot-screen.  The 31 menu captures in the user's list.
 SCREENS = {
@@ -163,6 +164,17 @@ SCREENS = {
     "120059": "hotkeys-zerg",
     "120106": "hotkeys-zerg-larva-cards",
     "120111": "hotkeys-protoss-probe",
+    # In-game (2026-10-27): the user's (8)The Hunters melee games rebuilt
+    # from melee start rules (Zerg slot 1, Terran slot 7, Protoss slot 6),
+    # with the objectives / tips dialogs and the three hovered tooltips.
+    "134905": "ingame-zerg",
+    "134919": "objectives",
+    "134931": "tips",
+    "135020": "ingame-terran2",
+    "135051": "ingame-protoss",
+    "135109": "ingame-protoss-tip-shields",
+    "135114": "ingame-protoss-tip-probe",
+    "135121": "ingame-protoss-tip-minimap",
 }
 
 
@@ -224,6 +236,11 @@ def main():
         action="store_true",
         help="restrict the gate to the Hotkeys references",
     )
+    ap.add_argument(
+        "--ingame-only",
+        action="store_true",
+        help="restrict the gate to the 8 in-game references",
+    )
     args = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="ui-visual-"))
     screens = (
@@ -233,6 +250,8 @@ def main():
     )
     if args.hotkeys_only:
         screens = {k: v for k, v in screens.items() if v.startswith("hotkeys")}
+    if args.ingame_only:
+        screens = {k: v for k, v in screens.items() if k in INGAME}
     rows = []
     for ref_id, screen in screens.items():
         out = tmp / f"{ref_id}.bmp"

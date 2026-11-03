@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proof sheets for the Options and campaign 1:1 goals.
+"""Proof sheets for the Options, campaign and in-game 1:1 goals.
 
 For every reference it renders the raw engine frame (no calibration layer)
 with the gate phases of `ui_visual_diff.py`, and writes
@@ -28,6 +28,7 @@ import ui_visual_diff as U  # noqa: E402
 REFS = ROOT / "engine-rust/docs/original_screenshots"
 OPTIONS = ["130933", "130938", "130942", "130949", "130954"]
 CAMPAIGN = ["130744", "130750", "130757", "130804", "130824", "130832", "130840", "131132"]
+INGAME = ["134905", "134919", "134931", "135020", "135051", "135109", "135114", "135121"]
 # live capture file -> (sc_view shot screen, what it shows)
 LIVE = {
     "live-mission-list-top.png": ("mission-live", "list opened: entry 0 selected, top of list"),
@@ -71,7 +72,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     rows = []
     with tempfile.TemporaryDirectory(prefix="gc-proof-") as tmp:
-        for group, ids in (("options", OPTIONS), ("campaign", CAMPAIGN)):
+        for group, ids in (("options", OPTIONS), ("campaign", CAMPAIGN), ("ingame", INGAME)):
             for rid in ids:
                 screen = U.SCREENS[rid]
                 bmp = Path(tmp) / f"{rid}.bmp"
