@@ -1323,7 +1323,8 @@ impl World {
                     x: u.x / 256,
                     y: u.y / 256,
                     owner: u.owner,
-                    size: ty.placement.x.max(8) as i32,
+                    placement: (ty.placement.x as i32, ty.placement.y as i32),
+                    building: ty.is_building(),
                     resource: is_resource_type(u.type_id),
                 }
             })

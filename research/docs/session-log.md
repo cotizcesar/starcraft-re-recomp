@@ -3673,3 +3673,158 @@ full suite stays a local Definition-of-Done gate.
   commits). `LICENSE-APACHE` is removed, `LICENSE-MIT` → `LICENSE`, and
   `Cargo.toml` now has `license = "MIT"`. README badge/section and `NOTICE.md`
   are updated. `third_party/pklib/LICENSE` is unchanged.
+
+## 2026-11-03 (75) — In-game parity round 3: view scale, console anchoring, capture state
+
+User goal: in-game frame parity with the eight (8)The Hunters captures
+(`PROGRESS.md` still quoted 4.35–5.99; the session started at 3.14–4.58).
+Method: per-region error budgets, sub-pixel shift search per strip/element,
+template matching against the retail art, and whole-frame A/B renders.  All
+tooling lived in `/tmp` (nothing retail-derived committed).
+
+**FACTS (new rules, each with a test).**
+1. *The playfield is 853 game px wide and stretched to the 2560 px box.*  The
+   best horizontal shift of terrain strips grew linearly with x (0.00 at
+   x 120-280, 0.50 at 1240, 1.00 at 2360; slope 0.00046 against 0.00039
+   predicted by 2560/853, no vertical component) on 134905 / 135051.
+   `render::stretch_columns` after the world pass (HD and SD paths);
+   `to_logical` uses the same x scale.  Residual slope after the fix: 0.00
+   at every strip.  Test `the_853_px_view_is_stretched_across_the_2560_px_box`.
+2. *HD megatiles are area-filtered.*  The 128 -> 96 integer box averaged
+   alternating 1- and 2-texel spans and stored premultiplied colour (darkened
+   cut-out edges under a straight-alpha blit).  Exact-coverage area filter,
+   straight alpha out.  Test `hd_tiles_are_area_filtered_with_straight_alpha_out`.
+3. *`statdata` centres in whole game px* ((853 - 640) / 2 = 106, not 106.67):
+   the wireframe moved from 1.75 px off to 0.25 px and every centred string
+   from ~2 px right to <= 1 px.  Falsified for the other dialogs: right-hand
+   dialogs and `objctdlg` / `tips_dlg` keep the fractional widening (integer
+   worsened 135020 / 134919 / 134931).  The earlier "name centred at 1265 with
+   106.67" was compensating a text-measure error.  Test
+   `statdata_centres_in_whole_game_px_and_the_rest_in_screen_px`.
+4. *MENU button plate.*  Retail draws `dlg.dds.grp` frame 0 of the race
+   (plain metal / bracketed blue / rock) under the label; template match lands
+   on (1885, 1164) on all three races, (-3, 0) from the `stat_f10` control
+   (box error 34.3 / 9.7 / 16.1 -> 8.3 / 7.0 / 7.4).  Test
+   `menu_plate_lands_where_the_retail_template_matched`.
+5. *Glue dialog pane* (`objctdlg`, `tips_dlg`): x 702..=1878, y 96..=863 on
+   both captures (2 px left, 23 px wider than the 384 x 256 rect), corners
+   rounded in game px (outer row inset 3, next two rows 1), one-game-px border
+   (16, 18, 73) over terrain, translucent (~93 %).  Test
+   `pane_corners_are_rounded_like_the_retail_dialog`.
+6. *Button labels*: a `DEFPUSHBUTTON` label sits 6 px lower than a `PUSHBUTTON`
+   one (ink tops 769 vs 763 on 134931); the focus rim of 134919's
+   `Previous (Esc)` does not make it a DEFPUSHBUTTON.  Test
+   `defpushbutton_labels_sit_six_px_lower`.
+7. *Command card*: Zerg and Protoss buttons draw 3 px left and ~1 px lower
+   than the `statbtndefault` rects; Terran within 0.5 px.  Layouts and
+   `cmdbtns` sizes are identical across races, so the cause is not in the data
+   read (measured constant).  Test `zerg_and_protoss_cards_draw_one_game_px_left`.
+8. *Centre plate nudge* re-measured for Zerg/Protoss: -1 (as Terran); frame
+   mean at +1 / 0 / -1 / -2 = 3.44 / 3.27 / 3.25 / 3.43 (134905).
+
+**Capture state (recorded, not rules).**  Creep variants of tile rows 13-14
+(the band above the console; best of 13 renders per tile, kept with error
+< 3.5 and margin > 2.5): band error 5.99 -> 1.17 on all three Zerg captures.
+Geyser smoke per capture with a matcher over 5 images x 8 frames on a
+smoke-free render (validated: it re-finds the recorded 135051 and 134905
+states): 135109 shows overlay 0 frame 3 at the Zerg game's overlay-0 LO
+offset; 135114 / 135121 / 134919 / 134931 show none.
+
+**INFERENCE.**  Fog edge: box kernel (linear ramp, 2.75 tiles) instead of the
+Gaussian; retail's measured ramp is close to linear and the frame mean drops
+on all three base captures (3.438 -> 3.428, 2.510 -> 2.499, 3.222 -> 3.193).
+
+**Lighting: shader source found, model not replaced.**  The client ships
+plain-text GLSL in CASC (`shadersglsl/util_lighting.glsl`,
+`deferred_sprite.glsl`, `deferred_blit.glsl`, `bloom.glsl`; read from a `/tmp`
+dump, not committed).  Behaviour: directional light at (200, 50, 500), no
+ambient term, `lit = (lambert * colour + pow(spec, 16) * specular) * ao +
+emissive`, final `mix(base, lit, lighting)`, plus point lights from a buffer
+filled by the executable, and a bloom pass.  A flat normal gives lambert
+0.9245, close to the measured 0.91 terrain gain.  Falsified as drop-in
+replacements: literal shading (best mix 0.8) beats the fitted model on
+buildings and geysers per object (CC 21.96 -> 20.55, Nexus 19.02 -> 17.09)
+but loses on minerals (21.5 -> 28.0) and whole frames (2.91 -> 3.12); literal
+for non-mineral images only gains <= 0.01 with mixed signs; bloom as the
+source describes, at blur 4-16 px, makes every frame much worse (2.91 ->
+5.4-11.1).  The fitted model stays; recovering the point-light inputs needs the
+running client (read-only memory capture).
+
+**Result** (raw mean, `ui_visual_diff.py --ingame-only`):
+
+```text
+ref     start  now
+134905  4.07   2.67
+134919  4.14   2.70
+134931  4.51   3.06
+135020  3.14   2.50
+135051  4.35   3.31
+135109  4.58   3.47
+135114  4.49   3.45
+135121  4.50   3.45
+```
+
+Known structural residuals: the Zerg captures' minimap shows the visible
+terrain and creep with a vignette and outlined unit footprints (Protoss /
+Terran captures show a black minimap: likely the minimap's first refresh,
+capture time, unconfirmed); building/mineral lighting (above); HUD glyph
+widths (e.g. "Zerg Hatchery" 207 vs 203 px).  Verification: `cargo test` 384
+passed / 0 failed, clippy 0 warnings, `cargo fmt --check` clean,
+`ui_visual_diff.py` 51/51 raw and calibrated (no screen worse, the 8
+in-game ones better), `ui_diff.py` 39/39 (byte-identical before/after this
+session; the committed output had drifted earlier and is refreshed),
+`menu_walkthrough.py` PASS (145 steps).
+
+Addendum (75): the minimap is capture state too.  134905 shows the terrain
+minimap (visible grass and creep with a vignette; blips with a 1 px black
+outline, which is invisible on a black minimap), while 134919 / 134931,
+later in the same game, and the Protoss / Terran captures show a black one.
+`hunters_capture_minimap_terrain` enables it for 134905 only: minimap region
+1.07 -> 0.75, frame 2.67 -> 2.66; enabling it on 134919 worsens that frame
+(2.697 -> 2.720).  Still different: retail blips are placement-box rectangles
+with the outline, and its minimap uses creep colours (~0.01 of frame mean).
+Final gate: 134905 2.66, 134919 2.70, 134931 3.06, 135020 2.50, 135051 3.31,
+135109 3.47, 135114 3.45, 135121 3.45.  Re-verified: `cargo test` 384 / 0
+failed (one earlier run failed two file-writing tests with "Disk quota
+exceeded" from session scratch files in /tmp; after cleaning them, green),
+clippy 0, fmt clean, `ui_visual_diff.py` 51/51 raw and calibrated (none worse
+than HEAD), `ui_diff.py` 39/39, walkthrough PASS (145 steps).
+
+Addendum 2 (75): the residuals that needed no user input.
+- *Minimap blips* follow OpenBW's `draw_minimap` exactly (placement box / 32
+  in whole tiles, buildings clamped to 4, at least 2 x 2, top-left at
+  `(position - placement / 2) / 32`): the retail 135051 and 134905 masks match
+  row for row.  Falsified on the way: "mineral fields are 6 x 3 px" (they are
+  2 x 2 tiles overlapping).  A 1 px black outline is drawn under every fill
+  (one outline around the union; visible only over terrain).  Tests
+  `blips_follow_the_placement_box_in_whole_tiles`,
+  `minimap_blips_are_outlined_and_prepainted_backgrounds_survive`.
+- *Terrain minimap* reuses `HdTerrain::draw` at 3 px per tile with the
+  playfield's creep lookup (`creep_lookup`, now shared) under
+  `draw_fog_smooth` at minimap scale (`MinimapTerrain::Prepainted`): 134905
+  minimap region 0.75 -> 0.37.  135121 shows the terrain too (capture state),
+  and its tooltip "Hide Terrain" (stat_txt 810) is what the toggle offers
+  while the terrain is shown: the 809/810 mapping was inverted ("kept as
+  observed" before).  Test via `minimap_toggle_string`.
+- *HUD text face*: FACT, the in-game HUD text is `font/blizzard-regular.ttf`
+  with linear advances and its kern pairs, not `bl.ttf` (which has no kern
+  table) with advances rounded up.  Glyph left edges of the eight stat rows:
+  mean error 1.65 -> 0.42 px at 25.6 px/em; unit names and the tips checkbox
+  label 0.33 px at 31.2 px/em; tooltips at 25.6 (4.8 px drift at the old
+  26.1 -> <= 1.3 px).  Kerning lowers every frame (avg 2.980 -> 2.955).  Test
+  `hud_text_matches_the_retail_ink_widths` (cache-gated; fails with the old
+  face/sizes: "Psi Max: 200" 143.2 vs 147 px).  The per-glyph "+1 px"
+  checkbox layout is gone.
+- *Re-measured after the `statdata` move*: upgrade button draw shift x -6 ->
+  -4 (box 21.2 -> 5.3), Shields tooltip anchor +94 -> +96 (text now on
+  retail's glyph edges).
+- Block detector (5 px blurred diff, 16 px cells > 20): 134905 181 -> 104,
+  134919 169 -> 87, 134931 222 -> 118, 135051 305 -> 242; console hot cells
+  on the Protoss frames 27-59 -> 12-29.  Every frame's top hot regions are
+  now lit sprites (Nexus, Command Center, Hatchery, geysers, minerals).
+- Gate: 134905 2.46, 134919 2.51, 134931 2.79, 135020 2.49, 135051 3.14,
+  135109 3.24, 135114 3.27, 135121 3.27.  `cargo test` 387 / 0 failed,
+  clippy 0, fmt clean, `ui_visual_diff.py` 51/51 raw and calibrated (none
+  worse), `ui_diff.py` 39/39 (unchanged), walkthrough PASS (145 steps).
+- Remaining: building/mineral lighting.  It needs the client's point-light
+  inputs, which only a read-only capture of the running game can give.

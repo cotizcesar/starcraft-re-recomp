@@ -4,6 +4,22 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-03 — In-game parity round 3
+
+### Changed
+- The playfield is drawn as the retail 853 game px view stretched to the
+  16:9 box; HD terrain tiles are area-filtered; the fog edge is a linear ramp.
+- Console: `statdata` centred in whole game px, MENU button plate, centre
+  plate and Zerg/Protoss command-card offsets re-measured.
+- In-game dialogs: retail pane extent, rounded corners and border; button
+  labels placed by control type.
+- (8)The Hunters captures: more recorded creep variants and per-capture geyser
+  smoke.
+- Minimap: OpenBW blip rectangles with a black outline; HD terrain minimap
+  with creep and smooth fog; terrain-toggle tooltip string fixed.
+- HUD text uses `blizzard-regular.ttf` with linear advances and kerning.
+- Raw in-game mean 3.14–4.58 -> 2.46–3.27 (no other screen changed).
+
 ## 2026-11-03 — MIT-only license
 
 ### Changed

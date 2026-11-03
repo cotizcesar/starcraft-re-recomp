@@ -605,3 +605,59 @@ ref     now
 135114  4.69
 135121  4.59
 ```
+
+### Third round (2026-11-03, session 75)
+
+Geometry and layout rules found by sub-pixel shift search and template
+matching (details and evidence: `research/docs/session-log.md`, entry 75):
+
+- The playfield is 853 game px wide and stretched to the 2560 px box
+  (`render::stretch_columns`; x scale 3.0012, y exactly 3).
+- HD megatiles are area-filtered 128 -> 96 with straight alpha.
+- `statdata` centres in whole game px (106); right-hand and glue dialogs keep
+  the fractional widening.
+- MENU plate (`dlg` frame 0) at (-3, 0) from the `stat_f10` control.
+- Glue dialog pane: 2 px left / 23 px wider than its rect, rounded corners, a
+  one-game-px translucent border; `DEFPUSHBUTTON` labels 6 px below
+  `PUSHBUTTON` ones.
+- Zerg/Protoss command card drawn (-3, +1) from its rects; centre plate
+  nudge -1 for every race.
+- Fog edge: linear ramp (box blur) instead of a Gaussian (INFERENCE).
+- Capture state: creep variants of the band above the console, geyser smoke
+  per capture (none on 134919 / 134931 / 135114 / 135121), terrain minimap on
+  134905 only.
+
+The client's lighting shaders were located (plain GLSL in CASC) but the
+literal model, with or without bloom, scores worse than the fitted one on
+whole frames, so the fitted model stays (INFERENCE, see the session log).
+
+```text
+ref     round 2  now
+134905  4.14     2.66
+134919  4.41     2.70
+134931  4.93     3.06
+135020  3.25     2.50
+135051  4.44     3.31
+135109  4.66     3.47
+135114  4.69     3.45
+135121  4.59     3.45
+```
+
+Then (same session): OpenBW minimap blips with a 1 px outline, the HD
+terrain minimap with creep under the smooth fog, the HUD face corrected to
+`blizzard-regular.ttf` with linear advances and kerning (stat rows, names,
+tooltips, checkbox label), and the upgrade/tooltip anchors re-measured:
+
+```text
+ref     now
+134905  2.46
+134919  2.51
+134931  2.79
+135020  2.49
+135051  3.14
+135109  3.24
+135114  3.27
+135121  3.27
+```
+
+Remaining: building/mineral lighting (needs the client's point-light inputs).

@@ -738,6 +738,8 @@ struct App {
     glue_font_ext: Option<galaxycraft::text::UiFont>,
     /// `font/bl.ttf` (BlizzardGlobal): `RC_SMALLTEXT` and plain buttons.
     glue_font_small: Option<galaxycraft::text::UiFont>,
+    /// In-game HUD text face (`font/blizzard-regular.ttf`, see `GlueFace::Hud`).
+    hud_font: Option<galaxycraft::text::UiFont>,
     /// Wide face for the lit main-menu labels (Eurostile Extended).
     ui_font_hover: Option<galaxycraft::text::UiFont>,
     /// Face used by the profile/build footer (HTML info text).
@@ -2296,8 +2298,10 @@ const GLUE_BIG_PX: f32 = 47.4;
 
 /// In-game HUD text (BlizzardGlobal, fitted on 135051): normal 32.8 px/em
 /// (unit name), `RC_SMALLTEXT` 25.4 px/em (stat rows), colour (223,223,255).
-const HUD_NAME_PX: f32 = 31.4;
-const HUD_SMALL_PX: f32 = 25.4;
+/// Face of the in-game HUD text (see `GlueFace::Hud`).
+const HUD_FONT: &str = "font/blizzard-regular.ttf";
+const HUD_NAME_PX: f32 = 31.2;
+const HUD_SMALL_PX: f32 = 25.6;
 /// Baselines below the control's top (content px), from the same fit:
 /// name 1192.4 - 1164, "Psi Used" 1279.4 - 1254.
 const HUD_NAME_BASE: f32 = 30.9;
@@ -2321,7 +2325,54 @@ const HD_SHADOW_ALPHA: f32 = 0.5;
 /// In-game dialog pane, fitted on 134931 against 134905 (same scene).
 const DIALOG_FILL: Rgb = Rgb::new(4, 17, 54);
 const DIALOG_ALPHA: u8 = 190;
-const DIALOG_EDGE: Rgb = Rgb::new(9, 15, 70);
+/// Pane border: one game px wide, (16, 18, 73) over the 134905 terrain
+/// (~(66, 49, 58)) and tinted over minerals, so translucent at ~93 %.
+const DIALOG_EDGE: Rgb = Rgb::new(12, 15, 75);
+const DIALOG_EDGE_ALPHA: u8 = 237;
+/// Retail pane extent against the dialog rect (content px at 1440p).
+/// FACT, identical on 134919 / 134931: x 702..=1878, y 96..=863 for the
+/// 384 x 256 `objctdlg` / `tips_dlg` rect drawn at 704..=1855, i.e. 2 px
+/// further left and 23 px further right; the height matches.
+const GLUE_PANE_DX: f32 = -2.0;
+const GLUE_PANE_DW: f32 = 25.0;
+
+/// One pixel of a glue dialog pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaneCell {
+    Outside,
+    Border,
+    Fill,
+}
+
+/// Classify pane pixel `(dx, dy)` of a `w x h` pane, `g` px per game px.
+/// The corners are rounded in whole game px (134919 / 134931, all four
+/// corners): the outer row is inset 3 game px, the next two rows 1; the
+/// border is the outermost game px of that shape.
+fn glue_pane_cell(dx: i32, dy: i32, w: i32, h: i32, g: i32) -> PaneCell {
+    let inside = |x: i32, y: i32| {
+        if x < 0 || y < 0 || x >= w || y >= h {
+            return false;
+        }
+        let edge = y.min(h - 1 - y);
+        let inset = if edge < g {
+            3 * g
+        } else if edge < 3 * g {
+            g
+        } else {
+            0
+        };
+        x >= inset && x < w - inset
+    };
+    if !inside(dx, dy) {
+        PaneCell::Outside
+    } else if (1..=g).all(|d| {
+        inside(dx - d, dy) && inside(dx + d, dy) && inside(dx, dy - d) && inside(dx, dy + d)
+    }) {
+        PaneCell::Fill
+    } else {
+        PaneCell::Border
+    }
+}
 const DIALOG_BUTTON_OUTER: Rgb = Rgb::new(12, 72, 204);
 const DIALOG_BUTTON_INNER: Rgb = Rgb::new(33, 23, 184);
 /// Baselines/offsets in content px (first pass from the 134931 zoom).
@@ -2331,13 +2382,28 @@ const DIALOG_BODY_DX: f32 = -1.0;
 const DIALOG_BODY_BASE: f32 = 48.0;
 /// Label pen x from the control's left edge (content px).
 const DIALOG_CHECK_DX: f32 = 59.0;
-const DIALOG_CHECK_PX: f32 = 30.0;
+const DIALOG_CHECK_PX: f32 = HUD_NAME_PX;
 const DIALOG_CHECK_BORDER: Rgb = Rgb::new(143, 27, 0);
 const DIALOG_CHECK_FILL: Rgb = Rgb::new(14, 2, 0);
 const DIALOG_CHECK_BASE: f32 = 30.0;
 const DIALOG_BODY_PITCH: f32 = 64.0;
-const DIALOG_BUTTON_BASE: f32 = 16.0;
+/// Button label baseline below the control's centre (content px).  FACT
+/// (ink boxes, 2026-11-03): a `DEFPUSHBUTTON` label (`OK`, 134931) sits
+/// 6 px lower than `PUSHBUTTON` ones (`Previous Tip` / `Next Tip`, and
+/// 134919's `Previous (Esc)`, which has the bright focus rim but is a plain
+/// `PUSHBUTTON`); one shared 16 put them 2 and 7-8 px low.
+const DIALOG_BUTTON_BASE: f32 = 8.0;
+const DIALOG_DEFAULT_BUTTON_BASE: f32 = 14.0;
 const DIALOG_SHADOW: f32 = 2.0;
+
+/// Label baseline offset of a dialog button of layout type `kind`.
+fn button_label_base(kind: &str) -> f32 {
+    if kind == "DEFPUSHBUTTON" {
+        DIALOG_DEFAULT_BUTTON_BASE
+    } else {
+        DIALOG_BUTTON_BASE
+    }
+}
 
 /// Playfield height above the console framed by the minimap box (game px).
 const MINIMAP_VIEW_H: i32 = 368;
@@ -2351,9 +2417,72 @@ const UPGRADE_LEVEL_DX: f32 = 38.0;
 const UPGRADE_LEVEL_DY: f32 = 11.0;
 
 /// Drawn offsets of the upgrade button and the radar buttons from their
-/// `statdata` / `minimap` rects (content px; shift search on 135051).
-const UPGRADE_DRAW_SHIFT: (f32, f32) = (-6.0, -6.0);
+/// `statdata` / `minimap` rects (content px; shift search on 135051).  The
+/// upgrade x was re-measured after `statdata` moved to whole game px
+/// (2026-11-03: +2 px on 135051 / 135109, box error 21.2 -> 5.3).
+const UPGRADE_DRAW_SHIFT: (f32, f32) = (-4.0, -6.0);
 const MINIMAP_BUTTON_SHIFT: (f32, f32) = (8.0, 12.0);
+
+/// Drawn offset of the command-card buttons from their `statbtndefault`
+/// rects (content px at 1440p; the hit rects stay).  FACT (2026-11-03,
+/// shift search per button): Zerg (134905, three buttons) and Protoss
+/// (135051, two) sit 3 px left and 0.25-1 px lower; Terran (135020) is
+/// within 0.5 px.  Frame mean with (0, 0) / (-3, 0) / (-3, +1): 2.82 /
+/// 2.69 / 2.67 (134905), 3.43 / 3.32 / 3.31 (135051), 3.56 / 3.46 / 3.45
+/// (135114).  The race layouts and `cmdbtns` sizes are identical, so the
+/// cause is not in the data read so far.
+fn card_draw_shift(race: Race) -> (f32, f32) {
+    match race {
+        Race::Terran => (0.0, 0.0),
+        _ => (-3.0, 1.0),
+    }
+}
+
+/// MENU button plate: `dlg.dds.grp` frame 0 of the console race (plain
+/// metal / bracketed blue / rock; SD frame 0 is the 64x20 control itself)
+/// at 0.75, drawn from the `stat_f10` control's top-left shifted by this
+/// offset (content px at 1440p).  FACT: template match of the 180x72 plate
+/// on 135020 / 135051 / 134905 lands on the same (1885, 1164) for all three
+/// races, i.e. (-3, 0) from the control at (1888, 1164); box error 34.3 /
+/// 9.7 / 16.1 -> 8.3 / 7.0 / 7.4 before the label goes on top.
+const MENU_PLATE_FRAME: usize = 0;
+const MENU_PLATE_SHIFT: (f32, f32) = (-3.0, 0.0);
+
+/// Game-px x offset of a console dialog in the widened 16:9 frame.  Retail
+/// keeps the classic 640x480 layout x3 and anchors each dialog: the minimap
+/// stays left, `statdata` is centred and the right-hand dialogs (`statres`,
+/// `statport`, `stat_f10`, `statbtn*`) move by the whole extra width.
+/// Measured on 135051: card button 1 at x 2155 = (505 + 213.33) * 3.
+///
+/// `statdata` is centred in whole game px: the view is `view_w` wide (853
+/// at 16:9), so it moves by (853 - 640) / 2 = 106, not 106.67.  FACT
+/// (2026-11-03, shift search on 134905 / 135051): with 106.67 the
+/// wireframe sat 1.75 px and every centred string ~2 px right of retail;
+/// with 106 the wireframe is within 0.25 px (the earlier "name centred at
+/// 1265 with 106.67" was compensating a text-measure error).  The
+/// right-hand dialogs and the glue dialogs over the playfield (`objctdlg`,
+/// `tips_dlg`) keep the fractional screen-px widening: integer there
+/// worsens 135020 / 134919 / 134931.
+fn console_dialog_shift(dialog: &str, view_w: i32, content_w: i32, s: f32) -> f32 {
+    let screen_extra = content_w as f32 / s - 640.0;
+    match dialog {
+        "minimap" => 0.0,
+        "statdata" => ((view_w - 640).max(0) / 2) as f32,
+        "objctdlg" | "tips_dlg" => screen_extra / 2.0,
+        _ => screen_extra,
+    }
+}
+
+/// Screen rect `(x, y, w, h)` of the MENU plate for the `stat_f10`
+/// control rect `r` and a `w x h` 4x frame, `k` = content height / 1440.
+fn menu_plate_rect(r: UiRect, w: usize, h: usize, k: f32) -> (i32, i32, i32, i32) {
+    (
+        r.x + (MENU_PLATE_SHIFT.0 * k).round() as i32,
+        r.y + (MENU_PLATE_SHIFT.1 * k).round() as i32,
+        (w as f32 * 0.75 * k).round() as i32,
+        (h as f32 * 0.75 * k).round() as i32,
+    )
+}
 
 /// Portrait clip rect and frame-centre shift relative to `statport`
 /// control 1 (content px at 1440p, measured; see `draw_hud_portrait`).
@@ -2440,8 +2569,21 @@ enum HudHover {
     MinimapTerrain,
 }
 
-/// Tooltip style measured on 135109 / 135114 / 135121 (content px).
-const TOOLTIP_PX: f32 = 26.1;
+/// `stat_txt` string of the minimap terrain toggle's tooltip: 809 "Show
+/// Terrain in Minimap" while hidden, 810 "Hide Terrain ..." while shown.
+fn minimap_toggle_string(terrain_shown: bool) -> u16 {
+    if terrain_shown {
+        810
+    } else {
+        809
+    }
+}
+
+/// Tooltip style measured on 135109 / 135114 / 135121 (content px).  The
+/// text is the HUD face at the stat-row size (2026-11-03: glyph edges of
+/// "Protoss Plasma Shields" / "Shields: 0" within 1.3 px at 25.6 px/em,
+/// 4.8 px of drift at the earlier 26.1).
+const TOOLTIP_PX: f32 = HUD_SMALL_PX;
 const TOOLTIP_PAD_L: f32 = 16.0;
 const TOOLTIP_PAD_R: f32 = 14.0;
 const TOOLTIP_LINE0_H: f32 = 52.0;
@@ -2610,7 +2752,12 @@ fn draw_tinted(
 /// client picks each creep tile's subtile from its session RNG, so they are
 /// recorded capture state (best of the 13 HD creep megatiles per tile, mean
 /// error 2.6 vs 7.9 hashed; 128 of 132 tiles use 0-5, as the 96/4 rule
-/// predicts).  `.` = not observed (covered or off screen).
+/// predicts).  `.` = not observed (covered or off screen).  Rows 13-14
+/// (the band above the console, 2026-11-03): best of 13 renders per tile
+/// on the pixels where the variants differ, kept only with error < 3.5 and
+/// a margin > 2.5 over the runner-up (accepted: 0.8-2.8 error, 3.0-7.8
+/// margin); error over x 600-2100, y 900-1080: 5.99 -> 1.17 on all three
+/// Zerg captures.
 const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
     (60, 3),
     &[
@@ -2624,10 +2771,50 @@ const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
         "....03563423.....3044410......",
         ".....03a51......1020431.......",
         ".....45040..34232331324.......",
-        "..............................",
-        "..............................",
+        "......5523384431512019........",
+        "........445044052320..........",
     ],
 );
+
+/// Geyser smoke (`image, frame, LO dx, LO dy`) of a Hunters capture:
+/// `creategasoverlays n` draws image 430 + n at the geyser's LO offset n, and
+/// which overlay and frame show is the capture's moment.  Matched over all
+/// five smoke images x 8 frames: overlay 2 at (+34, +2.5) in the Protoss
+/// (135051) and Terran games, overlay 0 at (+11.4, -19.3) in the Zerg one.
+/// The later Protoss captures (2026-11-03, same matcher on a smoke-free
+/// render): 135109 shows overlay 0 frame 3 at (+11.3, -18.5) -- the Zerg
+/// game's overlay-0 offset again -- and 135114 / 135121 show none (no
+/// candidate lowers the error; smoke region 6.13 -> 4.37 without it).  The
+/// Zerg dialog captures 134919 / 134931 show none either (the matcher finds
+/// 134905's overlay 0 frame 6 on 134905 itself, nothing on the other two).
+fn hunters_smoke(race: Race) -> Option<(u16, usize, f32, f32)> {
+    Some(match race {
+        Race::Zerg => (430, 6, 11.4, -19.3),
+        Race::Protoss => (432, 6, 34.25, 2.5),
+        _ => (432, 4, 33.75, 2.5),
+    })
+}
+
+/// Whether a Hunters capture shows the terrain minimap.  Capture state:
+/// 134905 shows the visible terrain and creep in its minimap, and so does
+/// 135121 (the capture hovering the terrain toggle), while 134919 / 134931
+/// (later in the Zerg game) and the other Protoss / Terran captures show a
+/// black one.  Minimap region error on 134905: 1.07 -> 0.75 with terrain;
+/// enabling it on 134919 worsens the frame (2.697 -> 2.720).
+fn hunters_capture_minimap_terrain(shot: &str) -> bool {
+    matches!(shot, "ingame-zerg" | "ingame-protoss-tip-minimap")
+}
+
+/// Per-capture override of [`hunters_smoke`] for the later Protoss shots.
+fn hunters_capture_smoke(shot: &str) -> Option<Option<(u16, usize, f32, f32)>> {
+    match shot {
+        "ingame-protoss-tip-shields" => Some(Some((430, 3, 11.4, -19.3))),
+        "ingame-protoss-tip-probe" | "ingame-protoss-tip-minimap" | "objectives" | "tips" => {
+            Some(None)
+        }
+        _ => None,
+    }
+}
 
 /// Start units' poses in the three Hunters captures (type, x, y, facing).
 /// The workers had started moving and the Zerg units idle-turn at random,
@@ -2683,10 +2870,13 @@ enum GlueFace {
     Small,
     Big,
     Bigger,
-    /// In-game HUD text: BlizzardGlobal with every advance rounded up to a
-    /// whole screen pixel, as the retail rasterizer lays it out (fitted on
-    /// the 134905 / 135051 stat rows: within 2 px over 15-19 glyphs, while
-    /// linear advances fall 8-14 px short).
+    /// In-game HUD text: `font/blizzard-regular.ttf` with linear advances
+    /// and its kern pairs (no tracking).  FACT (2026-11-03, glyph left edges
+    /// of the eight 134905 / 135051 stat rows and both unit names): mean
+    /// error 0.42 px at 25.6 px/em and 0.33 px at 31.2 px/em, against 1.65 px
+    /// for the earlier model (`bl.ttf`, no kern table, advances rounded up to
+    /// whole pixels, which was compensating for the wrong face).  Kerning
+    /// lowers every in-game frame (avg 2.980 -> 2.955).
     Hud,
 }
 
@@ -3991,6 +4181,7 @@ fn main() {
         glue_font: galaxycraft::text::UiFont::load(&assets.join("font/eurostile-reg.ttf")),
         glue_font_ext: galaxycraft::text::UiFont::load(&assets.join("font/eurostileext-reg.ttf")),
         glue_font_small: galaxycraft::text::UiFont::load(&assets.join("font/bl.ttf")),
+        hud_font: galaxycraft::text::UiFont::load(&assets.join(HUD_FONT)),
         ui_font_hover: galaxycraft::text::UiFont::load_retail_extended(&assets),
         ui_font_info: galaxycraft::text::UiFont::load(
             &std::env::var("GC_INFO_FONT")
@@ -4272,6 +4463,10 @@ fn main() {
                     _ => (6, Race::Protoss, (0, 8)),
                 };
                 app.hunters_start(&fb, slot, race, dy);
+                if let Some(smoke) = hunters_capture_smoke(shot_screen.as_str()) {
+                    app.set_geyser_smoke(smoke);
+                }
+                app.minimap_terrain = hunters_capture_minimap_terrain(shot_screen.as_str());
                 // Advisor idle clip and frame each capture shows (matched
                 // over every frame of padfid00..03; 10 fps, mid-frame time).
                 app.portrait_pick = match shot_screen.as_str() {
@@ -4571,6 +4766,9 @@ fn main() {
             "objectives" | "tips" => {
                 // 134919 / 134931: the Zerg game of 134905 with the dialog open.
                 app.hunters_start(&fb, 1, Race::Zerg, (-6, 8));
+                if let Some(smoke) = hunters_capture_smoke(shot_screen.as_str()) {
+                    app.set_geyser_smoke(smoke);
+                }
                 app.update();
                 app.draw(&mut fb);
                 if shot_screen == "objectives" {
@@ -5041,8 +5239,15 @@ impl App {
     /// resolution where the UI scale differs from 3.
     fn to_logical(&self, sx: i32, sy: i32) -> (i32, i32) {
         let s = self.ui_scale.max(0.5);
+        // Horizontally the view's `self.view.0` game px fill the content
+        // width (`render::stretch_columns`), so the x scale is cw / view_w.
+        let sx_scale = if self.content_box.2 > 0 && self.view.0 > 0 {
+            self.content_box.2 as f32 / self.view.0 as f32
+        } else {
+            s
+        };
         (
-            ((sx - self.content_x0) as f32 / s) as i32,
+            ((sx - self.content_x0) as f32 / sx_scale) as i32,
             (sy as f32 / s) as i32,
         )
     }
@@ -6154,32 +6359,30 @@ impl App {
                 self.unit_poses.insert(id, (x, y, facing));
             }
         }
-        // Geyser smoke of each capture: `creategasoverlays n` draws image
-        // 430 + n at the geyser's LO offset n.  Matched over all five
-        // smoke images x 8 frames: overlay 2 sits at (+34, +2.5) in both the
-        // Protoss and Terran games, overlay 0 at (+11, -19) in the Zerg one;
-        // the frame is the capture's moment.
-        let (image, sframe, dx, dy) = match race {
-            Race::Zerg => (430, 6, 11.4, -19.3),
-            Race::Protoss => (432, 6, 34.25, 2.5),
-            _ => (432, 4, 33.75, 2.5),
-        };
-        let start = self
-            .scenario
-            .start_location_of(self.local_player as u8)
-            .unwrap_or((0, 0));
-        self.geyser_smoke = self
-            .world
-            .units
-            .iter()
-            .filter(|u| u.alive && u.type_id == galaxycraft::ids::unit::VESPENE_GEYSER)
-            .min_by_key(|u| (u.x / 256 - start.0).pow(2) + (u.y / 256 - start.1).pow(2))
-            .map(|g| (g.id, image, sframe, dx, dy));
+        // Geyser smoke of each game's first capture (see `hunters_smoke`).
+        self.set_geyser_smoke(hunters_smoke(race));
         self.creep_variants.clear();
         if race == Race::Zerg && slot == 1 {
             self.creep_variants = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
         }
         self.clamp_camera();
+    }
+
+    /// Show `smoke` (`image, frame, LO dx, LO dy` in game px) over the
+    /// geyser nearest the local start location, or no smoke.
+    fn set_geyser_smoke(&mut self, smoke: Option<(u16, usize, f32, f32)>) {
+        let start = self
+            .scenario
+            .start_location_of(self.local_player as u8)
+            .unwrap_or((0, 0));
+        self.geyser_smoke = smoke.and_then(|(image, frame, dx, dy)| {
+            self.world
+                .units
+                .iter()
+                .filter(|u| u.alive && u.type_id == galaxycraft::ids::unit::VESPENE_GEYSER)
+                .min_by_key(|u| (u.x / 256 - start.0).pow(2) + (u.y / 256 - start.1).pow(2))
+                .map(|g| (g.id, image, frame, dx, dy))
+        });
     }
 
     fn centre_on_local_unit(&mut self) {
@@ -9789,17 +9992,7 @@ impl App {
         // screen space on top.
         if hd {
             let (cx, cy, cw, ch) = Self::content_rect(fb_full);
-            let mw = self.scenario.width as i32;
-            let grid = self.world.creep_grid().to_vec();
-            let variants = &self.creep_variants;
-            let creep = move |tx: i32, ty: i32| {
-                let on =
-                    tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0);
-                on.then(|| match variants.get(&(tx, ty)) {
-                    Some(&v) => (1 << 4) | v as u16,
-                    None => galaxycraft::render::creep_mtxm(tx, ty),
-                })
-            };
+            let creep = self.creep_lookup();
             if let Some(t) = &self.hd_terrain {
                 t.draw(
                     fb_full,
@@ -9829,9 +10022,30 @@ impl App {
         } else {
             blit_scaled_at(&world_fb, fb_full, scale, self.content_x0);
         }
+        // The view is `vw` game px wide; retail scales it to fill the box.
+        let content = Self::content_rect(fb_full);
+        let drawn = (vw as f32 * scale).round() as i32;
+        galaxycraft::render::stretch_columns(fb_full, content, drawn);
         let fb = fb_full;
         self.draw_hud(fb);
         self.draw_overlay(fb);
+    }
+
+    /// MTXM entry each creep tile draws with (recorded capture variants,
+    /// else the per-tile hash), `None` off creep: shared by the playfield
+    /// and the terrain minimap.
+    fn creep_lookup(&mut self) -> impl Fn(i32, i32) -> Option<u16> + 'static {
+        let mw = self.scenario.width as i32;
+        let grid = self.world.creep_grid().to_vec();
+        let variants = self.creep_variants.clone();
+        move |tx: i32, ty: i32| {
+            let on =
+                tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0);
+            on.then(|| match variants.get(&(tx, ty)) {
+                Some(&v) => (1 << 4) | v as u16,
+                None => galaxycraft::render::creep_mtxm(tx, ty),
+            })
+        }
     }
 
     /// HD image of a unit's main sprite (`unit -> flingy -> sprite -> image`).
@@ -10016,22 +10230,12 @@ impl App {
     }
 
     /// Screen rectangle of a console-dialog rect given in absolute classic
-    /// 640x480 coordinates.  Retail keeps the classic layout x3 and anchors
-    /// each dialog in the widened frame: the minimap stays left, `statdata`
-    /// is centred and the right-hand dialogs (`statres`, `statport`,
-    /// `stat_f10`, `statbtn*`) move by the whole extra width.  Measured on
-    /// 135051: card button 1 at x 2155 = (505 + 213.33) * 3, the panel name
-    /// centred at 1265 = (138 + 102 + 76 + 106.67) * 3.
+    /// 640x480 coordinates (anchoring: [`console_dialog_shift`]).
     fn hud_rect(&self, dialog: &str, r: UiRect) -> UiRect {
         let (cx, cy, cw, ch) = self.content_box;
         let s = (ch as f32 / 480.0).max(0.5);
-        let extra = cw as f32 / s - 640.0;
-        let anchor = match dialog {
-            "minimap" => 0.0,
-            "statdata" | "objctdlg" | "tips_dlg" => 0.5,
-            _ => 1.0,
-        };
-        let x = cx as f32 + (r.x as f32 + anchor * extra) * s;
+        let shift = console_dialog_shift(dialog, self.view.0, cw, s);
+        let x = cx as f32 + (r.x as f32 + shift) * s;
         UiRect::new(
             x.round() as i32,
             cy + (r.y as f32 * s).round() as i32,
@@ -10180,6 +10384,46 @@ impl App {
             self.camera.0 + self.view.0,
             self.camera.1 + MINIMAP_VIEW_H,
         );
+        // HD terrain minimap (134905): the terrain renderer at minimap scale
+        // (3 px per tile at 1440p, creep included) under the smooth fog, so
+        // the visible area fades out like the playfield's.
+        let creep = self.creep_lookup();
+        let mode = match (self.minimap_terrain, &self.hd_terrain) {
+            (false, _) => galaxycraft::render::MinimapTerrain::Hidden,
+            (true, None) => galaxycraft::render::MinimapTerrain::Tiles,
+            (true, Some(t)) => {
+                let (mw, mh) = self.tileset.minimap_size;
+                let s = rw as f32 / (mw.max(1) as f32 * 32.0);
+                let mut tmp = Framebuffer::new(rw.max(1) as usize, rh.max(1) as usize);
+                t.draw(
+                    &mut tmp,
+                    &self.tileset,
+                    &self.scenario,
+                    (0, 0),
+                    (0, 0, rw, rh),
+                    s,
+                    &creep,
+                );
+                if self.fog {
+                    galaxycraft::render::draw_fog_smooth(
+                        &mut tmp,
+                        &self.scenario,
+                        &self.world,
+                        self.local_player as u8,
+                        (0, 0),
+                        (0, 0, rw, rh),
+                        s,
+                    );
+                }
+                let _ = mh;
+                for yy in 0..rh {
+                    for xx in 0..rw {
+                        fb.put(rx + xx, ry + yy, tmp.get(xx, yy));
+                    }
+                }
+                galaxycraft::render::MinimapTerrain::Prepainted
+            }
+        };
         self.tileset.draw_minimap_with_terrain(
             fb,
             (rx, ry, rw, rh),
@@ -10187,7 +10431,7 @@ impl App {
             cam,
             self.world.vision.as_ref(),
             self.local_player as u8,
-            self.minimap_terrain,
+            mode,
         );
     }
 
@@ -10424,12 +10668,15 @@ impl App {
                 ));
                 let r = self.upgrade_button_rect();
                 let (x, y) = to_c(r.x, r.y);
-                ((x + 94.0, y - 16.0), false)
+                // +96 from the hit rect (measured +94 before `statdata`
+                // moved 2 px left; the retail text did not move).
+                ((x + 96.0, y - 16.0), false)
             }
             HudHover::MinimapTerrain => {
-                // Retail shows string 810 ("Hide Terrain ...") while the
-                // terrain layer is off (135121); kept as observed.
-                let id = if self.minimap_terrain { 809 } else { 810 };
+                // The toggle offers the opposite of the current state:
+                // 810 "Hide Terrain ..." while the terrain is shown (135121,
+                // whose minimap shows the terrain), 809 "Show ..." otherwise.
+                let id = minimap_toggle_string(self.minimap_terrain);
                 lines.push(self.data.strings.get(id).unwrap_or("").to_string());
                 let r = self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24));
                 let (x, y) = to_c(r.x, r.y);
@@ -10690,13 +10937,23 @@ impl App {
         );
     }
 
-    /// `stat_f10` button 1: the MENU label over the console's own well.
+    /// `stat_f10` button 1: the race's button plate (`dlg` frame 0) and the
+    /// MENU label over the console's own well.
     fn draw_hud_menu_label(&mut self, fb: &mut Framebuffer) {
         if self.console.is_none() {
             return;
         }
         let r = self.menu_button_rect();
         let k = self.content_box.3 as f32 / 1440.0;
+        if let Some(img) = self
+            .console
+            .as_ref()
+            .and_then(|c| c.dlg4.as_ref())
+            .and_then(|g| g.frame(MENU_PLATE_FRAME))
+        {
+            let (x, y, w, h) = menu_plate_rect(r, img.width, img.height, k);
+            img.draw_scaled(fb, x, y, w, h);
+        }
         let label = "MENU";
         let w = self.glue_measure(label, HUD_SMALL_PX, GlueFace::Hud);
         // The label sits in the race console's own MENU well, not centred in
@@ -10735,10 +10992,13 @@ impl App {
             return;
         };
         let k = self.content_box.3 as f32 / 1440.0;
+        let (sx, sy) = card_draw_shift(self.console_race);
+        let (sx, sy) = ((sx * k).round() as i32, (sy * k).round() as i32);
         for (slot, entry) in slots.iter().zip(card.iter()) {
             let Some((button, state)) = entry else {
                 continue;
             };
+            let slot = &UiRect::new(slot.x + sx, slot.y + sy, slot.w, slot.h);
             // Button background: `cmdbtns` frame 0, also under the pointer
             // (135114 keeps it; frame 1 is not the hover state).
             let frame = 0;
@@ -12571,9 +12831,12 @@ impl App {
         let (cx, _cy, _cw, ch) = Self::content_rect(fb);
         let k = ch as f32 / 1440.0;
         let font = match face {
-            GlueFace::Small | GlueFace::Hud => {
-                self.glue_font_small.as_mut().or(self.ui_font.as_mut())
-            }
+            GlueFace::Hud => self
+                .hud_font
+                .as_mut()
+                .or(self.glue_font_small.as_mut())
+                .or(self.ui_font.as_mut()),
+            GlueFace::Small => self.glue_font_small.as_mut().or(self.ui_font.as_mut()),
             GlueFace::Big => self.glue_font.as_mut().or(self.ui_font.as_mut()),
             GlueFace::Bigger => self.glue_font_ext.as_mut().or(self.ui_font_hover.as_mut()),
         };
@@ -12596,8 +12859,7 @@ impl App {
             };
             let glyph = &text[i..i + ch_.len_utf8()];
             if face == GlueFace::Hud {
-                font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c);
-                pen += font.measure_cef(glyph, px, 0.0).ceil();
+                pen = font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c);
             } else {
                 pen = font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c) + tr;
             }
@@ -12610,29 +12872,25 @@ impl App {
         let Some(font) = self.glue_face(face) else {
             return 0.0;
         };
-        if face == GlueFace::Hud {
-            // Content units at 1440p equal screen pixels.
-            return text
-                .chars()
-                .map(|c| {
-                    font.measure_cef(c.encode_utf8(&mut [0u8; 4]), ppem, 0.0)
-                        .ceil()
-                })
-                .sum();
-        }
         let chars: Vec<char> = text.chars().collect();
         let kern: f32 = chars
             .windows(2)
             .map(|w| font.kerning(w[0], w[1], ppem))
             .sum();
+        if face == GlueFace::Hud {
+            return font.measure_cef(text, ppem, 0.0) + kern;
+        }
         font.measure_cef(text, ppem, ppem * GLUE_TRACKING) + kern
     }
 
     fn glue_face(&self, face: GlueFace) -> Option<&galaxycraft::text::UiFont> {
         match face {
-            GlueFace::Small | GlueFace::Hud => {
-                self.glue_font_small.as_ref().or(self.ui_font.as_ref())
-            }
+            GlueFace::Hud => self
+                .hud_font
+                .as_ref()
+                .or(self.glue_font_small.as_ref())
+                .or(self.ui_font.as_ref()),
+            GlueFace::Small => self.glue_font_small.as_ref().or(self.ui_font.as_ref()),
             GlueFace::Big => self.glue_font.as_ref().or(self.ui_font.as_ref()),
             GlueFace::Bigger => self.glue_font_ext.as_ref().or(self.ui_font_hover.as_ref()),
         }
@@ -13096,7 +13354,7 @@ impl App {
             (0, 0, 0, 0),
             None,
             0,
-            true,
+            galaxycraft::render::MinimapTerrain::Tiles,
         );
         self.lobby_preview = Some((self.map_index, preview.pixels));
     }
@@ -15989,13 +16247,22 @@ impl App {
         let k = self.content_box.3 as f32 / 1440.0;
         let cx0 = self.content_box.0;
         let pane = self.hud_rect(dialog, layout.rect);
+        let x0 = pane.x + (GLUE_PANE_DX * k).round() as i32;
+        let w = pane.w + (GLUE_PANE_DW * k).round() as i32;
+        let g = (3.0 * k).round().max(1.0) as i32;
         for y in pane.y..pane.y + pane.h {
-            for x in pane.x..pane.x + pane.w {
+            for x in x0..x0 + w {
+                let (dx, dy) = (x - x0, y - pane.y);
+                let cell = glue_pane_cell(dx, dy, w, pane.h, g);
+                let (colour, alpha) = match cell {
+                    PaneCell::Outside => continue,
+                    PaneCell::Border => (DIALOG_EDGE, DIALOG_EDGE_ALPHA),
+                    PaneCell::Fill => (DIALOG_FILL, DIALOG_ALPHA),
+                };
                 let c = fb.get(x, y);
-                fb.put(x, y, c.blend(DIALOG_FILL, DIALOG_ALPHA));
+                fb.put(x, y, c.blend(colour, alpha));
             }
         }
-        fb.rect_outline(pane.x, pane.y, pane.w, pane.h, DIALOG_EDGE);
         let to_c = |r: UiRect| {
             (
                 (r.x - cx0) as f32 / k,
@@ -16010,6 +16277,14 @@ impl App {
             .filter(|c| c.id != 0)
             .map(|c| (c.id, self.hud_rect(dialog, c.abs)))
             .collect();
+        let kind_of = |id: i32| {
+            layout
+                .controls
+                .iter()
+                .find(|c| c.id == id)
+                .map_or("", |c| c.kind.as_str())
+                .to_string()
+        };
         let ctrl = |id: i32| rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
         // Title (CTEXT -1), centred.
         if let Some(r) = ctrl(-1) {
@@ -16070,23 +16345,19 @@ impl App {
                 // `RC_SMALLTEXT`-sized label with the dialog's drop shadow
                 // (134931: ink 824..1128 x 677..704 for "Show Tips at
                 // Startup").
-                // Laid out like the HUD text (whole-pixel advances) at
-                // 30 px/em plus 1 px per glyph: ink 304 x 29 vs retail 305 x 28.
+                // The HUD face at the unit-name size (glyph left edges within
+                // 0.33 px of retail; see `GlueFace::Hud`).
                 for (d, colour) in [(DIALOG_SHADOW, Rgb::new(0, 0, 0)), (0.0, HUD_TEXT_COLOR)] {
-                    let mut pen = x + DIALOG_CHECK_DX + d;
-                    for ch in label.chars() {
-                        let g = ch.to_string();
-                        pen = self.glue_text_face(
-                            fb,
-                            pen,
-                            y + DIALOG_CHECK_BASE + d,
-                            &g,
-                            DIALOG_CHECK_PX,
-                            colour,
-                            None,
-                            GlueFace::Hud,
-                        ) + 1.0;
-                    }
+                    self.glue_text_face(
+                        fb,
+                        x + DIALOG_CHECK_DX + d,
+                        y + DIALOG_CHECK_BASE + d,
+                        label,
+                        DIALOG_CHECK_PX,
+                        colour,
+                        None,
+                        GlueFace::Hud,
+                    );
                 }
             }
         }
@@ -16129,7 +16400,7 @@ impl App {
             self.glue_shadow_text(
                 fb,
                 x + (w - tw) / 2.0,
-                y + h / 2.0 + DIALOG_BUTTON_BASE,
+                y + h / 2.0 + button_label_base(&kind_of(id)),
                 label,
                 Some(TOOLTIP_HOTKEY),
             );
@@ -16265,6 +16536,12 @@ mod tile_grid_tests {
         // The recorded capture only uses the 13 creep subtiles.
         let creep = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
         assert!(creep.len() > 100 && creep.values().all(|&v| v < 13));
+        // The band above the console (tile rows 13-14) is recorded too:
+        // 16 + 12 tiles, one of them a rare 6-12 variant.
+        assert_eq!(creep.len(), 132 + 28);
+        assert_eq!(creep.get(&(66, 13)), Some(&5));
+        assert_eq!(creep.get(&(81, 13)), Some(&9));
+        assert_eq!(creep.get(&(79, 14)), Some(&0));
     }
 }
 
@@ -16467,5 +16744,170 @@ mod options_chrome_tests {
         off.clear(Rgb::new(0, 0, 0));
         opt_dropdown(&mut off, &mut None, 20, 10.0, 516, "", false, 1.0);
         assert_eq!(off.get(20 + 516 - 26, 10 + 16 + 12), Rgb::new(0, 0, 0));
+    }
+}
+
+#[cfg(test)]
+mod console_anchor_tests {
+    use super::{console_dialog_shift, menu_plate_rect, UiRect};
+
+    #[test]
+    fn statdata_centres_in_whole_game_px_and_the_rest_in_screen_px() {
+        // 2560x1440 content, 853 game px view (3 px per game px).
+        let shift = |d| console_dialog_shift(d, 853, 2560, 3.0);
+        assert_eq!(shift("minimap"), 0.0);
+        assert_eq!(shift("statdata"), 106.0, "(853 - 640) / 2, integer");
+        assert!((shift("tips_dlg") - 106.667).abs() < 0.01);
+        assert!((shift("objctdlg") - 106.667).abs() < 0.01);
+        assert!((shift("statres") - 213.333).abs() < 0.01);
+        // The Nexus name control (statdata -5, classic x 240) lands at
+        // (240 + 106) * 3 = 1038 px, 2 px left of the fractional 1040.
+        assert_eq!(((240.0 + shift("statdata")) * 3.0).round() as i32, 1038);
+    }
+
+    #[test]
+    fn menu_plate_lands_where_the_retail_template_matched() {
+        // stat_f10 control 1 = classic (416, 388, 64, 20) -> (1888, 1164)
+        // at 1440p; the 240x96 dlg frame matched at (1885, 1164) on
+        // 135020 / 135051 / 134905.
+        let r = UiRect::new(1888, 1164, 192, 60);
+        assert_eq!(menu_plate_rect(r, 240, 96, 1.0), (1885, 1164, 180, 72));
+    }
+}
+
+#[cfg(test)]
+mod glue_pane_tests {
+    use super::{glue_pane_cell, PaneCell};
+
+    /// Row extents of the pane, as the 134919 / 134931 captures measure them
+    /// (x 702..=1878, y 96..=863 at 1440p).
+    #[test]
+    fn pane_corners_are_rounded_like_the_retail_dialog() {
+        let (w, h, g) = (1177, 768, 3);
+        let last = |dy: i32| {
+            (0..w)
+                .rev()
+                .find(|&dx| glue_pane_cell(dx, dy, w, h, g) != PaneCell::Outside)
+                .map(|dx| 702 + dx)
+        };
+        // Rows 96-98 end at 1869, 99-104 at 1875, then 1878; the bottom
+        // mirrors it (855-860 at 1875, 861-863 at 1869).
+        assert_eq!(last(0), Some(1869));
+        assert_eq!(last(3), Some(1875));
+        assert_eq!(last(9), Some(1878));
+        assert_eq!(last(767 - 8), Some(1875));
+        assert_eq!(last(767), Some(1869));
+        // A one-game-px border, then the fill.
+        assert_eq!(glue_pane_cell(0, 400, w, h, g), PaneCell::Border);
+        assert_eq!(glue_pane_cell(2, 400, w, h, g), PaneCell::Border);
+        assert_eq!(glue_pane_cell(3, 400, w, h, g), PaneCell::Fill);
+        assert_eq!(glue_pane_cell(600, 5, w, h, g), PaneCell::Fill);
+        assert_eq!(glue_pane_cell(600, 2, w, h, g), PaneCell::Border);
+        assert_eq!(glue_pane_cell(1, 1, w, h, g), PaneCell::Outside);
+    }
+}
+
+#[cfg(test)]
+mod hunters_smoke_tests {
+    use super::{hunters_capture_minimap_terrain, hunters_capture_smoke, hunters_smoke, Race};
+
+    #[test]
+    fn each_protoss_capture_shows_its_own_geyser_smoke() {
+        // 135051 keeps the game's overlay 2; 135109 caught overlay 0 (at
+        // the same LO offset as in the Zerg game) and 135114 / 135121 caught
+        // the geyser between puffs.
+        assert_eq!(hunters_capture_smoke("ingame-protoss"), None);
+        assert_eq!(hunters_smoke(Race::Protoss).map(|s| s.0), Some(432));
+        let shields = hunters_capture_smoke("ingame-protoss-tip-shields").flatten();
+        assert_eq!(shields.map(|s| (s.0, s.1)), Some((430, 3)));
+        assert_eq!(
+            shields.map(|s| (s.2, s.3)),
+            hunters_smoke(Race::Zerg).map(|s| (s.2, s.3)),
+            "overlay 0 has one LO offset"
+        );
+        for shot in [
+            "ingame-protoss-tip-probe",
+            "ingame-protoss-tip-minimap",
+            "objectives",
+            "tips",
+        ] {
+            assert_eq!(hunters_capture_smoke(shot), Some(None), "{shot}");
+        }
+        // 135121's tooltip reads "Hide Terrain" (810): its terrain is shown.
+        assert_eq!(super::minimap_toggle_string(true), 810);
+        assert_eq!(super::minimap_toggle_string(false), 809);
+        // Only the first Zerg capture shows the terrain minimap.
+        assert!(hunters_capture_minimap_terrain("ingame-zerg"));
+        assert!(hunters_capture_minimap_terrain(
+            "ingame-protoss-tip-minimap"
+        ));
+        for shot in ["objectives", "tips", "ingame-protoss", "ingame-terran2"] {
+            assert!(!hunters_capture_minimap_terrain(shot), "{shot}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod dialog_button_tests {
+    use super::button_label_base;
+
+    #[test]
+    fn defpushbutton_labels_sit_six_px_lower() {
+        // 134931 `OK` (DEFPUSHBUTTON) vs `Previous Tip` (PUSHBUTTON): ink
+        // tops 769 vs 763 on the same button row.
+        assert_eq!(
+            button_label_base("DEFPUSHBUTTON") - button_label_base("PUSHBUTTON"),
+            6.0
+        );
+        // Measured against the old shared 16: PUSHBUTTON 8 px higher.
+        assert_eq!(button_label_base("PUSHBUTTON"), 8.0);
+    }
+}
+
+#[cfg(test)]
+mod card_shift_tests {
+    use super::{card_draw_shift, Race};
+
+    #[test]
+    fn zerg_and_protoss_cards_draw_one_game_px_left() {
+        assert_eq!(card_draw_shift(Race::Terran), (0.0, 0.0));
+        assert_eq!(card_draw_shift(Race::Zerg), (-3.0, 1.0));
+        assert_eq!(card_draw_shift(Race::Protoss), (-3.0, 1.0));
+    }
+}
+
+#[cfg(test)]
+mod hud_font_tests {
+    use super::{HUD_FONT, HUD_NAME_PX, HUD_SMALL_PX};
+
+    #[test]
+    fn hud_text_matches_the_retail_ink_widths() {
+        let root = std::env::var("GC_RETAIL_CACHE").unwrap_or_else(|_| {
+            let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
+                format!("{}/.cache", std::env::var("HOME").unwrap_or_default())
+            });
+            format!("{base}/galaxycraft/retail-864772b9")
+        });
+        let Some(font) =
+            galaxycraft::text::UiFont::load(&std::path::Path::new(&root).join(HUD_FONT))
+        else {
+            eprintln!("skip: retail fonts not materialised on this machine");
+            return;
+        };
+        // Retail ink widths (lavender ink, 135051 / 134931): the stat row,
+        // the unit name and the tips checkbox label.
+        for (text, px, retail) in [
+            ("Psi Used: 4", HUD_SMALL_PX, 128.0),
+            ("Psi Max: 200", HUD_SMALL_PX, 147.0),
+            ("Protoss Nexus", HUD_NAME_PX, 204.0),
+            ("Show Tips at Startup", HUD_NAME_PX, 305.0),
+        ] {
+            let (x0, x1, _, _) = font.ink_bounds_cef(text, px, 0.0).expect("ink");
+            let w = x1 - x0;
+            assert!(
+                (w - retail).abs() <= 2.0,
+                "{text}: {w:.1} px vs retail {retail}"
+            );
+        }
     }
 }
