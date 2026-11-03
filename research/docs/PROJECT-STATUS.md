@@ -3,8 +3,9 @@
 > Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
 Last update: 2026-11-03 (in-game: the 8 screenshots of
-(8)The Hunters rebuilt from melee rules, 4.35–5.99 raw mean
-vs 20–28 at the start; creep, vision, bars and circles ported from the
+(8)The Hunters rebuilt from melee rules, 2.46–3.27 raw mean after
+round 3 (853 px view stretch, console anchoring, glue panes, capture
+state; session log entry 75) vs 20–28 at the start; creep, vision, bars and circles ported from the
 OpenBW reference; `sprites.dat` and vf4 fixed; visual gate 51/51;
 victory→progress verified end to end and scrollbar thumb dragging
 implemented; proofs in `engine-rust/docs/proof-sheets/`).

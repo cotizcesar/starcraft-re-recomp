@@ -23,20 +23,20 @@ ref      screen            check  reference                      rendered       
 134843   lobby             right  1533                           1533                           0      PASS
 130727   gametype          right  1802                           1802                           0      PASS
 131116   gametype          right  1802                           1802                           0      PASS
-130933   options-speed     text/green [486, 580, 672, 766]           [485, 578, 671, 764]           2      PASS
-130933   options-speed     text/white [346, 499, 652]                [346, 499, 652]                0      PASS
+130933   options-speed     text/green [486, 580, 672, 766]           [487, 580, 673, 766]           1      PASS
+130933   options-speed     text/white [346, 499, 652]                [345, 498, 651]                1      PASS
 131015   hotkeys-terran    text/green [71]                           [71]                           0      PASS
 131015   hotkeys-terran    text/white [187]                          [187]                          0      PASS
 131005   collections       text/white [121, 216, 299]                [121, 216, 299]                0      PASS
 130848   saved             text/white [220]                          [220]                          0      PASS
 130858   replays           text/green [406, 463, 520, 570]           [406, 463, 520, 577]           0      PASS
 134831   lobby             text/green [105, 147, 406, 463]           [105, 147, 402, 459]           0      PASS
-130744   episode           rings  [(641, 983), (1264, 723), (1930, 978)] [(644, 981), (1265, 723), (1931, 978)] 3      PASS
-130750   episode-hover-terran rings  [(643, 981), (1263, 724), (1930, 978)] [(645, 981), (1266, 723), (1932, 978)] 3      PASS
-130757   episode-hover-zerg rings  [(642, 981), (1262, 725), (1931, 978)] [(645, 981), (1266, 723), (1932, 978)] 4      PASS
-130804   episode-hover-protoss rings  [(642, 981), (1264, 723), (1928, 979)] [(644, 981), (1265, 723), (1931, 978)] 3      PASS
-130824   episode-expansion-hover-protoss rings  [(641, 983), (1264, 783), (1929, 980)] [(643, 983), (1264, 785), (1930, 980)] 2      PASS
-130832   episode-expansion-hover-terran rings  [(643, 981), (1262, 785), (1931, 978)] [(645, 981), (1266, 783), (1932, 978)] 4      PASS
-130840   episode-expansion-hover-zerg rings  [(642, 981), (1262, 784), (1931, 978)] [(645, 981), (1266, 783), (1932, 978)] 4      PASS
+130744   episode           rings  [(641, 983), (1264, 723), (1930, 978)] [(643, 983), (1265, 723), (1931, 978)] 2      PASS
+130750   episode-hover-terran rings  [(643, 981), (1263, 724), (1930, 978)] [(645, 981), (1264, 724), (1932, 978)] 2      PASS
+130757   episode-hover-zerg rings  [(642, 981), (1262, 725), (1931, 978)] [(643, 981), (1264, 725), (1932, 978)] 2      PASS
+130804   episode-hover-protoss rings  [(642, 981), (1264, 723), (1928, 979)] [(644, 981), (1265, 723), (1930, 979)] 2      PASS
+130824   episode-expansion-hover-protoss rings  [(641, 983), (1264, 783), (1929, 980)] [(643, 983), (1265, 783), (1930, 980)] 2      PASS
+130832   episode-expansion-hover-terran rings  [(643, 981), (1262, 785), (1931, 978)] [(645, 981), (1264, 785), (1932, 978)] 2      PASS
+130840   episode-expansion-hover-zerg rings  [(642, 981), (1262, 784), (1931, 978)] [(644, 981), (1264, 785), (1932, 978)] 2      PASS
 
 PASS 39/39 checks; 31 references covered

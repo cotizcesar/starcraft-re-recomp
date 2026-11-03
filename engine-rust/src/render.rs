@@ -747,14 +747,49 @@ pub fn minimap_view_box(
     (x0 + sx, y0 + sy, sw, sh, q.round().max(1.0) as i32)
 }
 
-/// One unit on the minimap: position and placement width in game px.
+/// Minimap background mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MinimapTerrain {
+    /// Black radar: blips and camera box only.
+    Hidden,
+    /// One averaged colour per tile.
+    Tiles,
+    /// Keep what the caller already painted in the rect.
+    Prepainted,
+}
+
+/// One unit on the minimap: position and placement box in game px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MinimapDot {
     pub x: i32,
     pub y: i32,
     pub owner: u8,
-    pub size: i32,
+    /// `units.dat` placement box (game px).
+    pub placement: (i32, i32),
+    pub building: bool,
     pub resource: bool,
+}
+
+/// Minimap blip of a unit in whole tiles `(tx, ty, w, h)`: OpenBW's
+/// `draw_minimap` rule (placement box / 32, buildings clamped to 4 tiles,
+/// at least 2 x 2, top-left at `(position - placement / 2) / 32`).  FACT
+/// (2026-11-03): the retail 135051 minimap matches it row for row (geyser
+/// 12 x 6 px, Nexus plus probes 12 x 12, the overlapping mineral fields);
+/// the earlier square as wide as the placement box did not.
+pub fn minimap_blip_tiles(d: &MinimapDot) -> (i32, i32, i32, i32) {
+    let min = 2;
+    let (pw, ph) = d.placement;
+    let (mut w, mut h) = (pw / TILE_PX, ph / TILE_PX);
+    if d.building {
+        w = w.min(4);
+        h = h.min(4);
+    }
+    (
+        (d.x - pw / 2).div_euclid(TILE_PX),
+        (d.y - ph / 2).div_euclid(TILE_PX),
+        w.max(min),
+        h.max(min),
+    )
 }
 
 /// Minimap colours measured on 135051: own units and resources.
@@ -769,36 +804,78 @@ pub const FOG_EXPLORED_ALPHA: f32 = 150.0;
 /// 24, 32; best 16); vertical offsets did not help.  Unexplained, so kept as
 /// a measured constant.
 const FOG_SAMPLE_DX: f32 = 16.0;
-/// Fog grid samples per tile and Gaussian width in tiles.
+/// Fog grid samples per tile, and the box-filter radius in samples.
+///
+/// The edge of vision is a box blur of the per-tile darkness (a linear
+/// ramp 11 samples = 2.75 tiles wide).  INFERENCE (2026-11-03): retail's
+/// measured ramp is close to linear (0.15 -> 0.9 over ~170 screen px on
+/// 135020 / 135051), and against the previous Gaussian (sigma 0.8 tiles) the
+/// box lowers the frame mean on all three references: 3.438 -> 3.428
+/// (135051), 2.510 -> 2.499 (135020), 3.222 -> 3.193 (134905); widths 2.0 /
+/// 3.0 tiles and two passes score worse.  Falsifier: a capture whose fog
+/// edge has a visible Gaussian tail.
 const FOG_SUB: i32 = 4;
-const FOG_SIGMA: f32 = 0.8;
+const FOG_BOX_RADIUS: i32 = 5;
 
-/// In-place separable Gaussian blur of a `w x h` grid (clamped edges).
-fn gaussian_blur(v: &mut [f32], w: usize, h: usize, sigma: f32) {
-    let r = (sigma * 3.0).ceil() as i32;
-    let k: Vec<f32> = (-r..=r)
-        .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
-        .collect();
-    let norm: f32 = k.iter().sum();
+/// In-place separable box blur of radius `r` over a `w x h` grid (clamped
+/// edges).
+fn box_blur(v: &mut [f32], w: usize, h: usize, r: i32) {
+    let n = (2 * r + 1) as f32;
     let mut tmp = vec![0f32; v.len()];
     for y in 0..h {
         for x in 0..w {
-            let mut acc = 0.0;
-            for (n, kv) in k.iter().enumerate() {
-                let xx = (x as i32 + n as i32 - r).clamp(0, w as i32 - 1) as usize;
-                acc += v[y * w + xx] * kv;
-            }
-            tmp[y * w + x] = acc / norm;
+            let acc: f32 = (-r..=r)
+                .map(|d| v[y * w + (x as i32 + d).clamp(0, w as i32 - 1) as usize])
+                .sum();
+            tmp[y * w + x] = acc / n;
         }
     }
     for y in 0..h {
         for x in 0..w {
-            let mut acc = 0.0;
-            for (n, kv) in k.iter().enumerate() {
-                let yy = (y as i32 + n as i32 - r).clamp(0, h as i32 - 1) as usize;
-                acc += tmp[yy * w + x] * kv;
-            }
-            v[y * w + x] = acc / norm;
+            let acc: f32 = (-r..=r)
+                .map(|d| tmp[(y as i32 + d).clamp(0, h as i32 - 1) as usize * w + x])
+                .sum();
+            v[y * w + x] = acc / n;
+        }
+    }
+}
+
+/// Stretch the first `src_w` columns of `rect` (`x, y, w, h`) across its
+/// full width with linear filtering, sampling at pixel centres.
+///
+/// Retail's playfield has an integer logical width (853 game px in a
+/// 2560 px 16:9 box) and is scaled to fill the box, so at 1440p one game px
+/// is 2560 / 853 = 3.0012 screen px horizontally and exactly 3 vertically.
+/// The HD world is drawn at 3.0 here (2559 px) and then stretched.  FACT,
+/// measured on 134905 / 135051 terrain: the best horizontal shift grows
+/// linearly with x (0.00 at x 120-280, 0.50 at 1240, 1.00 at 2360;
+/// slope 0.00046 against 0.00039 predicted, no vertical component).
+pub fn stretch_columns(fb: &mut Framebuffer, rect: (i32, i32, i32, i32), src_w: i32) {
+    let (x0, y0, w, h) = rect;
+    if src_w <= 0 || src_w >= w {
+        return;
+    }
+    let k = src_w as f32 / w as f32;
+    let taps: Vec<(i32, i32, f32)> = (0..w)
+        .map(|x| {
+            let f = ((x as f32 + 0.5) * k - 0.5).max(0.0);
+            let i = (f.floor() as i32).min(src_w - 1);
+            (i, (i + 1).min(src_w - 1), f - i as f32)
+        })
+        .collect();
+    let mut row = vec![Rgb(0); src_w as usize];
+    for y in y0..y0 + h {
+        for (i, p) in row.iter_mut().enumerate() {
+            *p = fb.get(x0 + i as i32, y);
+        }
+        for (x, &(a, b, t)) in taps.iter().enumerate() {
+            let (pa, pb) = (row[a as usize].0, row[b as usize].0);
+            let mix = |sh: u32| {
+                let ca = ((pa >> sh) & 0xff) as f32;
+                let cb = ((pb >> sh) & 0xff) as f32;
+                (ca + (cb - ca) * t).round() as u8
+            };
+            fb.put(x0 + x as i32, y, Rgb::new(mix(16), mix(8), mix(0)));
         }
     }
 }
@@ -838,9 +915,8 @@ pub fn draw_fog_smooth(
             };
         }
     }
-    // Upsample to FOG_SUB samples per tile (piecewise constant) and blur
-    // with a Gaussian of FOG_SIGMA tiles: the retail edge of vision falls
-    // from 0.9 to 0.1 over ~3 tiles (fitted on 135051 / 135020).
+    // Upsample to FOG_SUB samples per tile (piecewise constant) and box-blur
+    // (see FOG_BOX_RADIUS).
     let sub = FOG_SUB;
     let (gw, gh) = (tw * sub, th * sub);
     let mut fine = vec![0f32; (gw * gh) as usize];
@@ -849,7 +925,7 @@ pub fn draw_fog_smooth(
             fine[(y * gw + x) as usize] = grid[((y / sub) * tw + x / sub) as usize];
         }
     }
-    gaussian_blur(&mut fine, gw as usize, gh as usize, FOG_SIGMA * sub as f32);
+    box_blur(&mut fine, gw as usize, gh as usize, FOG_BOX_RADIUS);
     let at = |i: i32, j: i32| fine[(j.clamp(0, gh - 1) * gw + i.clamp(0, gw - 1)) as usize];
     let step = TILE_PX as f32 / sub as f32;
     for y in dy.max(0)..(dy + dh).min(fb.height) {
@@ -928,36 +1004,68 @@ fn blit_tile(
     }
 }
 
-/// Box-filter an image down to `w`x`h`, keeping the alpha channel.
+/// Area-filter an image down to `w`x`h` (each output pixel averages the
+/// exact source footprint, fractional texels weighted by coverage), in
+/// premultiplied alpha; the result is straight alpha, as [`blit_tile`]
+/// blends it.
+///
+/// At 1440p a 128 px HD megatile becomes 96 px (1.333 texels per pixel).
+/// The earlier integer-boundary box averaged alternating 1- and 2-texel
+/// spans and stored premultiplied colour; on the (8)The Hunters terrain the
+/// area filter lowers the mean error from 1.81 / 2.55 to 1.61 / 2.50
+/// (135020 / 135051).
 fn downsample_rgba(img: &crate::dds::DdsImage, w: usize, h: usize) -> Box<[u32]> {
     let mut out = vec![0u32; w * h];
-    if img.width == 0 || img.height == 0 {
+    if img.width == 0 || img.height == 0 || w == 0 || h == 0 {
         return out.into_boxed_slice();
     }
-    for ty in 0..h {
-        let y0 = ty * img.height / h;
-        let y1 = (((ty + 1) * img.height) / h).max(y0 + 1).min(img.height);
-        for tx in 0..w {
-            let x0 = tx * img.width / w;
-            let x1 = (((tx + 1) * img.width) / w).max(x0 + 1).min(img.width);
-            let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let p = img.pixel(x, y);
-                    let pa = p >> 24;
-                    r += ((p >> 16) & 0xff) * pa / 255;
-                    g += ((p >> 8) & 0xff) * pa / 255;
-                    b += (p & 0xff) * pa / 255;
-                    a += pa;
-                    n += 1;
+    let (sw, sh) = (img.width as f32 / w as f32, img.height as f32 / h as f32);
+    let texel = |x: i32, y: i32| {
+        let p = img.pixel(x as usize, y as usize);
+        let a = (p >> 24) as f32 / 255.0;
+        [
+            ((p >> 16) & 0xff) as f32 * a,
+            ((p >> 8) & 0xff) as f32 * a,
+            (p & 0xff) as f32 * a,
+            a,
+        ]
+    };
+    // Coverage of source cells [i, i + 1) by the span [lo, hi).
+    let spans = |n: usize, k: f32, max: usize| -> Vec<Vec<(i32, f32)>> {
+        (0..n)
+            .map(|t| {
+                let (lo, hi) = (t as f32 * k, ((t + 1) as f32 * k).min(max as f32));
+                (lo.floor() as i32..hi.ceil() as i32)
+                    .map(|i| (i, (hi.min(i as f32 + 1.0) - lo.max(i as f32)).max(0.0)))
+                    .filter(|&(_, c)| c > 0.0)
+                    .collect()
+            })
+            .collect()
+    };
+    let xs = spans(w, sw, img.width);
+    let ys = spans(h, sh, img.height);
+    for (ty, ycov) in ys.iter().enumerate() {
+        for (tx, xcov) in xs.iter().enumerate() {
+            let mut acc = [0f32; 4];
+            let mut area = 0.0;
+            for &(sy, wy) in ycov {
+                for &(sx, wx) in xcov {
+                    let t = texel(sx, sy);
+                    for (a, v) in acc.iter_mut().zip(t) {
+                        *a += v * wx * wy;
+                    }
+                    area += wx * wy;
                 }
             }
-            if n == 0 || a == 0 {
+            if area <= 0.0 || acc[3] <= 0.0 {
                 continue;
             }
-            let a_out = a / n;
-            let scale = |v: u32| -> u32 { (v / n).min(255) };
-            out[ty * w + tx] = (a_out << 24) | (scale(r) << 16) | (scale(g) << 8) | scale(b);
+            let a = acc[3] / area;
+            let c = |v: f32| (v / acc[3]).round().clamp(0.0, 255.0) as u32;
+            out[ty * w + tx] = (((a * 255.0).round() as u32) << 24)
+                | (c(acc[0]) << 16)
+                | (c(acc[1]) << 8)
+                | c(acc[2]);
         }
     }
     out.into_boxed_slice()
@@ -1211,13 +1319,14 @@ impl Tileset {
         units: &[MinimapDot],
         cam: (i32, i32, i32, i32),
     ) {
-        self.draw_minimap_with_terrain(fb, rect, units, cam, None, 0, true)
+        self.draw_minimap_with_terrain(fb, rect, units, cam, None, 0, MinimapTerrain::Tiles)
     }
 
     /// Radar with retail fog of war: unexplored tiles are black and explored
-    /// but not currently visible ones are dimmed. `terrain == false` is the
-    /// "Show Terrain in Minimap (Tab)" state the reference screenshot shows
-    /// (black radar with unit dots and the camera box only).
+    /// but not currently visible ones are dimmed.  `MinimapTerrain::Hidden`
+    /// is the black radar most references show (blips and camera box only);
+    /// `Prepainted` keeps a background the caller already drew (the HD
+    /// terrain minimap, `sc_view::draw_hud_minimap`).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_minimap_with_terrain(
         &self,
@@ -1227,7 +1336,7 @@ impl Tileset {
         cam: (i32, i32, i32, i32),
         fog: Option<&crate::vision::Vision>,
         owner: u8,
-        terrain: bool,
+        terrain: MinimapTerrain,
     ) {
         let (x, y, w, h) = rect;
         let (mw, mh) = self.minimap_size;
@@ -1236,11 +1345,11 @@ impl Tileset {
         }
         let sx = w as f32 / mw as f32;
         let sy = h as f32 / mh as f32;
-        if !terrain {
+        if terrain == MinimapTerrain::Hidden {
             fb.rect(x, y, w, h, Rgb::new(0, 0, 0));
         }
         for ty in 0..mh {
-            if !terrain {
+            if terrain != MinimapTerrain::Tiles {
                 break;
             }
             for tx in 0..mw {
@@ -1260,20 +1369,33 @@ impl Tileset {
                 fb.rect(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1), c);
             }
         }
-        // Retail dots (135051): a square as wide as the unit's placement
-        // box, local units green, resources cyan, others in player colour.
-        for d in units {
-            let side = ((d.size as f32 / TILE_PX as f32) * sx).round().max(1.0) as i32;
-            let px = x + (d.x as f32 / TILE_PX as f32 * sx).round() as i32 - side / 2;
-            let py = y + (d.y as f32 / TILE_PX as f32 * sy).round() as i32 - side / 2;
-            let c = if d.resource {
-                MINIMAP_RESOURCE
-            } else if d.owner == owner {
-                MINIMAP_SELF
-            } else {
-                PLAYER_COLORS[d.owner as usize % PLAYER_COLORS.len()]
-            };
-            fb.rect(px, py, side, side, c);
+        // Retail blips (`minimap_blip_tiles`): local units green, resources
+        // cyan, others in player colour, each with a 1 px black outline
+        // drawn under every fill, so overlapping blips share one outline
+        // around their union (134905, visible over the terrain minimap).
+        let rects: Vec<(i32, i32, i32, i32, Rgb)> = units
+            .iter()
+            .map(|d| {
+                let (tx, ty, tw, th) = minimap_blip_tiles(d);
+                let px = x + (tx as f32 * sx) as i32;
+                let py = y + (ty as f32 * sy) as i32;
+                let bw = x + ((tx + tw) as f32 * sx) as i32 - px;
+                let bh = y + ((ty + th) as f32 * sy) as i32 - py;
+                let c = if d.resource {
+                    MINIMAP_RESOURCE
+                } else if d.owner == owner {
+                    MINIMAP_SELF
+                } else {
+                    PLAYER_COLORS[d.owner as usize % PLAYER_COLORS.len()]
+                };
+                (px, py, bw, bh, c)
+            })
+            .collect();
+        for &(px, py, bw, bh, _) in &rects {
+            fb.rect(px - 1, py - 1, bw + 2, bh + 2, Rgb::new(0, 0, 0));
+        }
+        for &(px, py, bw, bh, c) in &rects {
+            fb.rect(px, py, bw, bh, c);
         }
         // Camera viewport, on the classic 128 px minimap grid (134905 /
         // 135051: every edge reproduced): position floored and size ceiled
@@ -1820,6 +1942,118 @@ pub fn asset_root() -> PathBuf {
         manifest
     } else {
         PathBuf::from("assets")
+    }
+}
+
+#[cfg(test)]
+mod minimap_blip_tests {
+    use super::{minimap_blip_tiles, MinimapDot};
+
+    fn dot(x: i32, y: i32, placement: (i32, i32), building: bool) -> MinimapDot {
+        MinimapDot {
+            x,
+            y,
+            owner: 0,
+            placement,
+            building,
+            resource: false,
+        }
+    }
+
+    #[test]
+    fn blips_follow_the_placement_box_in_whole_tiles() {
+        // Geyser 128x64 centred at (1000, 3000): 4 x 2 tiles at (29, 92).
+        assert_eq!(
+            minimap_blip_tiles(&dot(1000, 3000, (128, 64), true)),
+            (29, 92, 4, 2)
+        );
+        // Mineral field 64x32: at least 2 x 2 (OpenBW, and 135051's rows).
+        let mineral = minimap_blip_tiles(&dot(1000, 3000, (64, 32), false));
+        assert_eq!((mineral.2, mineral.3), (2, 2));
+        // Nexus 128x96: 4 x 3; buildings are clamped to 4 tiles.
+        assert_eq!(minimap_blip_tiles(&dot(1000, 3000, (128, 96), true)).2, 4);
+        assert_eq!(minimap_blip_tiles(&dot(1000, 3000, (128, 96), true)).3, 3);
+        assert_eq!(minimap_blip_tiles(&dot(1000, 3000, (192, 160), true)).2, 4);
+        // Units are not clamped.
+        assert_eq!(minimap_blip_tiles(&dot(1000, 3000, (192, 160), false)).2, 6);
+    }
+}
+
+#[cfg(test)]
+mod view_scale_tests {
+    use super::{box_blur, downsample_rgba, stretch_columns, Framebuffer, Rgb};
+    use crate::dds::DdsImage;
+
+    #[test]
+    fn the_853_px_view_is_stretched_across_the_2560_px_box() {
+        // 2559 drawn columns (853 game px at 3x): black, then white from
+        // source x 2000 on; column 2559 was never drawn.
+        let mut fb = Framebuffer::new(2560, 1);
+        for x in 0..2559 {
+            let v = if x < 2000 { 0 } else { 255 };
+            fb.put(x, 0, Rgb::new(v, v, v));
+        }
+        fb.put(2559, 0, Rgb::new(255, 0, 0));
+        stretch_columns(&mut fb, (0, 0, 2560, 1), 2559);
+        let at = |x: i32| fb.get(x, 0);
+        // The edge moves ~0.78 px right (retail drift measured on the
+        // terrain: 0.95 px at x 2200, 1.00 at 2360): output 2000 samples
+        // source 2000.5 * 2559 / 2560 - 0.5 = 1999.22 (a 22 % blend, 56)
+        // instead of the white texel; the 50 % point moves to 2000.28.
+        assert_eq!(at(1999), Rgb::new(0, 0, 0));
+        assert_eq!(at(2000), Rgb::new(56, 56, 56));
+        assert_eq!(at(2001), Rgb::new(255, 255, 255));
+        // The undrawn column is replaced by the last drawn one.
+        assert_eq!(at(2559), Rgb::new(255, 255, 255));
+        // Equal widths are a no-op.
+        let mut same = Framebuffer::new(4, 1);
+        same.put(1, 0, Rgb::new(9, 9, 9));
+        stretch_columns(&mut same, (0, 0, 4, 1), 4);
+        assert_eq!(same.get(1, 0), Rgb::new(9, 9, 9));
+    }
+
+    fn image(w: usize, h: usize, px: &[u32]) -> DdsImage {
+        DdsImage {
+            width: w,
+            height: h,
+            pixels: px.to_vec(),
+        }
+    }
+
+    #[test]
+    fn hd_tiles_are_area_filtered_with_straight_alpha_out() {
+        // 4 texels -> 3 px (the 128 -> 96 ratio): coverage 1 + 1/3,
+        // 2/3 + 2/3, 1/3 + 1.  The old integer box gave 0, 255, 127.
+        let g = |v: u32| 0xff00_0000 | (v << 16) | (v << 8) | v;
+        let img = image(4, 1, &[g(0), g(255), g(0), g(255)]);
+        let out = downsample_rgba(&img, 3, 1);
+        let red = |p: u32| (p >> 16) & 0xff;
+        // The middle pixel is exactly 127.5, so allow either rounding.
+        let got: Vec<i32> = out.iter().map(|&p| red(p) as i32).collect();
+        for (g, want) in got.iter().zip([64, 128, 191]) {
+            assert!((g - want).abs() <= 1, "{got:?}");
+        }
+        assert!(out.iter().all(|&p| p >> 24 == 255));
+        // A half-transparent texel keeps its colour (blit_tile blends with
+        // straight alpha); the old path stored the premultiplied 100.
+        let img = image(1, 1, &[(128 << 24) | (200 << 16) | (200 << 8) | 200]);
+        let out = downsample_rgba(&img, 1, 1);
+        assert_eq!((out[0] >> 24, red(out[0])), (128, 200));
+    }
+
+    #[test]
+    fn the_fog_edge_is_a_linear_ramp() {
+        // Step from 0 to 255 between samples 19 and 20 of a 40-wide row.
+        let (w, h) = (40usize, 1usize);
+        let mut v: Vec<f32> = (0..w).map(|x| if x < 20 { 0.0 } else { 255.0 }).collect();
+        box_blur(&mut v, w, h, 5);
+        // 11-sample ramp: 0 up to x 14, then equal steps of 255 / 11.
+        assert_eq!(v[14], 0.0);
+        let step = 255.0 / 11.0;
+        for x in 15..25 {
+            assert!((v[x] - v[x - 1] - step).abs() < 1e-3, "x {x}");
+        }
+        assert!((v[25] - 255.0).abs() < 1e-3);
     }
 }
 

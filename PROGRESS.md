@@ -87,7 +87,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Resolutions from 16:9 up to 4K and ultrawide — `research/docs/graphics-remastered.md`
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`
 - [x] Plays from the player's own install, with no retail files in the repository — `NOTICE.md`, `sc_assets`
-- [ ] In-game frame parity with the retail captures (raw mean difference currently 4.35–5.99 on the eight (8)The Hunters references)
+- [ ] In-game frame parity with the retail captures (raw mean difference currently 2.46–3.27 on the eight (8)The Hunters references; open: building/mineral lighting, which needs the client's point-light inputs) — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, session log 2026-11-03 (75)
 - [ ] Pixel-exact creep (today a deterministic procedural mesh; there is no creep GRP in CASC)
 - [ ] Full-motion WebM outside the title and briefing screens
 - [ ] Windows/macOS builds and a packaged release (AppImage/Flatpak)

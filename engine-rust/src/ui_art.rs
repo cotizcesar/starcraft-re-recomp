@@ -236,10 +236,13 @@ impl ConsoleArt {
         let at = |gx: f32| x0 + (gx * s).round() as i32;
         // Per-race residual, measured by shift search of each plate on
         // 135020 / 135051 / 134905 (px at 1440p; the art widths round
-        // differently at 0.75).  Left, centre, right.
+        // differently at 0.75).  Left, centre, right.  Centre re-measured
+        // 2026-11-03 for Zerg/Protoss: frame mean at +1 / 0 / -1 / -2 =
+        // 3.44 / 3.27 / 3.25 / 3.43 (134905) and 3.59 / 3.45 / 3.45 / 3.59
+        // (135051), so -1 like Terran.
         let nudge: [f32; 3] = match self.race {
             "terran" => [1.0, -1.0, -1.0],
-            _ => [2.0, 1.0, 1.0],
+            _ => [2.0, -1.0, 1.0],
         };
         let n = |i: usize| (nudge[i] * s / 3.0).round() as i32;
         [

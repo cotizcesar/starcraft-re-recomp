@@ -1,7 +1,9 @@
 //! Graphics-layer checks: bundled tileset chain, GRP decoder and sprite bank.
 
 use galaxycraft::map::Scenario;
-use galaxycraft::render::{asset_root, Framebuffer, Grp, Rgb, SpriteBank, Tileset};
+use galaxycraft::render::{
+    asset_root, Framebuffer, Grp, MinimapDot, MinimapTerrain, Rgb, SpriteBank, Tileset,
+};
 use std::fs;
 
 #[test]
@@ -205,4 +207,53 @@ fn bundled_map_pack_loads_and_runs_with_the_playable_assets() {
         loaded >= 13,
         "expected at least 13 bundled maps, got {loaded}"
     );
+}
+
+#[test]
+fn minimap_blips_are_outlined_and_prepainted_backgrounds_survive() {
+    let assets = asset_root();
+    let raw = fs::read(assets.join("bottleneck.chk")).expect("bundled map");
+    let scenario = Scenario::parse(&raw).expect("valid CHK");
+    let tileset = Tileset::load(&assets.join("TileSet"), scenario.era, &scenario)
+        .expect("bundled platform tileset");
+    let (mw, mh) = tileset.minimap_size;
+    let (w, h) = (mw as i32 * 3, mh as i32 * 3);
+    // A 4 x 3-tile building whose top-left tile is (10, 10).
+    let unit = MinimapDot {
+        x: 10 * 32 + 64,
+        y: 10 * 32 + 48,
+        owner: 0,
+        placement: (128, 96),
+        building: true,
+        resource: false,
+    };
+    let draw = |mode| {
+        let mut fb = Framebuffer::new(w as usize, h as usize);
+        fb.clear(Rgb::new(200, 0, 0));
+        tileset.draw_minimap_with_terrain(
+            &mut fb,
+            (0, 0, w, h),
+            &[unit],
+            (0, 0, 0, 0),
+            None,
+            0,
+            mode,
+        );
+        fb
+    };
+    let painted = draw(MinimapTerrain::Prepainted);
+    // The blip fills tiles 10..14 x 10..13 (3 px each) with a 1 px black
+    // outline; the caller's background stays everywhere else.
+    assert_eq!(painted.get(30, 30), Rgb::new(16, 252, 24));
+    assert_eq!(painted.get(41, 38), Rgb::new(16, 252, 24));
+    assert_eq!(painted.get(29, 30), Rgb::new(0, 0, 0), "left outline");
+    assert_eq!(painted.get(42, 30), Rgb::new(0, 0, 0), "right outline");
+    assert_eq!(painted.get(30, 39), Rgb::new(0, 0, 0), "bottom outline");
+    assert_eq!(
+        painted.get(100, 100),
+        Rgb::new(200, 0, 0),
+        "background kept"
+    );
+    let hidden = draw(MinimapTerrain::Hidden);
+    assert_eq!(hidden.get(100, 100), Rgb::new(0, 0, 0), "black radar");
 }
