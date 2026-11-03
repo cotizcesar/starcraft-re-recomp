@@ -4,7 +4,7 @@ Rust crate: deterministic StarCraft 1.23 gameplay engine + playable `sc_view` cl
 
 ## Commands (run from `engine-rust/`)
 
-- `cargo test` — default suite, works with no install (retail tests skip without `SC_INSTALL`).
+- `cargo test` — default suite; retail tests skip without `SC_INSTALL`, but the fixture-backed tests need the gitignored `fixtures/` (one-time `sc_assets --install DIR fixtures`, see `fixtures/README.md`). Never commit fixture data.
 - `cargo test --test <name> <test_fn>` — focused run, e.g. `cargo test --test replay boxer_with_ai`.
 - `cargo clippy --all-targets -- -D warnings` — must be 0 warnings before done.
 - `cargo fmt` — run before every change.

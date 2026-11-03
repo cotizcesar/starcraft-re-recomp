@@ -407,8 +407,8 @@ mod tests {
 
     #[test]
     fn order_names_are_recovered_from_the_string_table() {
-        let orders = parse_orders(include_bytes!("../fixtures/orders.dat")).unwrap();
-        let text = StringTable::parse(include_bytes!("../fixtures/stat_txt.tbl")).unwrap();
+        let orders = parse_orders(embedded!("fixtures/orders.dat")).unwrap();
+        let text = StringTable::parse(embedded!("fixtures/stat_txt.tbl")).unwrap();
         // Order 0 is Fizzle (label 903), 7 is Attack (label 913), 10 is
         // Attack Fixed Range (label 915), 15 is Build (label 934).
         assert_eq!(text.display(orders[0].label), "Fizzle");
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn tech_costs_match_the_shipped_table() {
-        let techs = parse_techs(include_bytes!("../fixtures/techdata.dat")).unwrap();
+        let techs = parse_techs(embedded!("fixtures/techdata.dat")).unwrap();
         // Stim Packs: 100/100, 1200 research time, Terran race.
         assert_eq!(techs[0].mineral_cost, 100);
         assert_eq!(techs[0].gas_cost, 100);
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn upgrade_levels_scale_base_and_factor() {
-        let ups = parse_upgrades(include_bytes!("../fixtures/upgrades.dat")).unwrap();
+        let ups = parse_upgrades(embedded!("fixtures/upgrades.dat")).unwrap();
         // Infantry Weapons: 100 + 75*level minerals, 100 + 75*level gas.
         assert_eq!(ups[0].mineral_cost(1), 175);
         assert_eq!(ups[0].mineral_cost(2), 250);
@@ -441,8 +441,8 @@ mod tests {
 
     #[test]
     fn sprite_and_image_counts() {
-        let sprites = parse_sprites(include_bytes!("../fixtures/sprites.dat")).unwrap();
-        let images = parse_images(include_bytes!("../fixtures/images.dat")).unwrap();
+        let sprites = parse_sprites(embedded!("fixtures/sprites.dat")).unwrap();
+        let images = parse_images(embedded!("fixtures/images.dat")).unwrap();
         assert_eq!(sprites.len(), SPRITE_COUNT);
         assert_eq!(images.len(), IMAGE_COUNT);
         // Selection data is indexed from sprite 130: Hatchery sprite 167 has

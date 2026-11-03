@@ -23,7 +23,7 @@ pub const PROFILE: TextMask = TextMask {
     split: 0,
     c0: [198, 218, 255],
     c1: [198, 218, 255],
-    alpha: include_bytes!("menu_masks/profile.bin"),
+    alpha: embedded!("src/menu_masks/profile.bin"),
 };
 pub const VERSION: TextMask = TextMask {
     x: 1780,
@@ -33,7 +33,7 @@ pub const VERSION: TextMask = TextMask {
     split: 0,
     c0: [198, 218, 255],
     c1: [198, 218, 255],
-    alpha: include_bytes!("menu_masks/version.bin"),
+    alpha: embedded!("src/menu_masks/version.bin"),
 };
 pub const SINGLE: TextMask = TextMask {
     x: 760,
@@ -43,7 +43,7 @@ pub const SINGLE: TextMask = TextMask {
     split: 808,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/single.bin"),
+    alpha: embedded!("src/menu_masks/single.bin"),
 };
 pub const MULTI: TextMask = TextMask {
     x: 540,
@@ -53,7 +53,7 @@ pub const MULTI: TextMask = TextMask {
     split: 608,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/multi.bin"),
+    alpha: embedded!("src/menu_masks/multi.bin"),
 };
 pub const OPTIONS: TextMask = TextMask {
     x: 430,
@@ -63,7 +63,7 @@ pub const OPTIONS: TextMask = TextMask {
     split: 472,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/options.bin"),
+    alpha: embedded!("src/menu_masks/options.bin"),
 };
 pub const COLLECTIONS: TextMask = TextMask {
     x: 390,
@@ -73,7 +73,7 @@ pub const COLLECTIONS: TextMask = TextMask {
     split: 435,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/collections.bin"),
+    alpha: embedded!("src/menu_masks/collections.bin"),
 };
 pub const HOTKEYS: TextMask = TextMask {
     x: 430,
@@ -83,7 +83,7 @@ pub const HOTKEYS: TextMask = TextMask {
     split: 468,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/hotkeys.bin"),
+    alpha: embedded!("src/menu_masks/hotkeys.bin"),
 };
 pub const CREDITS: TextMask = TextMask {
     x: 350,
@@ -93,7 +93,7 @@ pub const CREDITS: TextMask = TextMask {
     split: 397,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/credits.bin"),
+    alpha: embedded!("src/menu_masks/credits.bin"),
 };
 pub const INTRO: TextMask = TextMask {
     x: 400,
@@ -103,7 +103,7 @@ pub const INTRO: TextMask = TextMask {
     split: 440,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/intro.bin"),
+    alpha: embedded!("src/menu_masks/intro.bin"),
 };
 pub const EXIT: TextMask = TextMask {
     x: 1780,
@@ -113,7 +113,7 @@ pub const EXIT: TextMask = TextMask {
     split: 1820,
     c0: [208, 255, 131],
     c1: [102, 227, 53],
-    alpha: include_bytes!("menu_masks/exit.bin"),
+    alpha: embedded!("src/menu_masks/exit.bin"),
 };
 pub const SINGLE_HOVER: TextMask = TextMask {
     x: 760,
@@ -123,7 +123,7 @@ pub const SINGLE_HOVER: TextMask = TextMask {
     split: 0,
     c0: [196, 255, 124],
     c1: [196, 255, 124],
-    alpha: include_bytes!("menu_masks/single_hover.bin"),
+    alpha: embedded!("src/menu_masks/single_hover.bin"),
 };
 pub const MULTI_HOVER: TextMask = TextMask {
     x: 500,
@@ -133,5 +133,5 @@ pub const MULTI_HOVER: TextMask = TextMask {
     split: 0,
     c0: [196, 255, 124],
     c1: [196, 255, 124],
-    alpha: include_bytes!("menu_masks/multi_hover.bin"),
+    alpha: embedded!("src/menu_masks/multi_hover.bin"),
 };

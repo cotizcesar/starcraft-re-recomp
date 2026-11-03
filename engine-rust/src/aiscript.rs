@@ -1948,8 +1948,8 @@ mod tests {
 
     #[test]
     fn report_opcode_usage() {
-        let ai = parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
-        let bw = parse_bwscript(include_bytes!("../fixtures/bwscript.bin"));
+        let ai = parse_aiscript(embedded!("fixtures/aiscript.bin"));
+        let bw = parse_bwscript(embedded!("fixtures/bwscript.bin"));
         let mut counts = std::collections::BTreeMap::new();
         for set in [&ai, &bw] {
             for s in &set.scripts {
@@ -1983,8 +1983,8 @@ mod tests {
 
     #[test]
     fn every_shipped_script_decodes_with_known_opcodes() {
-        let ai = parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
-        let bw = parse_bwscript(include_bytes!("../fixtures/bwscript.bin"));
+        let ai = parse_aiscript(embedded!("fixtures/aiscript.bin"));
+        let bw = parse_bwscript(embedded!("fixtures/bwscript.bin"));
         let mut total = 0usize;
         for set in [&ai, &bw] {
             for s in &set.scripts {
@@ -2014,7 +2014,7 @@ mod tests {
         use crate::sim::World;
         use std::sync::Arc;
 
-        let ai_set = parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
+        let ai_set = parse_aiscript(embedded!("fixtures/aiscript.bin"));
         let script = ai_set.get_str("TMCu").expect("Terran melee script");
         let mut ai = CampaignAi::new(0, script);
         let mut world = World::new(
@@ -2045,8 +2045,8 @@ mod tests {
 
     #[test]
     fn parses_both_shipped_tables() {
-        let ai = parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
-        let bw = parse_bwscript(include_bytes!("../fixtures/bwscript.bin"));
+        let ai = parse_aiscript(embedded!("fixtures/aiscript.bin"));
+        let bw = parse_bwscript(embedded!("fixtures/bwscript.bin"));
         assert_eq!(ai.scripts.len(), 293);
         assert_eq!(bw.scripts.len(), 156);
         assert_eq!(ai.scripts.iter().filter(|s| s.external).count(), 156);
@@ -2096,7 +2096,7 @@ mod tests {
 
     #[test]
     fn decodes_known_instructions() {
-        let ai = parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
+        let ai = parse_aiscript(embedded!("fixtures/aiscript.bin"));
         let script = ai.get_str("Ter3").unwrap();
         let ins = script.instructions();
         assert!(!ins.is_empty());

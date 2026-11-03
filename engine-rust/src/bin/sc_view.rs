@@ -11357,7 +11357,8 @@ impl App {
         _ox: i32,
         _oy: i32,
     ) -> bool {
-        if (scale - 3.0).abs() > 0.01 {
+        // Masks absent from this checkout (gitignored retail data) are empty.
+        if (scale - 3.0).abs() > 0.01 || mask.alpha.len() < mask.w as usize * mask.h as usize {
             return false;
         }
         let (cx, _cy, _cw, _ch) = Self::content_rect(fb);

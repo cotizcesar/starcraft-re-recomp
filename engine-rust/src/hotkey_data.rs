@@ -52,7 +52,7 @@ pub struct UnitDef {
     pub cards: Vec<CardDef>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct RawData {
     actions: HashMap<String, ActionDef>,
     units: HashMap<String, Vec<UnitDef>>,
@@ -69,8 +69,8 @@ static DATA: OnceLock<HotkeyData> = OnceLock::new();
 impl HotkeyData {
     pub fn get() -> &'static Self {
         DATA.get_or_init(|| {
-            let raw: RawData = serde_json::from_str(include_str!("../fixtures/hotkeys.json"))
-                .expect("valid hotkeys fixture");
+            let raw: RawData =
+                serde_json::from_slice(embedded!("fixtures/hotkeys.json")).unwrap_or_default();
             let mut actions = HashMap::with_capacity(raw.actions.len());
             for (id, action) in raw.actions {
                 let Ok(id) = id.parse::<u16>() else {

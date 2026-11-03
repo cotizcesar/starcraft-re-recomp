@@ -875,7 +875,7 @@ mod tests {
     #[test]
     fn size_multipliers_match_the_executables_table() {
         // 100 bytes copied from StarCraft.exe at VA 0xf0757c.
-        let raw = include_bytes!("../fixtures/damage_multipliers.bin");
+        let raw = embedded!("fixtures/damage_multipliers.bin");
         assert_eq!(raw.len(), 100);
         for damage_type_raw in 0u8..5 {
             let damage_type = DamageType::from_raw(damage_type_raw).unwrap();

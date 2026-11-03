@@ -13,6 +13,15 @@
 //! See `docs/EVIDENCE.md` for the REA evidence, addresses and decompiled
 //! routines that back the rules.
 
+/// Bytes of a retail-derived data file (crate-relative path), mirrored by
+/// `build.rs` into `$OUT_DIR/embed/`; a placeholder when the file is absent
+/// (see `fixtures/README.md`).
+macro_rules! embedded {
+    ($rel:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/embed/", $rel))
+    };
+}
+
 pub mod ai;
 pub mod aiscript;
 pub mod audio;

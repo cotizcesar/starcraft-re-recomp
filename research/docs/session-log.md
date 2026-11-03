@@ -3592,3 +3592,23 @@ partida: 134905 4.14, 134919 4.41, 134931 4.93, 135020 3.25, 135051 4.44,
 135109 4.66, 135114 4.69, 135121 4.59.  `cargo test` 372/372, clippy 0,
 `ui_visual_diff` 51/51 crudo y calibrado, `ui_diff` 39/39, walkthrough
 PASS (145 pasos).
+
+Adenda 4 (2026-11-03): preparación para hacer público el repositorio.  Se
+dejan de versionar los datos de Blizzard (siguen en disco, gitignored):
+`fixtures/*.dat|.tbl|.bin|melee.trg|hotkeys.json|oracle_*.tsv|ui/`,
+`src/menu_masks/*.bin` y la tabla de `button_sets.rs` (ahora
+`fixtures/button_sets.in`; `src/button_sets.rs` queda solo con el tipo).
+`build.rs` refleja cada fichero en `$OUT_DIR/embed/` (macro `embedded!`) y
+pone un marcador vacío si falta, de modo que un clon limpio compila y puede
+generarlos con `sc_assets --install DIR fixtures` (nuevo;
+`retail::FIXTURE_SOURCES`, 50 ficheros byte-idénticos a los anteriores).
+`src/handlers.rs` deja de incrustar el pseudocódigo descompilado (18 957 →
+4 856 líneas, solo doc-comments): conserva tamaño, FNV/SHA y orden de
+llamadas; el test pasa a exigir que no haya cuerpo incrustado.
+`scripts/gen_button_sets.py` regenera la tabla desde el volcado (250 sets
+idénticos).  Comprobado en un export limpio del índice: clippy 0 con
+aviso de ficheros ausentes, `sc_assets fixtures` + `extract_damage_table` +
+`oracle.py` → `SHA256SUMS` OK; sin volcado fallan solo los 9 tests de
+hotkeys/botones (más los que ya dependían de `assets/`/`docs/evidence/`).
+En el árbol de trabajo: `cargo test` 0 failed, clippy 0, tests retail de
+fixtures OK con `SC_INSTALL`.  Guía: `engine-rust/fixtures/README.md`.

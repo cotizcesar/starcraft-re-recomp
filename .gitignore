@@ -9,10 +9,15 @@ __pycache__/
 venv/
 
 # Retail-derived data: regenerable from the player's own install, never commit.
-# (engine-rust/fixtures/ is the exception: tiny tables baked into the binary
-# via include_bytes!, required to build and test.)
+# The developer fixtures are Blizzard data too: kept locally, regenerated per
+# engine-rust/fixtures/README.md (build.rs substitutes placeholders when absent).
 engine-rust/assets/
 .galaxycraft-cache/
+engine-rust/fixtures/*
+!engine-rust/fixtures/README.md
+!engine-rust/fixtures/SHA256SUMS
+!engine-rust/fixtures/audio/
+engine-rust/src/menu_masks/
 
 # RE heavy outputs: local-only (memory dumps, Ghidra projects, run logs)
 research/work/

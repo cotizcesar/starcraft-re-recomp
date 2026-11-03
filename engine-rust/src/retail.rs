@@ -525,6 +525,34 @@ impl RetailInstall {
     /// dest/sound/<effect>.wav
     /// dest/maps/<relative map>.chk
     /// ```
+    /// Write the developer fixtures (`engine-rust/fixtures/`) from this
+    /// install: the rules tables, scripts and string tables the unit tests
+    /// read, plus the dialog layouts.  They are Blizzard data, so the
+    /// repository does not carry them.  Returns the files written; the
+    /// caller reports what is missing.
+    pub fn write_fixtures(&self, dest: &Path) -> Result<Vec<String>> {
+        let mut written = Vec::new();
+        for &(name, src) in FIXTURE_SOURCES {
+            if let Ok(bytes) = self.read_by_path(src) {
+                write_file(&dest.join(name), &bytes)?;
+                written.push(name.to_string());
+            }
+        }
+        for name in crate::ui::UI_JSON {
+            let src = format!("locales/enus/assets/rez/{name}.ui.json");
+            if let Ok(bytes) = self.read_by_path(&src) {
+                let rel = format!("ui/{name}.ui.json");
+                write_file(&dest.join(&rel), &bytes)?;
+                written.push(rel);
+            }
+        }
+        if let Ok(bytes) = self.read_by_path("rez/flc.json") {
+            write_file(&dest.join("ui/flc.json"), &bytes)?;
+            written.push("ui/flc.json".to_string());
+        }
+        Ok(written)
+    }
+
     pub fn materialize(&self, dest: &Path) -> Result<AssetReport> {
         let mut report = AssetReport::default();
         let tiles = dest.join("TileSet");
@@ -1072,6 +1100,27 @@ pub const CONSOLE_FILES: &[&str] = &[
     "dlg.dds.grp",
     "pbrempt.dds",
     "pbrfull.dds",
+];
+
+/// Fixture file -> CASC path of the developer fixtures written by
+/// [`RetailInstall::write_fixtures`].  The rest of `fixtures/` comes from
+/// other sources (see `fixtures/README.md`).
+pub const FIXTURE_SOURCES: &[(&str, &str)] = &[
+    ("units.dat", "arr/units.dat"),
+    ("weapons.dat", "arr/weapons.dat"),
+    ("flingy.dat", "arr/flingy.dat"),
+    ("sprites.dat", "arr/sprites.dat"),
+    ("images.dat", "arr/images.dat"),
+    ("orders.dat", "arr/orders.dat"),
+    ("techdata.dat", "arr/techdata.dat"),
+    ("upgrades.dat", "arr/upgrades.dat"),
+    ("sfxdata.dat", "arr/sfxdata.dat"),
+    ("sfxdata.tbl", "arr/sfxdata.tbl"),
+    ("stat_txt.tbl", "rez/stat_txt.tbl"),
+    ("iscript.bin", "scripts/iscript.bin"),
+    ("aiscript.bin", "scripts/aiscript.bin"),
+    ("bwscript.bin", "scripts/bwscript.bin"),
+    ("melee.trg", "triggers/melee.trg"),
 ];
 
 /// Main-menu, title and score-panel surfaces from the retail glue layer.

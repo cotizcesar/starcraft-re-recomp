@@ -1327,9 +1327,10 @@ a VA-ordered `HANDLERS` registry.  The module is generated reproducibly by
   `pub fn h_<va>(&mut HandlerContext) -> HandlerResult`.  The two
   `guard_check_icall` sites (rows 12 and 13) are virtual and deliberately
   have no fixed routine.
-* **The decompiled body is embedded verbatim.**  Each routine's doc comment
-  carries the complete Ghidra pseudocode, and the registry stores the body
-  size, FNV-1a-64 and SHA-256.  `docs/evidence/order_handlers_decomp.txt`
+* **The decompiled body is fingerprinted, not embedded.**  Each routine's
+  doc comment carries the body size, FNV-1a-64 and SHA-256 (the registry
+  stores the same); the pseudocode itself is Blizzard code and stays in the
+  local, gitignored evidence (since 2026-11-03).  `docs/evidence/order_handlers_decomp.txt`
   is the decompressed companion of the original `.gz` batch (derived, never
   edited); `docs/evidence/order_handlers_manifest.tsv` is the machine-readable
   one-row-per-handler manifest (VA, size, rows, lane, family, routine,
@@ -1377,11 +1378,11 @@ handlers: 137 routines, 165 direct-cased rows (165 assigned), 40 every-tick,
 * `every_recovered_handler_has_one_routine_with_a_unique_function_pointer`
   requires 137 distinct VAs and 137 distinct function pointers, and checks
   that every direct-cased `ORDER_SPECS` row names a registered VA;
-* `handler_routines_match_the_decompiled_bodies_byte_for_byte` recomputes the
+* `handler_routines_match_the_decompiled_body_fingerprints` recomputes the
   FNV-1a-64 of every body from `order_handlers_decomp.txt`, compares it with
   the manifest and registry, compares the callee list in body order and the
-  `CUnit` byte writes from `order_handlers_summary.tsv`, and requires the
-  complete decompiled body to appear verbatim in the routine's doc comment;
+  `CUnit` byte writes from `order_handlers_summary.tsv`, and requires that
+  no decompiled body is reproduced in `src/handlers.rs`;
 * `handler_rows_lanes_and_families_match_the_recovered_order_table` derives
   each routine's rows, lane and family from `ORDER_SPECS`, requires the
   recovered `order_dispatch.tsv` to name the same handler, and checks the

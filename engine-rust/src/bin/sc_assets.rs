@@ -39,7 +39,7 @@ fn main() -> ExitCode {
                 out = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
-            "verify" | "extract" | "maps" | "path" | "mpq" => {
+            "verify" | "extract" | "fixtures" | "maps" | "path" | "mpq" => {
                 command = Some(args[i].clone());
                 if (args[i] == "path" || args[i] == "mpq") && i + 1 < args.len() {
                     path_arg = Some(args[i + 1].clone());
@@ -125,6 +125,19 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("extract failed: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        "fixtures" => {
+            let out = out.unwrap_or_else(|| PathBuf::from("fixtures"));
+            match install.write_fixtures(&out) {
+                Ok(written) => {
+                    println!("wrote {} fixtures into {}", written.len(), out.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("fixtures failed: {e}");
                     ExitCode::FAILURE
                 }
             }

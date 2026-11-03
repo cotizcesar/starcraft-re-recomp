@@ -10,7 +10,7 @@ use std::sync::Arc;
 use galaxycraft::audio::{MusicBank, SoundBank};
 use galaxycraft::map::Scenario;
 use galaxycraft::render::{era_name, Framebuffer, SpriteBank, Tileset};
-use galaxycraft::retail::{RetailInstall, SOUND_PATHS};
+use galaxycraft::retail::{RetailInstall, FIXTURE_SOURCES, SOUND_PATHS};
 use galaxycraft::sfx::SfxTable;
 use galaxycraft::sim::{Race, World};
 use galaxycraft::ui_art::{ConsoleArt, GlueArt};
@@ -540,4 +540,45 @@ fn campaign_intermission_clip_streams_moving_frames() {
     // Playback past the end reports finished, so the briefing can move on.
     let _ = player.advance(60.0);
     assert!(player.finished());
+}
+
+#[test]
+fn fixture_sources_are_unique_flat_files_with_casc_paths() {
+    let mut names = std::collections::HashSet::new();
+    for &(name, src) in FIXTURE_SOURCES {
+        assert!(!name.is_empty() && !name.contains('/'), "{name}");
+        assert!(names.insert(name), "duplicate fixture {name}");
+        assert!(src.ends_with(name), "{name} <- {src}");
+        assert!(!src.starts_with('/') && !src.contains(".."), "{src}");
+    }
+}
+
+#[test]
+fn write_fixtures_reproduces_the_pinned_tables() {
+    let Some(install) = install() else {
+        eprintln!("SC_INSTALL not set; skipping");
+        return;
+    };
+    let out = std::env::temp_dir().join(format!("gc-fixtures-{}", std::process::id()));
+    let written = install.write_fixtures(&out).expect("write fixtures");
+    for &(name, _) in FIXTURE_SOURCES {
+        assert!(written.iter().any(|w| w == name), "{name} not written");
+    }
+    assert!(written.iter().any(|w| w == "ui/flc.json"));
+    let sums = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/SHA256SUMS"),
+    )
+    .expect("SHA256SUMS");
+    let mut checked = 0;
+    for line in sums.lines() {
+        let Some((hash, name)) = line.split_once("  ") else {
+            continue;
+        };
+        if let Ok(bytes) = std::fs::read(out.join(name)) {
+            assert_eq!(sha(&bytes), hash, "{name}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 3, "units/weapons/flingy.dat are pinned");
+    let _ = std::fs::remove_dir_all(&out);
 }

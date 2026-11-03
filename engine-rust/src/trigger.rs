@@ -1303,7 +1303,7 @@ mod tests {
 
     #[test]
     fn shipped_melee_trigger_uses_command_and_opponents() {
-        let t = TriggerSystem::parse(include_bytes!("../fixtures/melee.trg"), &[]);
+        let t = TriggerSystem::parse(embedded!("fixtures/melee.trg"), &[]);
         assert_eq!(t.triggers.len(), 2);
         assert_eq!(t.triggers[0].conditions[0].kind, 2); // command
         assert_eq!(t.triggers[0].actions[0].kind, 2); // defeat

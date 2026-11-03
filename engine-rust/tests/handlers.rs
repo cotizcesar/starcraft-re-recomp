@@ -392,7 +392,7 @@ fn every_recovered_handler_has_one_routine_with_a_unique_function_pointer() {
 }
 
 #[test]
-fn handler_routines_match_the_decompiled_bodies_byte_for_byte() {
+fn handler_routines_match_the_decompiled_body_fingerprints() {
     let bodies = decomp_bodies();
     let rows = manifest();
     let source = std::fs::read_to_string(root().join("src/handlers.rs")).expect("handlers.rs");
@@ -414,15 +414,17 @@ fn handler_routines_match_the_decompiled_bodies_byte_for_byte() {
             "callee order {:#x}",
             row.va
         );
-        // The routine doc comment embeds the decompiled body verbatim.
-        let transcript: String = std::iter::once("/// ```text".to_string())
-            .chain(body.text.lines().map(|line| format!("/// {line}")))
-            .chain(std::iter::once("/// ```".to_string()))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // The decompiled body is Blizzard code: it stays in the local
+        // evidence file and must not be reproduced in the published source
+        // (the fingerprints above tie each routine to it).
+        let signature = body
+            .text
+            .lines()
+            .find(|l| l.trim_start().starts_with("void ") || l.contains("FUN_"))
+            .unwrap_or("");
         assert!(
-            source.contains(&transcript),
-            "routine {:#x} does not embed its decompiled body",
+            signature.is_empty() || !source.contains(&format!("/// {signature}")),
+            "routine {:#x} embeds its decompiled body",
             row.va
         );
         assert!(

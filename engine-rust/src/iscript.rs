@@ -989,7 +989,7 @@ mod tests {
     use super::*;
 
     fn script() -> Iscript {
-        Iscript::parse(include_bytes!("../fixtures/iscript.bin")).unwrap()
+        Iscript::parse(embedded!("fixtures/iscript.bin")).unwrap()
     }
 
     #[test]

@@ -191,8 +191,8 @@ nine small WAV effects remain bundled for no-install runs.  The same loader
 can read any of them by path with `sc_assets path <CASC path>`.
 
 Gameplay is complete: the 137 internal hero/AI/doodad handler bodies are
-transcribed one-to-one in `src/handlers.rs`, with their verbatim pseudocode,
-callee sequences and fingerprints diffed against the recovery evidence by
+transcribed one-to-one in `src/handlers.rs`, with their body fingerprints and
+callee sequences diffed against the local recovery evidence by
 `tests/handlers.rs`; SC:R EUD-only trigger memory paths are parsed but not
 executed because all 323 shipped maps use only classic trigger ids
 (`tools/trigger_ids.py`).  The only remaining non-gameplay limits are the
@@ -332,8 +332,13 @@ The executable completeness checklist is in
 
 ## Data provenance
 
-`fixtures/` contains the small rules tables used by the unit tests.  The
-runtime no longer depends on it: `--install` reads `arr/*.dat`,
+`fixtures/` holds the small rules tables, scripts and layouts used by the unit
+tests.  They are Blizzard data, so the repository does not ship them:
+generate them once from your own install with
+`sc_assets --install DIR fixtures` plus the steps in
+[`fixtures/README.md`](fixtures/README.md).  `build.rs` substitutes
+placeholders for missing files, so a fresh clone still builds.  The
+runtime does not depend on them: `--install` reads `arr/*.dat`,
 `scripts/*.bin`, `rez/stat_txt.tbl`, the tilesets, unit GRPs, effects and all
 323 maps from the user's own CASC/MPQ installation.  The bundled `assets/`
 directory is a developer convenience and is not required by `sc_view
@@ -382,7 +387,7 @@ process and from the executable's data sections. See
    cycles, acquisition range, time scaling, build tree, weapon-id mapping,
    order families and all classic trigger condition/action ids;
 9. handler-table diffs that require 137 distinct routine pointers, the
-   verbatim decompiled body and callee order for every target, the same rows,
+   decompiled-body fingerprint and callee order for every target, the same rows,
    lane and family as `ORDER_SPECS`, and entry of all 137 routines from the
    public `World::issue_order_id` path;
 9. the shipped `triggers\melee.trg` command/opponents records;

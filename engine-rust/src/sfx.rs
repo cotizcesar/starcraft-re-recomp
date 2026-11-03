@@ -34,8 +34,7 @@ impl SfxTable {
     }
 
     pub fn bundled() -> Self {
-        Self::parse(include_bytes!("../fixtures/sfxdata.tbl"))
-            .expect("shipped sfxdata.tbl is well formed")
+        Self::parse(embedded!("fixtures/sfxdata.tbl")).expect("shipped sfxdata.tbl is well formed")
     }
 
     pub fn len(&self) -> usize {
@@ -155,7 +154,7 @@ mod tests {
 
     #[test]
     fn the_parallel_record_table_has_one_record_per_identity_sound() {
-        let records = parse_dat(include_bytes!("../fixtures/sfxdata.dat"));
+        let records = parse_dat(embedded!("fixtures/sfxdata.dat"));
         assert_eq!(records.len(), 2574);
         // The first 83 records are the identity map (index 83 repeats 82);
         // later records carry the shipped priority/flag variants.

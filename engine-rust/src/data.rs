@@ -372,21 +372,19 @@ impl GameData {
     /// Parse the fixture files bundled with this crate.
     pub fn bundled() -> Result<Self, DataError> {
         let mut data = Self::parse_all(
-            include_bytes!("../fixtures/units.dat"),
-            include_bytes!("../fixtures/weapons.dat"),
-            include_bytes!("../fixtures/flingy.dat"),
-            include_bytes!("../fixtures/orders.dat"),
-            include_bytes!("../fixtures/techdata.dat"),
-            include_bytes!("../fixtures/upgrades.dat"),
-            include_bytes!("../fixtures/sprites.dat"),
-            include_bytes!("../fixtures/images.dat"),
-            include_bytes!("../fixtures/stat_txt.tbl"),
+            embedded!("fixtures/units.dat"),
+            embedded!("fixtures/weapons.dat"),
+            embedded!("fixtures/flingy.dat"),
+            embedded!("fixtures/orders.dat"),
+            embedded!("fixtures/techdata.dat"),
+            embedded!("fixtures/upgrades.dat"),
+            embedded!("fixtures/sprites.dat"),
+            embedded!("fixtures/images.dat"),
+            embedded!("fixtures/stat_txt.tbl"),
         )?;
-        data.iscript = Iscript::parse(include_bytes!("../fixtures/iscript.bin"))?;
-        data.aiscripts =
-            crate::aiscript::parse_aiscript(include_bytes!("../fixtures/aiscript.bin"));
-        data.bwscripts =
-            crate::aiscript::parse_bwscript(include_bytes!("../fixtures/bwscript.bin"));
+        data.iscript = Iscript::parse(embedded!("fixtures/iscript.bin"))?;
+        data.aiscripts = crate::aiscript::parse_aiscript(embedded!("fixtures/aiscript.bin"));
+        data.bwscripts = crate::aiscript::parse_bwscript(embedded!("fixtures/bwscript.bin"));
         Ok(data)
     }
 
