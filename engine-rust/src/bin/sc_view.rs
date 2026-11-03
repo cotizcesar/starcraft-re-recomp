@@ -2284,15 +2284,15 @@ const GLUE_BIG_PX: f32 = 47.4;
 
 /// In-game HUD text (BlizzardGlobal, fitted on 135051): normal 32.8 px/em
 /// (unit name), `RC_SMALLTEXT` 25.4 px/em (stat rows), colour (223,223,255).
-const HUD_NAME_PX: f32 = 32.8;
+const HUD_NAME_PX: f32 = 31.4;
 const HUD_SMALL_PX: f32 = 25.4;
 /// Baselines below the control's top (content px), from the same fit:
 /// name 1192.4 - 1164, "Psi Used" 1279.4 - 1254.
-const HUD_NAME_BASE: f32 = 28.4;
+const HUD_NAME_BASE: f32 = 30.9;
 const HUD_SMALL_BASE: f32 = 25.4;
 const HUD_TEXT_COLOR: Rgb = Rgb::new(223, 223, 255);
 const HUD_HP_COLOR: Rgb = Rgb::new(0, 220, 0);
-const HUD_MENU_COLOR: Rgb = Rgb::new(235, 225, 150);
+const HUD_MENU_COLOR: Rgb = Rgb::new(255, 255, 71);
 /// Resource numbers (135051): normal-size BlizzardGlobal, ink from x +51
 /// after the icon's left edge, baseline 40 px below the bar top, in the
 /// minimap's own-unit green.
@@ -2300,7 +2300,7 @@ const HUD_RES_TEXT_DX: f32 = 49.0;
 const HUD_RES_BASE: f32 = 40.0;
 const HUD_RES_COLOR: Rgb = Rgb::new(16, 252, 24);
 /// Command glyph tints (enabled yellow, disabled grey).
-const HUD_GLYPH_ENABLED: Rgb = Rgb::new(252, 252, 56);
+const HUD_GLYPH_ENABLED: Rgb = Rgb::new(255, 255, 57);
 const HUD_GLYPH_DISABLED: Rgb = Rgb::new(150, 150, 150);
 
 /// Opacity of HD shadow images (first pass; fitted below).
@@ -2313,9 +2313,12 @@ const DIALOG_EDGE: Rgb = Rgb::new(9, 15, 70);
 const DIALOG_BUTTON_OUTER: Rgb = Rgb::new(12, 72, 204);
 const DIALOG_BUTTON_INNER: Rgb = Rgb::new(28, 32, 196);
 /// Baselines/offsets in content px (first pass from the 134931 zoom).
-const DIALOG_TITLE_BASE: f32 = 52.0;
-const DIALOG_BODY_DX: f32 = 12.0;
-const DIALOG_BODY_BASE: f32 = 46.0;
+const DIALOG_TITLE_BASE: f32 = 48.0;
+const DIALOG_TITLE_DX: f32 = -3.0;
+const DIALOG_BODY_DX: f32 = -1.0;
+const DIALOG_BODY_BASE: f32 = 48.0;
+const DIALOG_CHECK_DX: f32 = 23.0;
+const DIALOG_CHECK_BASE: f32 = 29.0;
 const DIALOG_BODY_PITCH: f32 = 64.0;
 const DIALOG_BUTTON_BASE: f32 = 16.0;
 const DIALOG_SHADOW: f32 = 2.0;
@@ -2330,6 +2333,9 @@ const PLASMA_SHIELDS: u8 = 15;
 /// above its bottom (content px; first pass, unmeasured).
 const UPGRADE_LEVEL_DX: f32 = 24.0;
 const UPGRADE_LEVEL_DY: f32 = 10.0;
+
+/// Portrait offset from `statport` control 1 (content px, measured).
+const PORTRAIT_SHIFT: (f32, f32) = (2.0, 15.0);
 
 /// Own selection circle and HP fill (134905 / 135051).
 const HUD_SELECT_GREEN: Rgb = Rgb::new(36, 152, 36);
@@ -2412,10 +2418,11 @@ enum HudHover {
 }
 
 /// Tooltip style measured on 135109 / 135114 / 135121 (content px).
-const TOOLTIP_PX: f32 = 27.2;
+const TOOLTIP_PX: f32 = 26.1;
 const TOOLTIP_PAD_L: f32 = 16.0;
 const TOOLTIP_PAD_R: f32 = 14.0;
 const TOOLTIP_LINE0_H: f32 = 52.0;
+const TOOLTIP_SINGLE_H: f32 = 59.0;
 const TOOLTIP_PITCH: f32 = 38.0;
 const TOOLTIP_BASE: f32 = 34.0;
 const TOOLTIP_COST_H: f32 = 56.0;
@@ -2556,7 +2563,10 @@ fn draw_tinted(
             if a == 0 {
                 continue;
             }
-            let lum = ((p >> 16) & 0xff).max((p >> 8) & 0xff).max(p & 0xff) as f32 / 255.0;
+            // Retail saturates the glyph shading: luminance >= 0.5 is the
+            // full tint (fitted on 135051: 0.35 -> ~0.8, >= 0.5 -> 1.0).
+            let lum = (((p >> 16) & 0xff).max((p >> 8) & 0xff).max(p & 0xff) as f32 / 255.0 * 2.0)
+                .min(1.0);
             let c = Rgb::new(
                 (((colour.0 >> 16) & 0xff) as f32 * lum) as u8,
                 (((colour.0 >> 8) & 0xff) as f32 * lum) as u8,
@@ -2577,6 +2587,11 @@ enum GlueFace {
     Small,
     Big,
     Bigger,
+    /// In-game HUD text: BlizzardGlobal with every advance rounded up to a
+    /// whole screen pixel, as the retail rasterizer lays it out (fitted on
+    /// the 134905 / 135051 stat rows: within 2 px over 15-19 glyphs, while
+    /// linear advances fall 8-14 px short).
+    Hud,
 }
 
 /// Glue `RC_SMALLTEXT` / plain `FLCBTN` labels (BlizzardGlobal), fitted on
@@ -9664,7 +9679,8 @@ impl App {
         let flingy = self.data.flingy(ty.flingy)?;
         let image = self.data.sprite(flingy.sprite)?.image;
         let install = self.install.as_ref();
-        self.hd_sprites.image(image, |path| install?.read(path))
+        self.hd_sprites
+            .image(self.data.hd_anim_id(image), |path| install?.read(path))
     }
 
     /// Overlays the unit's Init animation attaches (`imgul` shadows below,
@@ -9728,7 +9744,10 @@ impl App {
         let layer = |below: bool, fb: &mut Framebuffer| {
             for &(id, ox, oy, b) in layers.iter().filter(|l| l.3 == below) {
                 let _ = b;
-                if let Some(li) = self.hd_sprites.image(id, |path| install?.read(path)) {
+                if let Some(li) = self
+                    .hd_sprites
+                    .image(self.data.hd_anim_id(id), |path| install?.read(path))
+                {
                     let lf = frame.min(li.header.frames.len().saturating_sub(1));
                     let (lx, ly) = (sx + ox as f32 * s, sy + oy as f32 * s);
                     if below {
@@ -9954,7 +9973,7 @@ impl App {
                 HUD_NAME_PX,
                 HUD_RES_COLOR,
                 None,
-                GlueFace::Small,
+                GlueFace::Hud,
             );
         }
     }
@@ -10016,7 +10035,7 @@ impl App {
         }
         let name = self.data.unit_name(u.type_id).to_string();
         let nr = self.hud_control("statdata", -5, UiRect::new(240, 388, 152, 14));
-        let w = self.glue_measure(&name, HUD_NAME_PX, GlueFace::Small);
+        let w = self.glue_measure(&name, HUD_NAME_PX, GlueFace::Hud);
         self.glue_text_face(
             fb,
             to_x(nr.x) + (nr.w as f32 / k - w) / 2.0,
@@ -10025,7 +10044,7 @@ impl App {
             HUD_NAME_PX,
             HUD_TEXT_COLOR,
             None,
-            GlueFace::Small,
+            GlueFace::Hud,
         );
         // Hit points (and shields first for Protoss) under the wireframe.
         let hp = (u.hp / 256).max(0);
@@ -10041,7 +10060,7 @@ impl App {
         parts.push((format!("{hp}/{max_hp}"), HUD_HP_COLOR));
         let total: f32 = parts
             .iter()
-            .map(|(t, _)| self.glue_measure(t, HUD_SMALL_PX, GlueFace::Small))
+            .map(|(t, _)| self.glue_measure(t, HUD_SMALL_PX, GlueFace::Hud))
             .sum();
         let mut x = to_x(hr.x) + (hr.w as f32 / k - total) / 2.0;
         for (t, c) in parts {
@@ -10053,7 +10072,7 @@ impl App {
                 HUD_SMALL_PX,
                 c,
                 None,
-                GlueFace::Small,
+                GlueFace::Hud,
             );
         }
         // Town halls list the player's supply.
@@ -10087,7 +10106,7 @@ impl App {
                     -10 - i as i32,
                     UiRect::new(281, 418 + 14 * i as i32, 111, 14),
                 );
-                let w = self.glue_measure(text, HUD_SMALL_PX, GlueFace::Small);
+                let w = self.glue_measure(text, HUD_SMALL_PX, GlueFace::Hud);
                 self.glue_text_face(
                     fb,
                     to_x(r.x) + (r.w as f32 / k - w) / 2.0,
@@ -10096,7 +10115,7 @@ impl App {
                     HUD_SMALL_PX,
                     HUD_TEXT_COLOR,
                     None,
-                    GlueFace::Small,
+                    GlueFace::Hud,
                 );
             }
         }
@@ -10108,7 +10127,13 @@ impl App {
         let Some(type_id) = self.first_selected().map(|u| u.type_id) else {
             return;
         };
-        let port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
+        let mut port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
+        // Retail draws the portrait and its frame lower than the classic
+        // rect: NCC search on 135051 / 134905 (scale 1.0, ncc 0.95) puts it
+        // (+1.4..2.6, +13.6..16.4) content px off.
+        let k0 = self.content_box.3 as f32 / 1440.0;
+        port.x += (PORTRAIT_SHIFT.0 * k0).round() as i32;
+        port.y += (PORTRAIT_SHIFT.1 * k0).round() as i32;
         if let Some(frame) = self.portrait_frame(type_id) {
             let fit = (port.w as f32 / frame.width as f32).min(port.h as f32 / frame.height as f32);
             let dw = (frame.width as f32 * fit).round().max(1.0) as i32;
@@ -10238,18 +10263,26 @@ impl App {
         };
         let widths: Vec<f32> = lines
             .iter()
-            .map(|l| self.glue_measure(&strip_codes(l), TOOLTIP_PX, GlueFace::Small))
+            .map(|l| self.glue_measure(&strip_codes(l), TOOLTIP_PX, GlueFace::Hud))
             .collect();
         let mut w = widths.iter().cloned().fold(0.0, f32::max);
         if let Some((m, g, sup)) = cost {
             w = w.max(self.tooltip_cost_width(m, g, sup));
         }
         let bw = (w + TOOLTIP_PAD_L + TOOLTIP_PAD_R).round();
-        let bh = TOOLTIP_LINE0_H
-            + TOOLTIP_PITCH * (lines.len() as f32 - 1.0)
-            + if cost.is_some() { TOOLTIP_COST_H } else { 0.0 };
+        let single = lines.len() == 1 && cost.is_none();
+        // A one-line box is 59 px tall and starts 2 px higher, with the text
+        // where it would be (135121: rim 950..1008, ink 966..989).
+        let bh = if single {
+            TOOLTIP_SINGLE_H
+        } else {
+            TOOLTIP_LINE0_H
+                + TOOLTIP_PITCH * (lines.len() as f32 - 1.0)
+                + if cost.is_some() { TOOLTIP_COST_H } else { 0.0 }
+        };
         let ((ax, ay), bottom) = anchor;
         let (bx, by) = if bottom { (ax, ay - bh) } else { (ax, ay) };
+        let (by, text_dy) = if single { (by - 2.0, 2.0) } else { (by, 0.0) };
         let px = |x: f32| cx0 + (x * k).round() as i32;
         let py = |y: f32| (y * k).round() as i32;
         draw_rounded_box(
@@ -10269,7 +10302,7 @@ impl App {
             self.glue_coded_text(
                 fb,
                 bx + TOOLTIP_PAD_L,
-                by + TOOLTIP_BASE + i as f32 * TOOLTIP_PITCH,
+                by + text_dy + TOOLTIP_BASE + i as f32 * TOOLTIP_PITCH,
                 line,
             );
         }
@@ -10302,7 +10335,7 @@ impl App {
                             TOOLTIP_PX,
                             colour,
                             None,
-                            GlueFace::Small,
+                            GlueFace::Hud,
                         );
                         run.clear();
                     }
@@ -10325,7 +10358,7 @@ impl App {
             if show {
                 w += TOOLTIP_ICON
                     + 8.0
-                    + self.glue_measure(&v.to_string(), TOOLTIP_PX, GlueFace::Small)
+                    + self.glue_measure(&v.to_string(), TOOLTIP_PX, GlueFace::Hud)
                     + 12.0;
             }
         }
@@ -10389,7 +10422,7 @@ impl App {
                 TOOLTIP_PX,
                 HUD_TEXT_COLOR,
                 None,
-                GlueFace::Small,
+                GlueFace::Hud,
             ) + 12.0;
         }
     }
@@ -10405,11 +10438,9 @@ impl App {
         let Some(sheet) = self.console.as_ref().and_then(|c| c.dlg4.as_ref()) else {
             return;
         };
-        let terrain_frame = if hover == Some(HudHover::MinimapTerrain) {
-            5
-        } else {
-            4
-        };
+        // Retail keeps the normal frame while hovered (135121).
+        let _ = hover;
+        let terrain_frame = 4;
         for (rect, frame) in [(terrain, terrain_frame), (other, 0)] {
             if let Some(img) = sheet.frame(frame) {
                 let w = (img.width as f32 * 0.75 * k).round() as i32;
@@ -10474,7 +10505,7 @@ impl App {
             HUD_SMALL_PX,
             HUD_TEXT_COLOR,
             None,
-            GlueFace::Small,
+            GlueFace::Hud,
         );
     }
 
@@ -10486,16 +10517,24 @@ impl App {
         let r = self.menu_button_rect();
         let k = self.content_box.3 as f32 / 1440.0;
         let label = "MENU";
-        let w = self.glue_measure(label, HUD_SMALL_PX, GlueFace::Small);
+        let w = self.glue_measure(label, HUD_SMALL_PX, GlueFace::Hud);
+        // The label sits in the race console's own MENU well, not centred in
+        // the `stat_f10` rect: ink offsets measured on 135020 / 134905 /
+        // 135051 (content px).
+        let (dx, dy) = match self.console_race {
+            Race::Zerg => (-9.0, 18.0),
+            Race::Protoss => (-8.0, 13.0),
+            _ => (-11.0, 18.0),
+        };
         self.glue_text_face(
             fb,
-            (r.x - self.content_box.0) as f32 / k + (r.w as f32 / k - w) / 2.0,
-            r.y as f32 / k + HUD_SMALL_BASE,
+            (r.x - self.content_box.0) as f32 / k + (r.w as f32 / k - w) / 2.0 + dx,
+            r.y as f32 / k + HUD_SMALL_BASE + dy,
             label,
             HUD_SMALL_PX,
             HUD_MENU_COLOR,
             None,
-            GlueFace::Small,
+            GlueFace::Hud,
         );
     }
 
@@ -12353,7 +12392,9 @@ impl App {
         let (cx, _cy, _cw, ch) = Self::content_rect(fb);
         let k = ch as f32 / 1440.0;
         let font = match face {
-            GlueFace::Small => self.glue_font_small.as_mut().or(self.ui_font.as_mut()),
+            GlueFace::Small | GlueFace::Hud => {
+                self.glue_font_small.as_mut().or(self.ui_font.as_mut())
+            }
             GlueFace::Big => self.glue_font.as_mut().or(self.ui_font.as_mut()),
             GlueFace::Bigger => self.glue_font_ext.as_mut().or(self.ui_font_hover.as_mut()),
         };
@@ -12375,7 +12416,12 @@ impl App {
                 _ => color,
             };
             let glyph = &text[i..i + ch_.len_utf8()];
-            pen = font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c) + tr;
+            if face == GlueFace::Hud {
+                font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c);
+                pen += font.measure_cef(glyph, px, 0.0).ceil();
+            } else {
+                pen = font.draw_cef(fb, pen, base, glyph, px, 0.0, c, c) + tr;
+            }
         }
         (pen - cx as f32) / k
     }
@@ -12385,6 +12431,16 @@ impl App {
         let Some(font) = self.glue_face(face) else {
             return 0.0;
         };
+        if face == GlueFace::Hud {
+            // Content units at 1440p equal screen pixels.
+            return text
+                .chars()
+                .map(|c| {
+                    font.measure_cef(c.encode_utf8(&mut [0u8; 4]), ppem, 0.0)
+                        .ceil()
+                })
+                .sum();
+        }
         let chars: Vec<char> = text.chars().collect();
         let kern: f32 = chars
             .windows(2)
@@ -12395,7 +12451,9 @@ impl App {
 
     fn glue_face(&self, face: GlueFace) -> Option<&galaxycraft::text::UiFont> {
         match face {
-            GlueFace::Small => self.glue_font_small.as_ref().or(self.ui_font.as_ref()),
+            GlueFace::Small | GlueFace::Hud => {
+                self.glue_font_small.as_ref().or(self.ui_font.as_ref())
+            }
             GlueFace::Big => self.glue_font.as_ref().or(self.ui_font.as_ref()),
             GlueFace::Bigger => self.glue_font_ext.as_ref().or(self.ui_font_hover.as_ref()),
         }
@@ -15778,7 +15836,13 @@ impl App {
         if let Some(r) = ctrl(-1) {
             let (x, y, w, _) = to_c(r);
             let tw = self.glue_measure(title, GLUE_BIG_PX, GlueFace::Big);
-            self.glue_shadow_text(fb, x + (w - tw) / 2.0, y + DIALOG_TITLE_BASE, title, None);
+            self.glue_shadow_text(
+                fb,
+                x + (w - tw) / 2.0 + DIALOG_TITLE_DX,
+                y + DIALOG_TITLE_BASE,
+                title,
+                None,
+            );
         }
         // Body, word-wrapped to the LTEXT width.
         if let Some(r) = ctrl(body.0) {
@@ -15815,12 +15879,14 @@ impl App {
                 fb.rect(r.x, r.y, side, side, Rgb::new(40, 8, 8));
                 fb.rect_outline(r.x, r.y, side, side, Rgb::new(110, 30, 30));
                 let (x, y, _, _) = to_c(r);
+                // `RC_SMALLTEXT`-sized label (134931: ink 824..1128 x
+                // 677..704 for "Show Tips at Startup").
                 self.glue_text_face(
                     fb,
-                    x + side as f32 / k + 10.0,
-                    y + 26.0,
+                    x + side as f32 / k + DIALOG_CHECK_DX,
+                    y + DIALOG_CHECK_BASE,
                     label,
-                    HUD_SMALL_PX,
+                    GLUE_SMALL_PX,
                     HUD_TEXT_COLOR,
                     None,
                     GlueFace::Small,

@@ -234,10 +234,18 @@ impl ConsoleArt {
         let (cw, ch) = size(&self.center);
         let (rw, rh) = size(&self.right);
         let at = |gx: f32| x0 + (gx * s).round() as i32;
+        // Per-race residual, measured by shift search of each plate on
+        // 135020 / 135051 / 134905 (px at 1440p; the art widths round
+        // differently at 0.75).  Left, centre, right.
+        let nudge: [f32; 3] = match self.race {
+            "terran" => [1.0, -1.0, -1.0],
+            _ => [2.0, 1.0, 1.0],
+        };
+        let n = |i: usize| (nudge[i] * s / 3.0).round() as i32;
         [
-            (at(-extra), bottom - lh, lw, lh),
-            (at(CONSOLE_CENTER_X + extra), bottom - ch, cw, ch),
-            (at(view + extra) - rw, bottom - rh, rw, rh),
+            (at(-extra) + n(0), bottom - lh, lw, lh),
+            (at(CONSOLE_CENTER_X + extra) + n(1), bottom - ch, cw, ch),
+            (at(view + extra) - rw + n(2), bottom - rh, rw, rh),
         ]
     }
 

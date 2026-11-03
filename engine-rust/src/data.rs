@@ -432,6 +432,20 @@ impl GameData {
         self.images.get(id as usize)
     }
 
+    /// Id of the Remastered `anim/main_NNN.anim` holding image `id`'s art.
+    /// The CASC ships one container per GRP, under the first image that
+    /// uses it (131 of 999 ids have none: the Command Center's 275 shares
+    /// `terran\control.grp` with 63, the Nexus glow 180 with 179).
+    pub fn hd_anim_id(&self, id: u16) -> u16 {
+        let Some(grp) = self.image(id).map(|i| i.grp_filename_index) else {
+            return id;
+        };
+        self.images
+            .iter()
+            .position(|i| i.grp_filename_index == grp)
+            .map_or(id, |p| p as u16)
+    }
+
     /// Walking speed of a unit in 1/256 pixels per logical tick.
     ///
     /// Walking units carry the sentinel speed `1` in `flingy.dat`; the real
@@ -889,6 +903,17 @@ pub mod weapon_ids {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hd_art_is_looked_up_by_the_first_image_sharing_the_grp() {
+        let g = GameData::bundled().expect("bundled tables parse");
+        // Command Center image 275 reuses terran\control.grp of image 63.
+        assert_eq!(g.hd_anim_id(275), 63);
+        assert_eq!(g.hd_anim_id(63), 63);
+        // Nexus glow 180 shares nexus.grp with 179.
+        assert_eq!(g.hd_anim_id(180), 179);
+        assert_eq!(g.hd_anim_id(179), 179);
+    }
 
     #[test]
     fn parses_every_table() {
