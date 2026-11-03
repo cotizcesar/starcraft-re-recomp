@@ -26,5 +26,4 @@ StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
 trademarks of Blizzard Entertainment, Inc. This project is not affiliated
 with or endorsed by Blizzard.
 
-Code is licensed under MIT OR Apache-2.0 (see `LICENSE-MIT` and
-`LICENSE-APACHE`).
+Code is licensed under the MIT License (see `LICENSE`).

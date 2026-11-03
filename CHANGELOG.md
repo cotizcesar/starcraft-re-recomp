@@ -4,6 +4,14 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-03 — MIT-only license
+
+### Changed
+- The project is now licensed under MIT only. `LICENSE-APACHE` is removed and
+  `LICENSE-MIT` is renamed `LICENSE`. The vendored PKWARE DCL decoder keeps its
+  own license.
+- `main` is protected: changes land through pull requests with green CI.
+
 ## 2026-11-03 — Repository cleanup and community release
 
 ### Added

@@ -1,7 +1,7 @@
 # starcraft-re-recomp
 
 [![CI](https://github.com/cotizcesar/starcraft-re-recomp/actions/workflows/ci.yml/badge.svg)](https://github.com/cotizcesar/starcraft-re-recomp/actions/workflows/ci.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Progress](https://img.shields.io/badge/progress-see%20PROGRESS.md-orange.svg)](PROGRESS.md)
 
 A **verifiable, reproducible reconstruction** of StarCraft 1.23.10.13515
@@ -135,12 +135,7 @@ reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
-Code is dual-licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option. The vendored PKWARE DCL decoder keeps its own license
+Code is licensed under the [MIT License](LICENSE). The vendored PKWARE DCL decoder keeps its own license
 ([`engine-rust/third_party/pklib/LICENSE`](engine-rust/third_party/pklib/LICENSE)).
 
 StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
