@@ -10597,33 +10597,30 @@ impl App {
     /// HD `dlg` sheet; the terrain toggle shows its highlighted frame while
     /// hovered.
     fn draw_hud_minimap_buttons(&mut self, fb: &mut Framebuffer) {
-        let hover = self.hud_hover();
         let k = self.content_box.3 as f32 / 1440.0;
-        let shift = |mut r: UiRect| {
-            r.x += (MINIMAP_BUTTON_SHIFT.0 * k).round() as i32;
-            r.y += (MINIMAP_BUTTON_SHIFT.1 * k).round() as i32;
-            r
-        };
-        let terrain = shift(self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24)));
-        let other = shift(self.hud_control("minimap", 3, UiRect::new(76, 320, 52, 24)));
-        let Some(sheet) = self.console.as_ref().and_then(|c| c.dlg4.as_ref()) else {
-            return;
-        };
-        // Retail keeps the normal frame while hovered (135121).
-        let _ = hover;
-        let terrain_frame = 4;
-        for (rect, frame) in [(terrain, terrain_frame), (other, 0)] {
-            if let Some(img) = sheet.frame(frame) {
-                let w = (img.width as f32 * 0.75 * k).round() as i32;
-                let h = (img.height as f32 * 0.75 * k).round() as i32;
-                img.draw_scaled(
-                    fb,
-                    rect.x + (rect.w - w) / 2,
-                    rect.y + (rect.h - h) / 2,
-                    w,
-                    h,
-                );
-            }
+        let mut rect = self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24));
+        rect.x += (MINIMAP_BUTTON_SHIFT.0 * k).round() as i32;
+        rect.y += (MINIMAP_BUTTON_SHIFT.1 * k).round() as i32;
+        // Only the terrain toggle is drawn, always in its normal frame 4
+        // (retail keeps it while hovered, 135121).  The second button
+        // (`minimap` control 3) is not drawn in these melee games: the
+        // console's own socket shows (hazard stripes on 134905 / 135020,
+        // the empty blue slot on 135051).
+        if let Some(img) = self
+            .console
+            .as_ref()
+            .and_then(|c| c.dlg4.as_ref())
+            .and_then(|g| g.frame(4))
+        {
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            img.draw_scaled(
+                fb,
+                rect.x + (rect.w - w) / 2,
+                rect.y + (rect.h - h) / 2,
+                w,
+                h,
+            );
         }
     }
 

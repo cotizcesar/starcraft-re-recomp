@@ -3583,3 +3583,12 @@ estado de captura.  Resultado: 134905 4.21, 134919 4.47, 134931 4.99,
 135020 3.39, 135051 4.49, 135109 4.72, 135114 4.75, 135121 4.63.
 `cargo test` 372/372, clippy 0, `ui_visual_diff` 51/51 crudo y calibrado,
 walkthrough PASS (145 pasos, victoria de extremo a extremo).
+
+Adenda 3 (72): el segundo botón del minimapa (`minimap` control 3) no se
+dibuja en estas partidas melee — la consola muestra su hueco (rayas en
+Zerg/Terran, ranura vacía en Protoss).  Descartado por medida: aligerar el
+texto del HUD con gamma de cobertura (4.48→4.45, no compensa).  Puerta en
+partida: 134905 4.14, 134919 4.41, 134931 4.93, 135020 3.25, 135051 4.44,
+135109 4.66, 135114 4.69, 135121 4.59.  `cargo test` 372/372, clippy 0,
+`ui_visual_diff` 51/51 crudo y calibrado, `ui_diff` 39/39, walkthrough
+PASS (145 pasos).

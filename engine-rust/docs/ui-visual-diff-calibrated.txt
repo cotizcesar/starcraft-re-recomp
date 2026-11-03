@@ -1,12 +1,12 @@
 ref      screen                mean   >30 px status
-134931   tips                  4.99    2.97% PASS
-135114   ingame-protoss-tip-probe    4.75    2.89% PASS
-135109   ingame-protoss-tip-shields    4.72    2.85% PASS
-135121   ingame-protoss-tip-minimap    4.63    2.75% PASS
-135051   ingame-protoss        4.49    2.60% PASS
-134919   objectives            4.47    2.40% PASS
-134905   ingame-zerg           4.21    2.13% PASS
-135020   ingame-terran2        3.39    1.84% PASS
+134931   tips                  4.93    2.92% PASS
+135114   ingame-protoss-tip-probe    4.69    2.82% PASS
+135109   ingame-protoss-tip-shields    4.66    2.78% PASS
+135121   ingame-protoss-tip-minimap    4.59    2.70% PASS
+135051   ingame-protoss        4.44    2.53% PASS
+134919   objectives            4.41    2.35% PASS
+134905   ingame-zerg           4.14    2.08% PASS
+135020   ingame-terran2        3.25    1.66% PASS
 130840   episode-expansion-hover-zerg    1.92    1.43% PASS
 130804   episode-hover-protoss    1.85    1.24% PASS
 130750   episode-hover-terran    1.83    1.28% PASS

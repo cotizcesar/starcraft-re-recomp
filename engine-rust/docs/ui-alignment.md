@@ -584,3 +584,24 @@ especular) de minerales y edificios, márgenes del retrato.  Verificación:
 `cargo test` 370/370, clippy 0, `ui_visual_diff.py` 51/51 crudo y
 calibrado, `ui_diff.py` 39/39, `menu_walkthrough.py` PASS (145 pasos,
 victoria de extremo a extremo y arrastre del pulgar).
+
+### Segunda ronda (misma sesión)
+
+Iluminación HD (normal/AO/especular + emisiva, ajustada en Nexus/CC/
+Hatchery), geometría del retrato y clip de reposo por captura, poses
+registradas de trabajadores/Overlord/larva, humo de géiser
+(`creategasoverlays`), y el segundo botón del minimapa ya no se dibuja (la
+consola muestra su hueco).  Probado y descartado: peso del texto del HUD
+por gamma de cobertura (≤0.03 de media).
+
+```text
+ref     ahora
+134905  4.14
+134919  4.41
+134931  4.93
+135020  3.25
+135051  4.44
+135109  4.66
+135114  4.69
+135121  4.59
+```
