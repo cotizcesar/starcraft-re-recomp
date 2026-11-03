@@ -885,6 +885,9 @@ struct App {
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
+    /// Idle portrait clip (`...fid0N`) and second shown by a reference
+    /// capture: the client picks idle clips at random (capture state).
+    portrait_pick: Option<(u8, f32)>,
     /// Creep variants (cv5 group 1 subtile) observed in a reference capture,
     /// keyed by tile; other creep tiles use [`galaxycraft::render::creep_mtxm`].
     creep_variants: std::collections::HashMap<(i32, i32), u8>,
@@ -2342,8 +2345,10 @@ const UPGRADE_LEVEL_DY: f32 = 11.0;
 const UPGRADE_DRAW_SHIFT: (f32, f32) = (-6.0, -6.0);
 const MINIMAP_BUTTON_SHIFT: (f32, f32) = (8.0, 12.0);
 
-/// Portrait offset from `statport` control 1 (content px, measured).
-const PORTRAIT_SHIFT: (f32, f32) = (2.0, 15.0);
+/// Portrait clip rect and frame-centre shift relative to `statport`
+/// control 1 (content px at 1440p, measured; see `draw_hud_portrait`).
+const PORTRAIT_FACE: (f32, f32, f32, f32) = (11.0, 17.0, 160.0, 164.0);
+const PORTRAIT_FRAME_SHIFT: (f32, f32) = (-9.0, 18.0);
 
 /// Own selection circle and HP fill (134905 / 135051).
 const HUD_SELECT_GREEN: Rgb = Rgb::new(36, 152, 36);
@@ -3192,7 +3197,7 @@ fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
 /// Idle portrait clip of a units.dat portrait id: `arr/portdata.dat` holds
 /// 110 idle and 110 talking `portdata.tbl` indices (1-based), each a path
 /// stem such as `padvisor\PAdFid0` whose first clip is `...fid00.webm`.
-fn portrait_idle_path(install: &RetailInstall, portrait: u16) -> Option<String> {
+fn portrait_idle_path(install: &RetailInstall, portrait: u16, clip: u8) -> Option<String> {
     let dat = install.read("arr/portdata.dat")?;
     let tbl = install.read("arr/portdata.tbl")?;
     let at = portrait as usize * 4;
@@ -3200,7 +3205,7 @@ fn portrait_idle_path(install: &RetailInstall, portrait: u16) -> Option<String> 
     let table = galaxycraft::tables::StringTable::parse(&tbl).ok()?;
     let stem = table.get(u16::try_from(idx.checked_sub(1)?).ok()?)?;
     Some(format!(
-        "portrait/{}0.webm",
+        "portrait/{}{clip}.webm",
         stem.replace('\\', "/").to_ascii_lowercase()
     ))
 }
@@ -4038,6 +4043,7 @@ fn main() {
         melee_slot: None,
         local_team_color: None,
         creep_variants: Default::default(),
+        portrait_pick: None,
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -4217,6 +4223,14 @@ fn main() {
                     _ => (6, Race::Protoss, (0, 8)),
                 };
                 app.hunters_start(&fb, slot, race, dy);
+                // Advisor idle clip and frame each capture shows (matched
+                // over every frame of padfid00..03; 10 fps, mid-frame time).
+                app.portrait_pick = match shot_screen.as_str() {
+                    "ingame-protoss" => Some((0, 0.95)),
+                    "ingame-protoss-tip-shields" => Some((3, 0.35)),
+                    "ingame-protoss-tip-probe" | "ingame-protoss-tip-minimap" => Some((1, 0.75)),
+                    _ => None,
+                };
                 app.update();
                 // 135109 / 135114 / 135121 hover the shield upgrade, the
                 // Probe button and the minimap terrain toggle.
@@ -5875,10 +5889,11 @@ impl App {
         }
         let decoded = (|| {
             let install = self.install.as_ref()?;
-            let path = portrait_idle_path(install, self.data.unit(type_id).portrait)?;
+            let (clip, at) = self.portrait_pick.unwrap_or((0, 0.6));
+            let path = portrait_idle_path(install, self.data.unit(type_id).portrait, clip)?;
             let bytes = install.read_by_path(&path).ok()?;
             let info = galaxycraft::video::parse_webm(&bytes).ok()?;
-            galaxycraft::video::decode_frame_at(&bytes, &info, Some(0.6), 256)
+            galaxycraft::video::decode_frame_at(&bytes, &info, Some(at), 256)
         })();
         if std::env::var("GC_DEBUG_PORTRAIT").is_ok() {
             eprintln!(
@@ -10184,40 +10199,26 @@ impl App {
         let Some(type_id) = self.first_selected().map(|u| u.type_id) else {
             return;
         };
-        let mut port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
-        // Retail draws the portrait and its frame lower than the classic
-        // rect: NCC search on 135051 / 134905 (scale 1.0, ncc 0.95) puts it
-        // (+1.4..2.6, +13.6..16.4) content px off.
-        let k0 = self.content_box.3 as f32 / 1440.0;
-        port.x += (PORTRAIT_SHIFT.0 * k0).round() as i32;
-        port.y += (PORTRAIT_SHIFT.1 * k0).round() as i32;
-        if let Some(frame) = self.portrait_frame(type_id) {
-            let fit = (port.w as f32 / frame.width as f32).min(port.h as f32 / frame.height as f32);
-            let dw = (frame.width as f32 * fit).round().max(1.0) as i32;
-            let dh = (frame.height as f32 * fit).round().max(1.0) as i32;
-            // The portrait clips are opaque (135051: the advisor's dark
-            // backdrop hides the blue well behind it).
-            blit_opaque(
-                &frame,
-                fb,
-                port.x + (port.w - dw) / 2,
-                port.y + (port.h - dh) / 2,
-                dw,
-                dh,
-            );
-        }
-        // Race frame over the portrait well (`conover.dds`).
+        let port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
+        // Geometry fitted on 135051 / 135109 / 135114 / 135121 (1440p, all
+        // four agree within 2 px): the 224x240 clip is stretched into a
+        // 160x164 rect at (+11, +17) of the control, and `conover.dds` at
+        // 0.75 is centred (-9, +18) from the control's centre.  Portrait
+        // region error 24.6 -> 8.4 on 135051.
         let k = self.content_box.3 as f32 / 1440.0;
+        let px = |v: f32| (v * k).round() as i32;
+        if let Some(frame) = self.portrait_frame(type_id) {
+            let (fx, fy, fw, fh) = PORTRAIT_FACE;
+            // The clips are opaque (the advisor's dark backdrop hides the
+            // well behind it).
+            blit_opaque(&frame, fb, port.x + px(fx), port.y + px(fy), px(fw), px(fh));
+        }
         if let Some(img) = self.console.as_ref().and_then(|c| c.con_over.as_ref()) {
             let w = (img.width as f32 * 0.75 * k).round() as i32;
             let h = (img.height as f32 * 0.75 * k).round() as i32;
-            img.draw_scaled(
-                fb,
-                port.x + (port.w - w) / 2,
-                port.y + (port.h - h) / 2,
-                w,
-                h,
-            );
+            let cx = port.x + port.w / 2 + px(PORTRAIT_FRAME_SHIFT.0);
+            let cy = port.y + port.h / 2 + px(PORTRAIT_FRAME_SHIFT.1);
+            img.draw_scaled(fb, cx - w / 2, cy - h / 2, w, h);
         }
     }
 

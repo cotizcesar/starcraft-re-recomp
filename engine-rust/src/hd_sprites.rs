@@ -113,6 +113,74 @@ pub struct HdImage {
     pub header: AnimHeader,
     pub diffuse: DdsImage,
     pub team: Option<DdsImage>,
+    /// Lighting layers (same atlas size as the diffuse): normal (x in R,
+    /// y in A), ambient occlusion (G of `ao_depth`) and specular colour.
+    pub lighting: Option<Lighting>,
+}
+
+/// Normal / AO / specular atlases of one image.
+pub struct Lighting {
+    /// Self-illumination, added after lighting (minerals, glows).
+    pub emissive: Option<DdsImage>,
+    pub normal: DdsImage,
+    pub ao_depth: DdsImage,
+    pub specular: DdsImage,
+}
+
+/// Retail HD lighting, fitted jointly on the Nexus (135051), Command Center
+/// (135020) and Hatchery (134905): colour = diffuse * AO * (ambient +
+/// diffuse_k * n.l) + specular_k * specular * n.l, light from the right and
+/// above (n.l = 0.643 nx + 0.766 nz).  Per-pixel error on those buildings
+/// 40.1 / 32.9 / 18.6 (diffuse only) -> 22.4 / 22.7 / 15.1.
+/// INFERENCE: the client's shader is not recovered; this is the best fit
+/// of a Lambert + specular model.  Falsifier: a capture where a building's
+/// right-facing faces are darker than its left ones.
+const LIGHT: [f32; 3] = [0.643, 0.0, 0.766];
+const AMBIENT: [f32; 3] = [0.385, 0.418, 0.548];
+const DIFFUSE_K: [f32; 3] = [0.519, 0.484, 0.397];
+const SPECULAR_K: [f32; 3] = [0.403, 0.371, 0.334];
+
+/// Apply [`LIGHT`] to one premultiplied pixel (`rgb` 0..255 times alpha).
+/// `normal` is the raw (R, A) texel pair in 0..1; mirrored frames negate
+/// the normal's x.
+fn shade(
+    rgb: [f32; 3],
+    normal: (f32, f32),
+    ao: f32,
+    sp: [f32; 3],
+    alpha: f32,
+    flip: bool,
+) -> [f32; 3] {
+    let mut nx = normal.0 * 2.0 - 1.0;
+    if flip {
+        nx = -nx;
+    }
+    let ny = normal.1 * 2.0 - 1.0;
+    let nz = (1.0 - nx * nx - ny * ny).max(0.0).sqrt();
+    let ndl = (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]).clamp(0.0, 1.0);
+    std::array::from_fn(|i| {
+        rgb[i] * ao * (AMBIENT[i] + DIFFUSE_K[i] * ndl)
+            + SPECULAR_K[i] * sp[i] * ndl * alpha * 255.0
+    })
+}
+
+/// Bilinear sample of raw RGBA (no alpha weighting) in 0..1.
+fn sample_raw(img: &DdsImage, u: f32, v: f32) -> [f32; 4] {
+    let fx = (u - 0.5).max(0.0);
+    let fy = (v - 0.5).max(0.0);
+    let ix = (fx.floor() as usize).min(img.width.saturating_sub(1));
+    let iy = (fy.floor() as usize).min(img.height.saturating_sub(1));
+    let ix1 = (ix + 1).min(img.width.saturating_sub(1));
+    let iy1 = (iy + 1).min(img.height.saturating_sub(1));
+    let (wx, wy) = (fx - ix as f32, fy - iy as f32);
+    let ch = |p: u32, sh: u32| ((p >> sh) & 0xff) as f32 / 255.0;
+    let mut out = [0f32; 4];
+    for (k, sh) in [16u32, 8, 0, 24].into_iter().enumerate() {
+        let a = ch(img.pixel(ix, iy), sh) * (1.0 - wx) + ch(img.pixel(ix1, iy), sh) * wx;
+        let b = ch(img.pixel(ix, iy1), sh) * (1.0 - wx) + ch(img.pixel(ix1, iy1), sh) * wx;
+        out[k] = a * (1.0 - wy) + b * wy;
+    }
+    out
 }
 
 impl HdImage {
@@ -127,10 +195,25 @@ impl HdImage {
         };
         let diffuse = layer("diffuse")?;
         let team = layer("teamcolor");
+        let same = |l: &DdsImage| l.width == diffuse.width && l.height == diffuse.height;
+        let lighting = match (layer("normal"), layer("ao_depth"), layer("specular")) {
+            (Some(normal), Some(ao_depth), Some(specular))
+                if same(&normal) && same(&ao_depth) && same(&specular) =>
+            {
+                Some(Lighting {
+                    emissive: layer("emissive").filter(|e| same(e)),
+                    normal,
+                    ao_depth,
+                    specular,
+                })
+            }
+            _ => None,
+        };
         Some(Self {
             header,
             diffuse,
             team,
+            lighting,
         })
     }
 }
@@ -345,6 +428,28 @@ fn draw_frame_mode(
                 g *= 1.0 - w + w * tc[1];
                 b *= 1.0 - w + w * tc[2];
             }
+            if let Some(lit) = img.lighting.as_ref() {
+                let n = sample_raw(&lit.normal, u, v);
+                let ao = sample_raw(&lit.ao_depth, u, v)[1];
+                let sp = sample_raw(&lit.specular, u, v);
+                let alpha = c[3].min(1.0);
+                [r, g, b] = shade(
+                    [r, g, b],
+                    (n[0], n[3]),
+                    ao,
+                    [sp[0], sp[1], sp[2]],
+                    alpha,
+                    flip,
+                );
+                // Emissive glow is added unlit (weight swept 0..2 on the
+                // three scenes: best at 1.0, average 4.47 -> 4.19).
+                if let Some(em) = lit.emissive.as_ref() {
+                    let e = sample_raw(em, u, v);
+                    r += e[0] * 255.0 * alpha;
+                    g += e[1] * 255.0 * alpha;
+                    b += e[2] * 255.0 * alpha;
+                }
+            }
             let a = c[3].min(1.0);
             let dst = fb.get(x, y).0;
             let blend =
@@ -413,6 +518,22 @@ mod tests {
             b.extend_from_slice(&1u32.to_le_bytes());
         }
         b
+    }
+
+    #[test]
+    fn lighting_favours_normals_toward_the_light_and_mirrors_with_flip() {
+        let grey = [128.0; 3];
+        let right = shade(grey, (1.0, 0.5), 1.0, [0.0; 3], 1.0, false);
+        let left = shade(grey, (0.0, 0.5), 1.0, [0.0; 3], 1.0, false);
+        assert!(right[0] > left[0], "light comes from the right");
+        // A mirrored frame swaps the sides.
+        let left_flipped = shade(grey, (0.0, 0.5), 1.0, [0.0; 3], 1.0, true);
+        assert_eq!(left_flipped, right);
+        // Ambient occlusion darkens; specular adds.
+        let occluded = shade(grey, (1.0, 0.5), 0.5, [0.0; 3], 1.0, false);
+        assert!(occluded[1] < right[1]);
+        let shiny = shade(grey, (1.0, 0.5), 1.0, [1.0; 3], 1.0, false);
+        assert!(shiny[2] > right[2]);
     }
 
     #[test]
