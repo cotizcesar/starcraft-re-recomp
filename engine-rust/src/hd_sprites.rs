@@ -220,7 +220,45 @@ pub fn draw_shadow(
     alpha: f32,
     clip: (i32, i32, i32, i32),
 ) {
-    draw_frame_mode(fb, img, frame, cx, cy, s, flip, None, Some(alpha), clip);
+    draw_frame_mode(
+        fb,
+        img,
+        frame,
+        cx,
+        cy,
+        s,
+        flip,
+        None,
+        Some((alpha, Rgb::new(0, 0, 0))),
+        clip,
+    );
+}
+
+/// [`draw_frame`] in one flat colour weighted by the image's alpha
+/// (selection circles).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_flat(
+    fb: &mut Framebuffer,
+    img: &HdImage,
+    frame: usize,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    colour: Rgb,
+    clip: (i32, i32, i32, i32),
+) {
+    draw_frame_mode(
+        fb,
+        img,
+        frame,
+        cx,
+        cy,
+        s,
+        false,
+        None,
+        Some((1.0, colour)),
+        clip,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -233,7 +271,7 @@ fn draw_frame_mode(
     s: f32,
     flip: bool,
     team: Option<Rgb>,
-    shadow: Option<f32>,
+    flat: Option<(f32, Rgb)>,
     clip: (i32, i32, i32, i32),
 ) {
     let Some(f) = img.header.frames.get(frame).copied() else {
@@ -278,19 +316,19 @@ fn draw_frame_mode(
                 continue;
             }
             let (mut r, mut g, mut b) = (c[0], c[1], c[2]);
-            if let Some(alpha) = shadow {
-                // Shadow images draw as translucent black (their colour is
-                // not used).
+            if let Some((alpha, col)) = flat {
+                // Shadows (black) and selection circles draw one flat colour
+                // weighted by the image alpha; the texel colour is unused.
                 let a = (c[3] * alpha).min(1.0);
                 let dst = fb.get(x, y).0;
-                let k = 1.0 - a;
+                let mix = |d: u32, c: u32| (d as f32 * (1.0 - a) + c as f32 * a).round() as u8;
                 fb.put(
                     x,
                     y,
                     Rgb::new(
-                        (((dst >> 16) & 0xff) as f32 * k) as u8,
-                        (((dst >> 8) & 0xff) as f32 * k) as u8,
-                        ((dst & 0xff) as f32 * k) as u8,
+                        mix((dst >> 16) & 0xff, (col.0 >> 16) & 0xff),
+                        mix((dst >> 8) & 0xff, (col.0 >> 8) & 0xff),
+                        mix(dst & 0xff, col.0 & 0xff),
                     ),
                 );
                 continue;

@@ -678,6 +678,15 @@ impl<'a> TileData<'a> {
             None => group,
         }
     }
+
+    /// cv5 group flag 0x80: the tile is unbuildable (OpenBW
+    /// `tile_t::flag_unbuildable`).  Synthetic tables have no flags.
+    pub fn unbuildable(&self, mtxm: u16) -> bool {
+        let group = (mtxm >> 4) as usize;
+        self.cv5.is_some_and(|cv5| {
+            group * 52 + 4 <= cv5.len() && u16_at(cv5, group * 52 + 2) & 0x80 != 0
+        })
+    }
 }
 
 /// Owned `cv5` + `vf4` of one tileset.
@@ -714,6 +723,7 @@ impl Terrain {
             for tx in 0..scenario.width {
                 let tile = scenario.tiles[ty * scenario.width + tx];
                 let record = tiles.megatile(tile) * 32;
+                let unbuildable = tiles.unbuildable(tile);
                 for my in 0..4 {
                     for mx in 0..4 {
                         let idx = (ty * 4 + my) * walk_width + tx * 4 + mx;
@@ -724,7 +734,7 @@ impl Terrain {
                             // buildability veto.  Buildability starts from
                             // walkability and is narrowed by the scenario
                             // MASK below.
-                            build[idx] = flag & 1 != 0;
+                            build[idx] = flag & 1 != 0 && !unbuildable;
                             elevation[idx] = if flag & 4 != 0 {
                                 2
                             } else if flag & 2 != 0 {
@@ -789,6 +799,28 @@ impl Terrain {
 
     pub fn walkable_cell(&self, wx: i32, wy: i32) -> bool {
         self.walk_index(wx, wy).is_some_and(|i| self.walk[i])
+    }
+
+    /// Retail `tile_can_have_creep`: the tile is buildable and fully
+    /// walkable (not partially), and the tile below it is buildable.
+    pub fn tile_can_have_creep(&self, tx: i32, ty: i32) -> bool {
+        let tile_ok = |tx: i32, ty: i32, need_walk: bool| {
+            let mut walk = 0;
+            for my in 0..4 {
+                for mx in 0..4 {
+                    let (wx, wy) = (tx * 4 + mx, ty * 4 + my);
+                    if !self.buildable_cell(wx, wy) {
+                        return false;
+                    }
+                    walk += self.walkable_cell(wx, wy) as i32;
+                }
+            }
+            !need_walk || walk == 16
+        };
+        if tx < 0 || ty < 0 || tx as usize >= self.width || ty as usize >= self.height {
+            return false;
+        }
+        tile_ok(tx, ty, true) && (ty as usize + 1 == self.height || tile_ok(tx, ty + 1, false))
     }
 }
 

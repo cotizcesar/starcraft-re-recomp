@@ -488,6 +488,64 @@ pub struct HdTerrain {
     /// `(offset, len)` of each megatile's DDS payload.
     records: Vec<(usize, usize)>,
     cache: std::cell::RefCell<HashMap<(usize, usize), TilePixels>>,
+    /// 4x creep-edge frames (`tileset/<era>.dds.grp`) with their SD
+    /// placement (`tileset/<era>.grp`: x/y offset inside the 32 px tile).
+    creep_edges: Vec<(crate::dds::DdsImage, u8, u8)>,
+}
+
+/// Retail creep-edge frame of a non-creep tile from its 9-bit neighbour
+/// mask (bit order (1,1) (0,1) (-1,1) (1,0) (-1,0) (1,-1) (0,-1) (-1,-1)
+/// self): 0 = no edge, n = grp frame n - 1.  Construction as in OpenBW's
+/// `load_image_data` (ui.h).
+pub fn creep_edge_frame_table() -> [u8; 256] {
+    let canon = |i: usize| {
+        let mut v = 0usize;
+        if i & 2 != 0 {
+            v |= 0x10;
+        }
+        if i & 8 != 0 {
+            v |= 0x24;
+        }
+        if i & 0x10 != 0 {
+            v |= 9;
+        }
+        if i & 0x40 != 0 {
+            v |= 2;
+        }
+        if i & 0xc0 == 0xc0 {
+            v |= 1;
+        }
+        if i & 0x60 == 0x60 {
+            v |= 4;
+        }
+        if i & 3 == 3 {
+            v |= 0x20;
+        }
+        if i & 6 == 6 {
+            v |= 8;
+        }
+        if v & 0x21 == 0x21 {
+            v |= 0x40;
+        }
+        if v & 0xc == 0xc {
+            v |= 0x40;
+        }
+        v
+    };
+    let canon_of: Vec<usize> = (0..256).map(canon).collect();
+    let mut rank = [0u8; 128];
+    let mut n = 0u8;
+    for (v, r) in rank.iter_mut().enumerate() {
+        if canon_of.contains(&v) {
+            *r = n;
+            n += 1;
+        }
+    }
+    let mut out = [0u8; 256];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = rank[canon_of[i]];
+    }
+    out
 }
 
 impl HdTerrain {
@@ -509,12 +567,38 @@ impl HdTerrain {
             bytes,
             records,
             cache: Default::default(),
+            creep_edges: Vec::new(),
         })
     }
 
     pub fn load(root: &Path, era: u16) -> Option<Self> {
-        let path = root.join(format!("hd/tileset/{}.dds.vr4", era_name(era)));
-        Self::parse(fs::read(path).ok()?)
+        let dir = root.join("hd/tileset");
+        let name = era_name(era);
+        let mut t = Self::parse(fs::read(dir.join(format!("{name}.dds.vr4"))).ok()?)?;
+        let hd = fs::read(dir.join(format!("{name}.dds.grp")))
+            .ok()
+            .and_then(|b| crate::dds::DdsGrp::parse(&b));
+        let sd = fs::read(dir.join(format!("{name}.grp"))).ok();
+        if let (Some(hd), Some(sd)) = (hd, sd) {
+            t.creep_edges = hd
+                .frames
+                .into_iter()
+                .enumerate()
+                .map(|(i, mut img)| {
+                    // SD frame header: {u8 x, u8 y, u8 w, u8 h, u32 off}.
+                    let at = 6 + i * 8;
+                    let (x, y) = (
+                        sd.get(at).copied().unwrap_or(0),
+                        sd.get(at + 1).copied().unwrap_or(0),
+                    );
+                    for p in img.pixels.iter_mut() {
+                        *p = apply_gain(*p);
+                    }
+                    (img, x, y)
+                })
+                .collect();
+        }
+        Some(t)
     }
 
     pub fn len(&self) -> usize {
@@ -534,14 +618,8 @@ impl HdTerrain {
         let &(at, len) = self.records.get(mega)?;
         let img = crate::dds::parse(&self.bytes[at..at + len])?;
         let mut px = downsample_rgba(&img, size, size);
-        // Retail draws the HD terrain darker than the raw texels: lit grass
-        // and dirt measure 0.91 of the DDS colour on 135051 / 135020.
         for p in px.iter_mut() {
-            let scale = |c: u32| ((c as f32) * HD_TERRAIN_GAIN).round() as u32;
-            *p = (*p & 0xff00_0000)
-                | (scale((*p >> 16) & 0xff) << 16)
-                | (scale((*p >> 8) & 0xff) << 8)
-                | scale(*p & 0xff);
+            *p = apply_gain(*p);
         }
         let t = std::rc::Rc::new(px);
         self.cache.borrow_mut().insert((mega, size), t.clone());
@@ -571,6 +649,7 @@ impl HdTerrain {
         let first_y = (cam.1 / TILE_PX).max(0);
         let last_x = ((cam.0 + view_w) / TILE_PX + 1).min(scenario.width as i32);
         let last_y = ((cam.1 + view_h) / TILE_PX + 1).min(scenario.height as i32);
+        let edges = creep_edge_frame_table();
         for ty in first_y..last_y {
             for tx in first_x..last_x {
                 let Some(&mtxm) = scenario
@@ -597,9 +676,55 @@ impl HdTerrain {
                         blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
                     }
                 }
+                if !creep(tx, ty) && !self.creep_edges.is_empty() {
+                    let mut mask = 0usize;
+                    for (bit, (ax, ay)) in [
+                        (1, 1),
+                        (0, 1),
+                        (-1, 1),
+                        (1, 0),
+                        (-1, 0),
+                        (1, -1),
+                        (0, -1),
+                        (-1, -1),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if creep(tx + ax, ty + ay) {
+                            mask |= 1 << bit;
+                        }
+                    }
+                    let frame = edges[mask] as usize;
+                    if let Some((img, ox, oy)) =
+                        frame.checked_sub(1).and_then(|f| self.creep_edges.get(f))
+                    {
+                        let k = s / 4.0;
+                        let (w, h) = (
+                            (img.width as f32 * k).round() as i32,
+                            (img.height as f32 * k).round() as i32,
+                        );
+                        // A positive SD offset means the frame hugs the
+                        // tile's right / bottom edge (the HD frames are
+                        // padded, so the offset itself does not scale).
+                        let ex = if *ox > 0 { sx + size as i32 - w } else { sx };
+                        let ey = if *oy > 0 { sy + size as i32 - h } else { sy };
+                        img.draw_scaled(fb, ex, ey, w, h);
+                    }
+                }
             }
         }
     }
+}
+
+/// Retail draws the HD terrain darker than the raw texels: lit grass and
+/// dirt measure 0.91 of the DDS colour on 135051 / 135020.
+fn apply_gain(p: u32) -> u32 {
+    let scale = |c: u32| ((c as f32) * HD_TERRAIN_GAIN).round() as u32;
+    (p & 0xff00_0000)
+        | (scale((p >> 16) & 0xff) << 16)
+        | (scale((p >> 8) & 0xff) << 8)
+        | scale(p & 0xff)
 }
 
 /// Measured brightness of the retail HD terrain relative to its texels.
@@ -726,12 +851,23 @@ pub fn draw_fog_smooth(
 }
 
 /// MTXM entry of a creep tile: cv5 group 1 holds the 13 creep megatiles.
-/// INFERENCE: retail picks the variant with its own generator; a fixed
-/// per-tile hash stands in for it (the variants share one texture).
+/// The client draws subtile 0..5 for 96 % of tiles and 6..12 (the speckled
+/// ones) for 4 % (OpenBW `creep_random_tile_indices`, seeded per session);
+/// a fixed per-tile hash stands in for the session generator.
 pub fn creep_mtxm(tx: i32, ty: i32) -> u16 {
-    let h = (tx as u32).wrapping_mul(0x9e37_79b9) ^ (ty as u32).wrapping_mul(0x85eb_ca6b);
-    let h = h ^ (h >> 15);
-    (1 << 4) | (h % 13) as u16
+    let mix = |v: u32| {
+        let v = v ^ (v >> 16);
+        let v = v.wrapping_mul(0x7feb_352d);
+        let v = v ^ (v >> 15);
+        v.wrapping_mul(0x846c_a68b) ^ (v >> 16)
+    };
+    let h = mix((tx as u32).wrapping_mul(0x9e37_79b9) ^ (ty as u32).wrapping_mul(0x85eb_ca6b));
+    let sub = if h % 100 < 4 {
+        6 + (h >> 8) % 7
+    } else {
+        (h >> 8) % 6
+    };
+    (1 << 4) | sub as u16
 }
 
 /// Alpha-blend a square ARGB tile clipped to `clip` (`x0, y0, x1, y1`).
@@ -1688,6 +1824,17 @@ mod hd_terrain_tests {
         r.extend_from_slice(&(dds.len() as u32).to_le_bytes());
         r.extend_from_slice(&dds);
         r
+    }
+
+    #[test]
+    fn creep_edge_table_matches_the_retail_frame_set() {
+        let t = super::creep_edge_frame_table();
+        assert_eq!(t[0], 0, "no neighbouring creep: no edge");
+        // 37 frames in tileset/<era>.grp, numbered 1..=37 here.
+        assert_eq!(*t.iter().max().unwrap(), 37);
+        // Creep on one side draws an edge; the diagonals refine the frame.
+        assert_ne!(t[0b10], 0);
+        assert_ne!(t[0b10], t[0b111]);
     }
 
     #[test]

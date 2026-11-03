@@ -2331,6 +2331,78 @@ const PLASMA_SHIELDS: u8 = 15;
 const UPGRADE_LEVEL_DX: f32 = 24.0;
 const UPGRADE_LEVEL_DY: f32 = 10.0;
 
+/// Own selection circle and HP fill (134905 / 135051).
+const HUD_SELECT_GREEN: Rgb = Rgb::new(36, 152, 36);
+const HP_BAR_BORDER: Rgb = Rgb::new(8, 8, 8);
+const HP_BAR_SHIELD: Rgb = Rgb::new(12, 72, 204);
+
+/// Retail health bar (OpenBW `draw_health_bars`) at screen resolution:
+/// `width = size - (size - 1) % 3` (min 19) game px, 5 rows (7 with
+/// shields), centred at `centre`.  HD look measured on 134905 / 135051:
+/// 1-game-px (8,8,8) borders, flat fill rows, and every 3 game px a 2 px
+/// dark separator with half-blended pixels on both sides.
+/// INFERENCE: the yellow/red fills below 66 % / 33 % are unmeasured and use
+/// the SD thresholds with retail-like hues.
+fn draw_health_bar(
+    fb: &mut Framebuffer,
+    centre: (f32, f32),
+    size: i32,
+    hp_pct: i32,
+    shield_pct: Option<i32>,
+    s: f32,
+    clip: (i32, i32, i32, i32),
+) {
+    let mut width = size - (size - 1).rem_euclid(3);
+    width = width.max(19);
+    let rows = if shield_pct.is_some() { 7 } else { 5 };
+    let filled = |pct: i32| {
+        let r = pct.clamp(0, 100) * width / 100;
+        if r < 3 {
+            3
+        } else if r % 3 > 1 {
+            r + 3 - r % 3
+        } else {
+            r - r % 3
+        }
+    };
+    let hp_fill = if hp_pct >= 66 {
+        HUD_SELECT_GREEN
+    } else if hp_pct >= 33 {
+        Rgb::new(200, 180, 36)
+    } else {
+        Rgb::new(200, 36, 36)
+    };
+    let x0 = (centre.0 - (width / 2) as f32 * s).round() as i32;
+    let y0 = (centre.1 - (rows / 2) as f32 * s).round() as i32;
+    let w = (width as f32 * s).round() as i32;
+    let h = (rows as f32 * s).round() as i32;
+    let period = (3.0 * s).round().max(3.0) as i32;
+    for py in y0.max(clip.1)..(y0 + h).min(clip.3) {
+        let row = ((py - y0) as f32 / s) as i32;
+        let (fill, pct) = match (rows, row) {
+            (7, 1) | (7, 2) => (Some(HP_BAR_SHIELD), shield_pct.unwrap_or(0)),
+            (7, 4) | (7, 5) | (5, 1..=3) => (Some(hp_fill), hp_pct),
+            _ => (None, 0),
+        };
+        let fill_w = (filled(pct) as f32 * s).round() as i32;
+        for px in x0.max(clip.0)..(x0 + w).min(clip.2) {
+            let o = px - x0;
+            let c = match fill {
+                None => HP_BAR_BORDER,
+                Some(c) => {
+                    let c = if o < fill_w { c } else { HP_BAR_BORDER };
+                    match o % period {
+                        1 | 2 => HP_BAR_BORDER,
+                        0 | 3 => c.blend(HP_BAR_BORDER, 128),
+                        _ => c,
+                    }
+                }
+            };
+            fb.put(px, py, c);
+        }
+    }
+}
+
 /// HUD element with a tooltip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HudHover {
@@ -4079,9 +4151,10 @@ fn main() {
             | "ingame-protoss-tip-probe"
             | "ingame-protoss-tip-minimap" => {
                 let (slot, race, dy) = match shot_screen.as_str() {
-                    "ingame-zerg" => (1, Race::Zerg, 0),
-                    "ingame-terran2" => (7, Race::Terran, -8),
-                    _ => (6, Race::Protoss, 8),
+                    // Zerg nudge: mineral-mask alignment on 134905.
+                    "ingame-zerg" => (1, Race::Zerg, (-6, 8)),
+                    "ingame-terran2" => (7, Race::Terran, (0, -8)),
+                    _ => (6, Race::Protoss, (0, 8)),
                 };
                 app.hunters_start(&fb, slot, race, dy);
                 app.update();
@@ -4374,7 +4447,7 @@ fn main() {
             }
             "objectives" | "tips" => {
                 // 134919 / 134931: the Zerg game of 134905 with the dialog open.
-                app.hunters_start(&fb, 1, Race::Zerg, 0);
+                app.hunters_start(&fb, 1, Race::Zerg, (-6, 8));
                 app.update();
                 app.draw(&mut fb);
                 if shot_screen == "objectives" {
@@ -5901,7 +5974,7 @@ impl App {
     /// (8)The Hunters as slot `slot` (the start locations of the user's
     /// three autosaved games, 2026-10-27), with the town hall selected for
     /// Zerg/Protoss and nothing selected for Terran, as on the captures.
-    fn hunters_start(&mut self, fb: &Framebuffer, slot: usize, race: Race, cam_dy: i32) {
+    fn hunters_start(&mut self, fb: &Framebuffer, slot: usize, race: Race, nudge: (i32, i32)) {
         // Colours the three games gave the player, measured on the team-mask
         // pixels of 135051 / 134905 / 135020 (teal, brown, dark grey).
         self.local_team_color = Some(match race {
@@ -5934,7 +6007,8 @@ impl App {
         self.start_camera();
         // The player nudged the camera before capturing: measured by
         // aligning the terrain (error 1.96-2.35 after the shift).
-        self.camera.1 += cam_dy;
+        self.camera.0 += nudge.0;
+        self.camera.1 += nudge.1;
         self.clamp_camera();
     }
 
@@ -9677,9 +9751,60 @@ impl App {
                 }
             }
         };
+        let selected = self.selected.contains(&u.id) && u.owner as usize == self.local_player;
+        let sprite = self
+            .data
+            .flingy(self.data.unit(u.type_id).flingy)
+            .and_then(|f| self.data.sprite(f.sprite))
+            .cloned();
+        // Selection circle (image 561 + size) under the unit, at vpos.
+        let circle = sprite.as_ref().filter(|_| selected).and_then(|sp| {
+            let img = self
+                .hd_sprites
+                .image(561 + sp.selection_circle as u16, |path| install?.read(path))?;
+            Some((img, sp.selection_circle_vpos as f32, sp.health_bar_size))
+        });
+        if let Some((ci, vpos, _)) = &circle {
+            galaxycraft::hd_sprites::draw_flat(
+                fb,
+                ci,
+                0,
+                sx,
+                sy + vpos * s,
+                s,
+                HUD_SELECT_GREEN,
+                clip,
+            );
+        }
         layer(true, fb);
         galaxycraft::hd_sprites::draw_frame(fb, &img, frame, sx, sy, s, flip, Some(team), clip);
         layer(false, fb);
+        if let Some((ci, vpos, bar)) = circle {
+            // Retail `draw_health_bars`: centred `vpos + circle_h / 2 + 8`
+            // below the sprite.
+            // OpenBW uses the circle's frame-0 height (not the GRP box).
+            let circle_h = ci
+                .header
+                .frames
+                .first()
+                .map_or(0, |f| (f.h / ci.header.scale.max(1) as u16) as i32);
+            let ty = self.data.unit(u.type_id);
+            let max_hp = (ty.hit_points_raw as i32 / 256).max(1);
+            let hp_pct = (u.hp / 256) * 100 / max_hp;
+            let shield_pct = ty
+                .has_shields
+                .then(|| (u.shields / 256) * 100 / (ty.shield_points as i32).max(1));
+            let gy = u.y / 256 + vpos as i32 + circle_h / 2 + 8;
+            draw_health_bar(
+                fb,
+                (sx, cy as f32 + (gy - self.camera.1) as f32 * s),
+                bar as i32,
+                hp_pct,
+                shield_pct,
+                s,
+                clip,
+            );
+        }
     }
 
     /// Screen rectangle of a console-dialog rect given in absolute classic
@@ -9874,7 +9999,20 @@ impl App {
         let ty = self.data.unit(u.type_id).clone();
         let wire = self.hud_control("statdata", 1, UiRect::new(168, 388, 64, 64));
         if let Some(console) = &self.console {
-            console.draw_wireframe(fb, u.type_id, (wire.x, wire.y, wire.w, wire.h), None);
+            // HD wireframe: 256 px art at 0.75, centred on the control
+            // (134905 / 135051: 192 px square centred at 918, 1261).
+            let side = (wire.h as f32 * 1.0).round() as i32;
+            let rect = (
+                wire.x + (wire.w - side) / 2,
+                wire.y + (wire.h - side) / 2,
+                side,
+                side,
+            );
+            // units.dat group flag 0x01 = Zerg.
+            let zerg = ty.group_flags & 0x01 != 0;
+            if !console.draw_wireframe_hd(fb, u.type_id, rect, zerg, ty.has_shields) {
+                console.draw_wireframe(fb, u.type_id, (wire.x, wire.y, wire.w, wire.h), None);
+            }
         }
         let name = self.data.unit_name(u.type_id).to_string();
         let nr = self.hud_control("statdata", -5, UiRect::new(240, 388, 152, 14));
@@ -9934,9 +10072,12 @@ impl App {
             } else {
                 "Control"
             };
+            // "Provided" is this building's own supply (134905: a Hatchery
+            // shows 1 while the player total is 9).
+            let provided = ty.supply_provided as i32 / 2;
             let rows = [
                 format!("{label} Used: {used}"),
-                format!("{label} Provided: {cap}"),
+                format!("{label} Provided: {provided}"),
                 format!("Total {label}: {cap}"),
                 format!("{label} Max: 200"),
             ];

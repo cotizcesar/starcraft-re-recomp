@@ -50,6 +50,16 @@ pub fn console_scale(height: i32) -> f32 {
     (height as f32 / 480.0).max(0.5)
 }
 
+/// Wireframe colours measured on 134905 / 135051 (see `draw_wireframe_hd`).
+const WIREFRAME_ZERG: [[f32; 3]; 4] = [
+    [252.0, 252.0, 56.0],
+    [19.0, 247.0, 24.0],
+    [248.0, 140.0, 20.0],
+    [200.0, 24.0, 24.0],
+];
+const WIREFRAME_GREEN: [f32; 3] = [0.06, 0.97, 0.09];
+const WIREFRAME_SHIELD: [f32; 3] = [12.0, 72.0, 204.0];
+
 /// The three-part bottom console plus its overlays for one race.
 pub struct ConsoleArt {
     pub race: &'static str,
@@ -267,6 +277,116 @@ impl ConsoleArt {
         let iw = ((1086.0 - 52.0) / nw * dw as f32).round() as i32;
         let ih = ((509.0 - 87.0) / nh * dh as f32).round() as i32;
         (ix, iy, iw, ih)
+    }
+
+    /// HD status wireframe (`wirefram.dds.grp`, frame = unit id): eight
+    /// 256x256 layers side by side; 0-3 split the art by brightness, 4-5 are
+    /// the outer/inner outline, 6 the grey shaded art.  Colouring measured on
+    /// 134905 (Hatchery) and 135051 (Nexus), INFERENCE for the rest: Zerg
+    /// layers 0-3 take a flat yellow/green/orange/red palette, other races
+    /// the grey art times green; shielded units get a blue outer outline.
+    /// Falsifier: a damaged unit, or a Zerg non-building, coloured otherwise.
+    pub fn draw_wireframe_hd(
+        &self,
+        fb: &mut crate::render::Framebuffer,
+        unit: u16,
+        rect: (i32, i32, i32, i32),
+        zerg: bool,
+        shields: bool,
+    ) -> bool {
+        let Some(img) = self
+            .wireframe4
+            .as_ref()
+            .and_then(|g| g.frame(unit as usize))
+        else {
+            return false;
+        };
+        let layer = img.height;
+        if img.width < layer * 7 || layer == 0 {
+            return false;
+        }
+        let (x0, y0, w, h) = rect;
+        // Premultiplied box sample of layer `k` over the source footprint of
+        // one destination pixel.
+        let sample = |k: usize, dx: i32, dy: i32| -> [f32; 4] {
+            let fx0 = dx as f32 * layer as f32 / w as f32;
+            let fy0 = dy as f32 * layer as f32 / h as f32;
+            let fx1 = (dx + 1) as f32 * layer as f32 / w as f32;
+            let fy1 = (dy + 1) as f32 * layer as f32 / h as f32;
+            let mut acc = [0f32; 4];
+            let mut n = 0f32;
+            for sy in fy0 as usize..(fy1.ceil() as usize).min(layer) {
+                for sx in fx0 as usize..(fx1.ceil() as usize).min(layer) {
+                    let p = img.pixel(k * layer + sx, sy);
+                    let a = (p >> 24) as f32 / 255.0;
+                    acc[0] += ((p >> 16) & 0xff) as f32 * a;
+                    acc[1] += ((p >> 8) & 0xff) as f32 * a;
+                    acc[2] += (p & 0xff) as f32 * a;
+                    acc[3] += a;
+                    n += 1.0;
+                }
+            }
+            if n > 0.0 {
+                acc.iter_mut().for_each(|v| *v /= n);
+            }
+            acc
+        };
+        let over = |dst: [f32; 3], c: [f32; 3], a: f32| {
+            [
+                dst[0] * (1.0 - a) + c[0] * a,
+                dst[1] * (1.0 - a) + c[1] * a,
+                dst[2] * (1.0 - a) + c[2] * a,
+            ]
+        };
+        for dy in 0..h {
+            for dx in 0..w {
+                let (px, py) = (x0 + dx, y0 + dy);
+                let bg = fb.get(px, py).0;
+                let mut c = [
+                    ((bg >> 16) & 0xff) as f32,
+                    ((bg >> 8) & 0xff) as f32,
+                    (bg & 0xff) as f32,
+                ];
+                if zerg {
+                    for (k, tint) in WIREFRAME_ZERG.iter().enumerate() {
+                        let a = sample(k, dx, dy)[3].min(1.0);
+                        if a > 0.0 {
+                            c = over(c, *tint, a);
+                        }
+                    }
+                } else {
+                    let s = sample(6, dx, dy);
+                    if s[3] > 0.0 {
+                        let g = s[0] / s[3];
+                        c = over(
+                            c,
+                            [
+                                g * WIREFRAME_GREEN[0],
+                                g * WIREFRAME_GREEN[1],
+                                g * WIREFRAME_GREEN[2],
+                            ],
+                            s[3].min(1.0),
+                        );
+                    }
+                }
+                if shields {
+                    let a = sample(4, dx, dy)[3].min(1.0);
+                    if a > 0.0 {
+                        c = over(c, WIREFRAME_SHIELD, a);
+                    }
+                }
+                fb.put(
+                    px,
+                    py,
+                    crate::render::Rgb::new(
+                        c[0].round() as u8,
+                        c[1].round() as u8,
+                        c[2].round() as u8,
+                    ),
+                );
+            }
+        }
+        true
     }
 
     /// 64x64 wireframe for a unit type (frame index is the unit id).

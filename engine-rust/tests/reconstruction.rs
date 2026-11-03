@@ -1902,3 +1902,30 @@ fn minimap_dots_apply_fog_per_unit() {
     // filtered out.
     assert_eq!(world.minimap_units(0, false).len(), 2);
 }
+
+/// Retail `spread_creep_completely` (OpenBW): a Hatchery's creep fills the
+/// ellipse 25 dx^2 + 64 dy^2 <= 25 * 320^2 around its position, measured from
+/// tile centres, and never covers a resource's tiles.
+#[test]
+fn hatchery_creep_fills_the_retail_ellipse() {
+    let mut world = World::new(Arc::new(data()), Terrain::open(128, 128), 2);
+    let h = world
+        .spawn_px(0, uid::HATCHERY, 2048, 1024)
+        .expect("hatchery");
+    world.units[h].completed = true;
+    // Mineral field footprint (2x1 tiles) at tiles 60..61 x 28.
+    world
+        .spawn_px(11, uid::MINERAL_FIELD, 61 * 32, 28 * 32 + 16)
+        .expect("mineral");
+    world.mature_creep();
+    // dx = -304 px at the centre row: inside; one tile further: outside.
+    assert!(world.has_creep_tile(54, 32));
+    assert!(!world.has_creep_tile(53, 32));
+    // dy = -176 px: inside; dy = -208 px: outside.
+    assert!(world.has_creep_tile(64, 26));
+    assert!(!world.has_creep_tile(64, 25));
+    // Ellipse corner: dx = 272, dy = 144 -> 1849600 + 1327104 > 2560000.
+    assert!(!world.has_creep_tile(72, 36));
+    assert!(!world.has_creep_tile(60, 28), "resource tiles stay clear");
+    assert!(world.has_creep_tile(60, 29));
+}

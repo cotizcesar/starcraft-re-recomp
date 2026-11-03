@@ -333,15 +333,19 @@ pub fn parse_sprites(d: &[u8]) -> Result<Vec<SpriteType>, DataError> {
     let selection = visible + SPRITE_COUNT;
     let selection_vpos = selection + SPRITE_SELECTABLE_COUNT;
     let mut sprites = Vec::with_capacity(SPRITE_COUNT);
+    // The health-bar / selection arrays only cover the selectable sprites,
+    // the last 387 (ids 130..516): entry `i - 130`.
+    let first_selectable = SPRITE_COUNT - SPRITE_SELECTABLE_COUNT;
     for i in 0..SPRITE_COUNT {
-        let selectable = i < SPRITE_SELECTABLE_COUNT;
+        let sel = i.checked_sub(first_selectable);
+        let at = |base: usize| sel.map_or(0, |k| d[base + k]);
         sprites.push(SpriteType {
             image: u16::from_le_bytes([d[image + i * 2], d[image + i * 2 + 1]]),
-            health_bar_size: if selectable { d[health_bar + i] } else { 0 },
+            health_bar_size: at(health_bar),
             unknown: d[unknown + i],
             visible: d[visible + i] != 0,
-            selection_circle: if selectable { d[selection + i] } else { 0 },
-            selection_circle_vpos: if selectable { d[selection_vpos + i] } else { 0 },
+            selection_circle: at(selection),
+            selection_circle_vpos: at(selection_vpos),
         });
     }
     Ok(sprites)
@@ -441,5 +445,29 @@ mod tests {
         let images = parse_images(include_bytes!("../fixtures/images.dat")).unwrap();
         assert_eq!(sprites.len(), SPRITE_COUNT);
         assert_eq!(images.len(), IMAGE_COUNT);
+        // Selection data is indexed from sprite 130: Hatchery sprite 167 has
+        // a 109 px bar, circle 8 (o146) at vpos 7; Nexus sprite 211: 110, 8, 4.
+        let h = &sprites[167];
+        assert_eq!(
+            (
+                h.health_bar_size,
+                h.selection_circle,
+                h.selection_circle_vpos
+            ),
+            (109, 8, 7)
+        );
+        let n = &sprites[211];
+        assert_eq!(
+            (
+                n.health_bar_size,
+                n.selection_circle,
+                n.selection_circle_vpos
+            ),
+            (110, 8, 4)
+        );
+        assert_eq!(
+            sprites[0].health_bar_size, 0,
+            "unselectable sprites have no bar"
+        );
     }
 }

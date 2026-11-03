@@ -1109,55 +1109,84 @@ impl World {
         let h = self.terrain.height as i32;
         self.creep_supported.iter_mut().for_each(|s| *s = false);
         let mut seed = vec![false; self.creep.len()];
+        // Tiles under buildings and resources never take creep (retail
+        // `flag_occupied`); the source's own footprint is seeded anyway.
+        let mut occupied = vec![false; self.creep.len()];
+        let footprint = |data: &GameData, u: &SimUnit| {
+            let ty = data.unit(u.type_id);
+            let (pw, ph) = (ty.placement.x as i32 / 32, ty.placement.y as i32 / 32);
+            let (x0, y0) = (u.x / fp(1) / 32 - pw / 2, u.y / fp(1) / 32 - ph / 2);
+            (x0, y0, pw, ph)
+        };
+        for u in &self.units {
+            if !u.alive || !(self.data.unit(u.type_id).is_building() || is_resource_type(u.type_id))
+            {
+                continue;
+            }
+            let (x0, y0, pw, ph) = footprint(&self.data, u);
+            for ty in y0.max(0)..(y0 + ph).min(h) {
+                for tx in x0.max(0)..(x0 + pw).min(w) {
+                    occupied[(ty * w + tx) as usize] = true;
+                }
+            }
+        }
         for u in &self.units {
             if !u.alive || !u.completed || !is_creep_source(u.type_id) {
                 continue;
             }
-            let ty = self.data.unit(u.type_id);
-            let hw = ty.dimensions.right.max(ty.dimensions.left.max(0)) as i32;
-            let hh = ty.dimensions.bottom.max(ty.dimensions.top.max(0)) as i32;
-            let cx = u.x / fp(1);
-            let cy = u.y / fp(1);
-            // The source footprint is mature immediately.
-            for tile_y in ((cy - hh) / 32).max(0)..=((cy + hh) / 32).min(h - 1) {
-                for tile_x in ((cx - hw) / 32).max(0)..=((cx + hw) / 32).min(w - 1) {
-                    seed[(tile_y * w + tile_x) as usize] = true;
-                }
-            }
-            let town = matches!(u.type_id, uid::HATCHERY | uid::LAIR | uid::HIVE);
-            if town {
-                // Hatchery/Lair/Hive: a 20 x 12-tile box around the building
-                // (measured on 134905: creep spans tiles 65..84 on every row
-                // around the start Hatchery at x 2368).
-                let (ctx, cty) = (cx.div_euclid(32), cy.div_euclid(32));
-                for tile_y in (cty - TOWN_CREEP_RY).max(0)..(cty + TOWN_CREEP_RY).min(h) {
-                    for tile_x in (ctx - TOWN_CREEP_RX).max(0)..(ctx + TOWN_CREEP_RX).min(w) {
-                        if self.terrain.walkable_cell(tile_x * 4 + 2, tile_y * 4 + 2) {
-                            self.creep_supported[(tile_y * w + tile_x) as usize] = true;
-                        }
+            // Retail `spread_creep_completely` (OpenBW): seed the footprint,
+            // then grow 8-connected over tiles that can have creep, are not
+            // occupied and lie in the ellipse 25 dx^2 + 64 dy^2 <= 25 * 320^2
+            // (tile centre to building position) inside pos +- (320, 200).
+            let (cx, cy) = (u.x / fp(1), u.y / fp(1));
+            let (x0, y0, pw, ph) = footprint(&self.data, u);
+            let mut stack = Vec::new();
+            for ty in y0.max(0)..(y0 + ph).min(h) {
+                for tx in x0.max(0)..(x0 + pw).min(w) {
+                    let i = (ty * w + tx) as usize;
+                    seed[i] = true;
+                    if self.terrain.tile_can_have_creep(tx, ty) && !self.creep_supported[i] {
+                        self.creep_supported[i] = true;
+                        stack.push((tx, ty));
                     }
                 }
-                continue;
             }
-            // Colonies: three tiles beyond the building edge (not measured
-            // against retail yet).
-            let rx = hw + 3 * 32;
-            let ry = hh + 3 * 32;
-            let tx0 = ((cx - rx) / 32).max(0);
-            let ty0 = ((cy - ry) / 32).max(0);
-            let tx1 = ((cx + rx) / 32).min(w - 1);
-            let ty1 = ((cy + ry) / 32).min(h - 1);
-            for tile_y in ty0..=ty1 {
-                for tile_x in tx0..=tx1 {
-                    let px = tile_x * 32 + 16;
-                    let py = tile_y * 32 + 16;
-                    let dx = (px - cx) as i64;
-                    let dy = (py - cy) as i64;
-                    if dx * dx + dy * dy <= (rx as i64) * (rx as i64)
-                        && self.terrain.walkable_cell(tile_x * 4 + 2, tile_y * 4 + 2)
+            let bx0 = ((cx - CREEP_RX).max(0)) / 32;
+            let by0 = ((cy - CREEP_RY).max(0)) / 32;
+            let bx1 = ((cx + CREEP_RX) / 32).min(w - 1);
+            let by1 = ((cy + CREEP_RY) / 32).min(h - 1);
+            let in_area = |tx: i32, ty: i32| {
+                if tx < bx0 || ty < by0 || tx > bx1 || ty > by1 {
+                    return false;
+                }
+                let dx = (tx * 32 + 16 - cx) as i64;
+                let dy = (ty * 32 + 16 - cy) as i64;
+                dx * dx * 25 + dy * dy * 64 <= (CREEP_RX as i64).pow(2) * 25
+            };
+            while let Some((tx, ty)) = stack.pop() {
+                for (dx, dy) in [
+                    (-1, -1),
+                    (0, -1),
+                    (1, -1),
+                    (-1, 0),
+                    (1, 0),
+                    (-1, 1),
+                    (0, 1),
+                    (1, 1),
+                ] {
+                    let (nx, ny) = (tx + dx, ty + dy);
+                    if !in_area(nx, ny) {
+                        continue;
+                    }
+                    let i = (ny * w + nx) as usize;
+                    if self.creep_supported[i]
+                        || occupied[i]
+                        || !self.terrain.tile_can_have_creep(nx, ny)
                     {
-                        self.creep_supported[(tile_y * w + tile_x) as usize] = true;
+                        continue;
                     }
+                    self.creep_supported[i] = true;
+                    stack.push((nx, ny));
                 }
             }
         }
@@ -5562,9 +5591,9 @@ fn addon_parent(addon: u16) -> Option<u16> {
 }
 
 /// The buildings that generate creep.
-/// Half extents (tiles) of the creep box of a Hatchery/Lair/Hive.
-const TOWN_CREEP_RX: i32 = 10;
-const TOWN_CREEP_RY: i32 = 6;
+/// Creep reach of every creep source (px, retail `get_max_creep_bb`).
+const CREEP_RX: i32 = 320;
+const CREEP_RY: i32 = 200;
 
 fn is_creep_source(type_id: u16) -> bool {
     matches!(

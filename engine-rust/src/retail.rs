@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v14 (objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v15 (creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -543,11 +543,18 @@ impl RetailInstall {
             }
             // 4x HD megatiles (128 px per tile): what retail draws the
             // terrain from at 1440p.
-            let hd = format!("tileset/{era}.dds.vr4");
-            if let Ok(bytes) = self.read_by_path(&hd) {
-                write_file(&dest.join("hd").join(&hd), &bytes)?;
-                report.files += 1;
-                report.bytes += bytes.len() as u64;
+            // Plus the creep-edge frames: 4x art and the SD sheet whose
+            // frame offsets place them.
+            for hd in [
+                format!("tileset/{era}.dds.vr4"),
+                format!("tileset/{era}.dds.grp"),
+                format!("tileset/{era}.grp"),
+            ] {
+                if let Ok(bytes) = self.read_by_path(&hd) {
+                    write_file(&dest.join("hd").join(&hd), &bytes)?;
+                    report.files += 1;
+                    report.bytes += bytes.len() as u64;
+                }
             }
         }
 
