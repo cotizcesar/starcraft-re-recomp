@@ -605,6 +605,20 @@ impl HdTerrain {
 /// Measured brightness of the retail HD terrain relative to its texels.
 pub const HD_TERRAIN_GAIN: f32 = 0.91;
 
+/// One unit on the minimap: position and placement width in game px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MinimapDot {
+    pub x: i32,
+    pub y: i32,
+    pub owner: u8,
+    pub size: i32,
+    pub resource: bool,
+}
+
+/// Minimap colours measured on 135051: own units and resources.
+pub const MINIMAP_SELF: Rgb = Rgb::new(16, 252, 24);
+pub const MINIMAP_RESOURCE: Rgb = Rgb::new(0, 228, 252);
+
 /// Fog darkness of an explored tile that is not in sight (0..=255).
 pub const FOG_EXPLORED_ALPHA: f32 = 150.0;
 /// Fog grid samples per tile and Gaussian width in tiles.
@@ -1035,7 +1049,7 @@ impl Tileset {
         &self,
         fb: &mut Framebuffer,
         rect: (i32, i32, i32, i32),
-        units: &[(i32, i32, u8, bool)],
+        units: &[MinimapDot],
         cam: (i32, i32, i32, i32),
     ) {
         self.draw_minimap_with_terrain(fb, rect, units, cam, None, 0, true)
@@ -1050,7 +1064,7 @@ impl Tileset {
         &self,
         fb: &mut Framebuffer,
         rect: (i32, i32, i32, i32),
-        units: &[(i32, i32, u8, bool)],
+        units: &[MinimapDot],
         cam: (i32, i32, i32, i32),
         fog: Option<&crate::vision::Vision>,
         owner: u8,
@@ -1087,24 +1101,32 @@ impl Tileset {
                 fb.rect(x0, y0, (x1 - x0).max(1), (y1 - y0).max(1), c);
             }
         }
-        for &(ux, uy, owner, is_building) in units {
-            let px = x + (ux as f32 / TILE_PX as f32 * sx) as i32;
-            let py = y + (uy as f32 / TILE_PX as f32 * sy) as i32;
-            let c = PLAYER_COLORS[owner as usize % PLAYER_COLORS.len()];
-            fb.rect(
-                px,
-                py,
-                if is_building { 2 } else { 1 },
-                if is_building { 2 } else { 1 },
-                c,
-            );
+        // Retail dots (135051): a square as wide as the unit's placement
+        // box, local units green, resources cyan, others in player colour.
+        for d in units {
+            let side = ((d.size as f32 / TILE_PX as f32) * sx).round().max(1.0) as i32;
+            let px = x + (d.x as f32 / TILE_PX as f32 * sx).round() as i32 - side / 2;
+            let py = y + (d.y as f32 / TILE_PX as f32 * sy).round() as i32 - side / 2;
+            let c = if d.resource {
+                MINIMAP_RESOURCE
+            } else if d.owner == owner {
+                MINIMAP_SELF
+            } else {
+                PLAYER_COLORS[d.owner as usize % PLAYER_COLORS.len()]
+            };
+            fb.rect(px, py, side, side, c);
         }
-        // Camera viewport.
-        let vx = x + (cam.0 as f32 / TILE_PX as f32 * sx) as i32;
-        let vy = y + (cam.1 as f32 / TILE_PX as f32 * sy) as i32;
-        let vw = ((cam.2 - cam.0) as f32 / TILE_PX as f32 * sx) as i32;
-        let vh = ((cam.3 - cam.1) as f32 / TILE_PX as f32 * sy) as i32;
-        fb.rect_outline(vx, vy, vw.max(2), vh.max(2), Rgb::new(255, 255, 255));
+        // Camera viewport: white, a 1-game-px stroke outside the view.
+        let vx = x + (cam.0 as f32 / TILE_PX as f32 * sx).round() as i32;
+        let vy = y + (cam.1 as f32 / TILE_PX as f32 * sy).round() as i32;
+        let vw = ((cam.2 - cam.0) as f32 / TILE_PX as f32 * sx).round() as i32;
+        let vh = ((cam.3 - cam.1) as f32 / TILE_PX as f32 * sy).round() as i32;
+        let t = (sx / 3.0).round().max(1.0) as i32;
+        let white = Rgb::new(255, 255, 255);
+        fb.rect(vx - t, vy - t, vw + 2 * t, t, white);
+        fb.rect(vx - t, vy + vh, vw + 2 * t, t, white);
+        fb.rect(vx - t, vy, t, vh, white);
+        fb.rect(vx + vw, vy, t, vh, white);
     }
 }
 

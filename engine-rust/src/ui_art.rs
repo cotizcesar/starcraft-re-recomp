@@ -70,6 +70,9 @@ pub struct ConsoleArt {
     /// 4x HD resource icons (`game/icons.dds.grp`), command glyphs
     /// (`unit/cmdicons/cmdicons.dds.grp`) and wireframes.
     pub icons4: Option<dds::DdsGrp>,
+    /// HD console dialog sheet (`dlg.dds.grp`): frames 0-2 the right minimap
+    /// button, 3-5 the terrain toggle (dim / normal / highlighted).
+    pub dlg4: Option<dds::DdsGrp>,
     pub cmdicons4: Option<dds::DdsGrp>,
     pub wireframe4: Option<dds::DdsGrp>,
     /// Source sub-rectangle of the right plate that carries the 3x3 command
@@ -134,6 +137,7 @@ impl ConsoleArt {
             command_icons: load_grp(root, "unit/cmdicons/cmdicons.grp"),
             wireframe: load_grp(root, "unit/wirefram/wirefram.grp"),
             icons4: load_dds_grp(root, "game/icons.dds.grp"),
+            dlg4: load_dds_grp(root, &format!("{dir}/dlg.dds.grp")),
             cmdicons4: load_dds_grp(root, "unit/cmdicons/cmdicons.dds.grp"),
             wireframe4: load_dds_grp(root, "unit/wirefram/wirefram.dds.grp"),
             palette,
@@ -793,6 +797,7 @@ mod wireframe_tests {
             command_icons: None,
             wireframe: Some(one_pixel_grp(208)),
             icons4: None,
+            dlg4: None,
             cmdicons4: None,
             wireframe4: None,
         };

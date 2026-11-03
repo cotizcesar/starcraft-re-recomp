@@ -475,6 +475,12 @@ impl MissionList {
         }
     }
 
+    /// Thumb dragged to `fraction` (0 top .. 1 last page) of its travel.
+    pub fn set_thumb(&mut self, fraction: f32) {
+        let top = (fraction.clamp(0.0, 1.0) * self.max_top() as f32).round();
+        self.top = top as usize;
+    }
+
     /// Thumb position in 0..=1 along the track.
     pub fn thumb(&self) -> f32 {
         if self.max_top() == 0 {
@@ -662,6 +668,20 @@ mod tests {
         assert_eq!((list.sel, list.top), (12, 5));
         assert!(list.click_row(7) && list.sel == 12);
         assert!(!MissionList::open(3).click_row(5));
+    }
+
+    #[test]
+    fn dragging_the_thumb_scrolls_without_moving_the_selection() {
+        let mut list = MissionList::open(13);
+        list.set_thumb(1.0);
+        assert_eq!((list.sel, list.top), (0, 5));
+        list.set_thumb(0.5);
+        assert_eq!(list.top, 3, "5 * 0.5 rounds to 3");
+        list.set_thumb(-2.0);
+        assert_eq!(list.top, 0);
+        let mut short = MissionList::open(4);
+        short.set_thumb(1.0);
+        assert_eq!(short.top, 0, "no travel when everything fits");
     }
 
     #[test]

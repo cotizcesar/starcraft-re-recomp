@@ -1897,7 +1897,7 @@ fn minimap_dots_apply_fog_per_unit() {
     world.enable_fog();
     let fogged = world.minimap_units(0, true);
     assert_eq!(fogged.len(), 1, "only the visible own unit is drawn");
-    assert_eq!(fogged[0].2, 0);
+    assert_eq!(fogged[0].owner, 0);
     // Without fog the same query returns both; the enemy is not permanently
     // filtered out.
     assert_eq!(world.minimap_units(0, false).len(), 2);

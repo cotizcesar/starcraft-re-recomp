@@ -858,6 +858,8 @@ struct App {
     episode_sel: usize,
     /// `Select starting mission` list box (selection + scroll).
     mission_list: galaxycraft::campaign_progress::MissionList,
+    /// Grab offset (content px) of a scrollbar thumb drag in progress.
+    mission_drag: Option<f32>,
     /// Locked campaign whose `glupokcancel` prompt is open.
     campaign_prompt: Option<galaxycraft::campaign_progress::Campaign>,
     /// Profile chosen in the Registry and every profile's campaign progress
@@ -883,6 +885,9 @@ struct App {
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
+    /// Colour the local player was given (retail randomizes melee colours);
+    /// `None` = the slot's default colour.
+    local_team_color: Option<Rgb>,
     camera: (i32, i32),
     view: (i32, i32),
     drag_start: Option<(i32, i32)>,
@@ -991,39 +996,24 @@ struct App {
     hotkey_icons: std::collections::HashMap<String, Option<RgbaFrame>>,
 }
 
-/// Additive blit (space art on black composites like the retail engine).
-fn blit_additive(src: &PosterFrame, dst: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32) {
+/// Opaque nearest blit of a decoded video frame (portraits).
+fn blit_opaque(src: &PosterFrame, dst: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32) {
     if w <= 0 || h <= 0 || src.width == 0 || src.height == 0 {
         return;
     }
     for dy in 0..h {
-        let py = (dy as f32 * src.height as f32 / h as f32) as u32;
-        if py >= src.height {
-            continue;
-        }
-        let ty = y + dy;
-        if ty < 0 || ty >= dst.height {
-            continue;
-        }
+        let py = ((dy as f32 + 0.5) * src.height as f32 / h as f32) as u32;
         for dx in 0..w {
-            let px = (dx as f32 * src.width as f32 / w as f32) as u32;
-            if px >= src.width {
-                continue;
-            }
-            let tx = x + dx;
-            if tx < 0 || tx >= dst.width {
+            let px = ((dx as f32 + 0.5) * src.width as f32 / w as f32) as u32;
+            if px >= src.width || py >= src.height {
                 continue;
             }
             let o = ((py * src.width + px) * 3) as usize;
-            let (r, g, b) = (src.rgb[o], src.rgb[o + 1], src.rgb[o + 2]);
-            if r == 0 && g == 0 && b == 0 {
-                continue;
-            }
-            let c = dst.get(tx, ty);
-            let nr = (c.0 & 0xff).saturating_add(r as u32).min(255);
-            let ng = ((c.0 >> 8) & 0xff).saturating_add(g as u32).min(255);
-            let nb = ((c.0 >> 16) & 0xff).saturating_add(b as u32).min(255);
-            dst.put(tx, ty, Rgb(nr << 16 | ng << 8 | nb));
+            dst.put(
+                x + dx,
+                y + dy,
+                Rgb::new(src.rgb[o], src.rgb[o + 1], src.rgb[o + 2]),
+            );
         }
     }
 }
@@ -2303,14 +2293,175 @@ const HUD_SMALL_BASE: f32 = 25.4;
 const HUD_TEXT_COLOR: Rgb = Rgb::new(223, 223, 255);
 const HUD_HP_COLOR: Rgb = Rgb::new(0, 220, 0);
 const HUD_MENU_COLOR: Rgb = Rgb::new(235, 225, 150);
-/// Resource numbers: pen offset after the icon and baseline (unmeasured
-/// first pass).
-const HUD_RES_TEXT_DX: f32 = 46.0;
-const HUD_RES_BASE: f32 = 32.0;
-const HUD_RES_COLOR: Rgb = Rgb::new(120, 235, 130);
+/// Resource numbers (135051): normal-size BlizzardGlobal, ink from x +51
+/// after the icon's left edge, baseline 40 px below the bar top, in the
+/// minimap's own-unit green.
+const HUD_RES_TEXT_DX: f32 = 49.0;
+const HUD_RES_BASE: f32 = 40.0;
+const HUD_RES_COLOR: Rgb = Rgb::new(16, 252, 24);
 /// Command glyph tints (enabled yellow, disabled grey).
 const HUD_GLYPH_ENABLED: Rgb = Rgb::new(252, 252, 56);
 const HUD_GLYPH_DISABLED: Rgb = Rgb::new(150, 150, 150);
+
+/// Opacity of HD shadow images (first pass; fitted below).
+const HD_SHADOW_ALPHA: f32 = 0.5;
+
+/// In-game dialog pane, fitted on 134931 against 134905 (same scene).
+const DIALOG_FILL: Rgb = Rgb::new(4, 17, 54);
+const DIALOG_ALPHA: u8 = 190;
+const DIALOG_EDGE: Rgb = Rgb::new(9, 15, 70);
+const DIALOG_BUTTON_OUTER: Rgb = Rgb::new(12, 72, 204);
+const DIALOG_BUTTON_INNER: Rgb = Rgb::new(28, 32, 196);
+/// Baselines/offsets in content px (first pass from the 134931 zoom).
+const DIALOG_TITLE_BASE: f32 = 52.0;
+const DIALOG_BODY_DX: f32 = 12.0;
+const DIALOG_BODY_BASE: f32 = 46.0;
+const DIALOG_BODY_PITCH: f32 = 64.0;
+const DIALOG_BUTTON_BASE: f32 = 16.0;
+const DIALOG_SHADOW: f32 = 2.0;
+
+/// Playfield height above the console framed by the minimap box (game px).
+const MINIMAP_VIEW_H: i32 = 368;
+
+/// `upgrades.dat` id of Protoss Plasma Shields.
+const PLASMA_SHIELDS: u8 = 15;
+
+/// Upgrade level digit: pen x before the button's right edge and baseline
+/// above its bottom (content px; first pass, unmeasured).
+const UPGRADE_LEVEL_DX: f32 = 24.0;
+const UPGRADE_LEVEL_DY: f32 = 10.0;
+
+/// HUD element with a tooltip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HudHover {
+    Card(usize),
+    Shields,
+    MinimapTerrain,
+}
+
+/// Tooltip style measured on 135109 / 135114 / 135121 (content px).
+const TOOLTIP_PX: f32 = 27.2;
+const TOOLTIP_PAD_L: f32 = 16.0;
+const TOOLTIP_PAD_R: f32 = 14.0;
+const TOOLTIP_LINE0_H: f32 = 52.0;
+const TOOLTIP_PITCH: f32 = 38.0;
+const TOOLTIP_BASE: f32 = 34.0;
+const TOOLTIP_COST_H: f32 = 56.0;
+const TOOLTIP_ICON: f32 = 40.0;
+const TOOLTIP_RADIUS: f32 = 15.0;
+const TOOLTIP_RIM: f32 = 3.5;
+const TOOLTIP_FILL: Rgb = Rgb::new(4, 4, 4);
+const TOOLTIP_RIM_COLOR: Rgb = Rgb::new(12, 72, 204);
+const TOOLTIP_HOTKEY: Rgb = Rgb::new(252, 252, 56);
+
+/// Retail button tooltip from a `stat_txt` button string
+/// (`p\x01Build \x03P\x01robe` -> `Build Probe [\x03P\x01]`): the leading
+/// hotkey character is dropped, the inline highlight removed and the key
+/// appended in brackets.
+fn button_tooltip_text(raw: &str) -> String {
+    let mut chars = raw.chars();
+    let hotkey = chars.next().unwrap_or(' ');
+    let body: String = chars.filter(|c| (*c as u32) >= 0x20).collect();
+    if hotkey.is_ascii_alphanumeric() {
+        format!("{body} [\u{3}{}\u{1}]", hotkey.to_ascii_uppercase())
+    } else {
+        body
+    }
+}
+
+/// Text without its control bytes.
+fn strip_codes(s: &str) -> String {
+    s.chars().filter(|c| (*c as u32) >= 0x20).collect()
+}
+
+/// Rounded rectangle with a rim, anti-aliased by 4x4 supersampling of the
+/// corner discs (`radius`, `rim` in window px).
+fn draw_rounded_box(
+    fb: &mut Framebuffer,
+    rect: (i32, i32, i32, i32),
+    radius: f32,
+    rim: f32,
+    fill: Rgb,
+    rim_color: Rgb,
+) {
+    let (x0, y0, w, h) = rect;
+    let (fw, fh) = (w as f32, h as f32);
+    let r = radius.min(fw / 2.0).min(fh / 2.0);
+    // Signed distance to the rounded rectangle at a sample point.
+    let dist = |px: f32, py: f32| {
+        let qx = (px - fw / 2.0).abs() - (fw / 2.0 - r);
+        let qy = (py - fh / 2.0).abs() - (fh / 2.0 - r);
+        let ox = qx.max(0.0);
+        let oy = qy.max(0.0);
+        (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let (mut inside, mut core) = (0u32, 0u32);
+            for j in 0..4 {
+                for i in 0..4 {
+                    let d = dist(
+                        x as f32 + (i as f32 + 0.5) / 4.0,
+                        y as f32 + (j as f32 + 0.5) / 4.0,
+                    );
+                    if d <= 0.0 {
+                        inside += 1;
+                        if d <= -rim {
+                            core += 1;
+                        }
+                    }
+                }
+            }
+            if inside == 0 {
+                continue;
+            }
+            let colour = rim_color.blend(fill, (core * 255 / inside.max(1)) as u8);
+            let (qx, qy) = (x0 + x, y0 + y);
+            let bg = fb.get(qx, qy);
+            fb.put(qx, qy, bg.blend(colour, (inside * 255 / 16) as u8));
+        }
+    }
+}
+
+/// Rim of a rounded rectangle only (4x4 supersampled), leaving the
+/// inside untouched.
+fn draw_rounded_rim(
+    fb: &mut Framebuffer,
+    rect: (i32, i32, i32, i32),
+    radius: f32,
+    rim: f32,
+    colour: Rgb,
+) {
+    let (x0, y0, w, h) = rect;
+    let (fw, fh) = (w as f32, h as f32);
+    let r = radius.min(fw / 2.0).min(fh / 2.0);
+    let dist = |px: f32, py: f32| {
+        let qx = (px - fw / 2.0).abs() - (fw / 2.0 - r);
+        let qy = (py - fh / 2.0).abs() - (fh / 2.0 - r);
+        let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+        (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let mut n = 0u32;
+            for j in 0..4 {
+                for i in 0..4 {
+                    let d = dist(
+                        x as f32 + (i as f32 + 0.5) / 4.0,
+                        y as f32 + (j as f32 + 0.5) / 4.0,
+                    );
+                    if d <= 0.0 && d > -rim {
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                let bg = fb.get(x0 + x, y0 + y);
+                fb.put(x0 + x, y0 + y, bg.blend(colour, (n * 255 / 16) as u8));
+            }
+        }
+    }
+}
 
 /// Draw an HD glyph tinted by `colour` (its luminance scales the tint),
 /// keeping the glyph's alpha.
@@ -3132,11 +3283,29 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     // One frame per screen change (plus the Lobby popup hover frame) keeps
     // the artifacts small; the TSV still records every step.
     let mut prev_screen = String::new();
+    // `hold` keeps the button down across steps (drags) until `release`.
+    let mut held = false;
     for (i, step) in script.split(',').map(str::trim).enumerate() {
         let mut keys = Vec::new();
         let mut down = false;
         let mut wheel = 0;
-        if let Some(n) = step.strip_prefix("wheel:") {
+        if step == "hold" {
+            held = true;
+        } else if step == "release" {
+            held = false;
+        } else if step == "fixture:win" {
+            // End-to-end victory: every other player is defeated in the
+            // running mission and the real result path records progress.
+            let me = app.local_player;
+            for (k, p) in app.world.players.iter_mut().enumerate() {
+                if k != me {
+                    p.defeated = true;
+                }
+            }
+            app.briefing = false;
+            app.menu = false;
+            app.update();
+        } else if let Some(n) = step.strip_prefix("wheel:") {
             wheel = n.parse().unwrap_or(0);
         } else if let Some(rest) = step.strip_prefix("fixture:progress:") {
             // Walkthrough fixture: give the active profile campaign history
@@ -3176,7 +3345,7 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
         let input = MenuInput {
             keys,
             mouse,
-            mouse_down: down,
+            mouse_down: down || held,
             wheel,
         };
         app.update_view(fb);
@@ -3260,8 +3429,13 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 app.hotkey_binding_error
             ),
             MenuScreen::Mission { episode } => format!(
-                "episode={episode} len={} sel={} top={} profile={}",
-                app.mission_list.len, app.mission_list.sel, app.mission_list.top, app.active_profile
+                "episode={episode} len={} sel={} top={} profile={} next={:?} result={:?}",
+                app.mission_list.len,
+                app.mission_list.sel,
+                app.mission_list.top,
+                app.active_profile,
+                app.progress().next,
+                app.game_result
             ),
             MenuScreen::Episode => format!(
                 "hover={:?} prompt={:?} profile={}",
@@ -3682,6 +3856,7 @@ fn main() {
         registry_after_gametype: false,
         episode_sel: 0,
         mission_list: galaxycraft::campaign_progress::MissionList::default(),
+        mission_drag: None,
         campaign_prompt: None,
         active_profile: "REA".to_string(),
         progress_book: progress_save_path()
@@ -3730,6 +3905,7 @@ fn main() {
         hd_terrain: None,
         hd_sprites: Default::default(),
         melee_slot: None,
+        local_team_color: None,
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -3896,7 +4072,12 @@ fn main() {
             // (134905), Terran as slot 7 (135020), Protoss as slot 6
             // (135051..135121); start locations identified from the
             // geyser/mineral layout around each town hall.
-            "ingame-zerg" | "ingame-terran2" | "ingame-protoss" => {
+            "ingame-zerg"
+            | "ingame-terran2"
+            | "ingame-protoss"
+            | "ingame-protoss-tip-shields"
+            | "ingame-protoss-tip-probe"
+            | "ingame-protoss-tip-minimap" => {
                 let (slot, race, dy) = match shot_screen.as_str() {
                     "ingame-zerg" => (1, Race::Zerg, 0),
                     "ingame-terran2" => (7, Race::Terran, -8),
@@ -3904,6 +4085,19 @@ fn main() {
                 };
                 app.hunters_start(&fb, slot, race, dy);
                 app.update();
+                // 135109 / 135114 / 135121 hover the shield upgrade, the
+                // Probe button and the minimap terrain toggle.
+                let centre = |r: UiRect| (r.x + r.w / 2, r.y + r.h / 2);
+                app.pointer = match shot_screen.as_str() {
+                    "ingame-protoss-tip-shields" => Some(centre(app.upgrade_button_rect())),
+                    "ingame-protoss-tip-probe" => Some(centre(app.command_slots()[0])),
+                    "ingame-protoss-tip-minimap" => Some(centre(app.hud_control(
+                        "minimap",
+                        2,
+                        UiRect::new(3, 320, 64, 24),
+                    ))),
+                    _ => None,
+                };
                 app.draw(&mut fb);
             }
             "ingame-terran" => {
@@ -5708,6 +5902,13 @@ impl App {
     /// three autosaved games, 2026-10-27), with the town hall selected for
     /// Zerg/Protoss and nothing selected for Terran, as on the captures.
     fn hunters_start(&mut self, fb: &Framebuffer, slot: usize, race: Race, cam_dy: i32) {
+        // Colours the three games gave the player, measured on the team-mask
+        // pixels of 135051 / 134905 / 135020 (teal, brown, dark grey).
+        self.local_team_color = Some(match race {
+            Race::Protoss => Rgb::new(40, 150, 125),
+            Race::Zerg => Rgb::new(111, 73, 59),
+            _ => Rgb::new(61, 57, 47),
+        });
         if let Some(i) = self
             .maps
             .iter()
@@ -5953,13 +6154,33 @@ impl App {
     /// Scrollbar of the mission list: arrows scroll one row, the track
     /// pages.  Returns true when the press was consumed.
     fn mission_scrollbar(&mut self, input: &MenuInput) -> bool {
+        let (cx, _cy, cw, ch) = self.content_box;
+        let to_content = |(mx, my): (i32, i32)| {
+            (
+                (mx - cx) as f32 * 2560.0 / cw.max(1) as f32,
+                my as f32 * 1440.0 / ch.max(1) as f32,
+            )
+        };
+        // Thumb drag in progress: follow the pointer while the button is
+        // held (the grab offset keeps the thumb under the cursor).
+        if let Some(grab) = self.mission_drag {
+            if !input.mouse_down {
+                self.mission_drag = None;
+                self.mouse_was_down = false;
+                return true;
+            }
+            if let Some(p) = input.mouse {
+                let (_, fy) = to_content(p);
+                self.mission_list
+                    .set_thumb(galaxycraft::menu::mission_thumb_fraction(fy - grab));
+            }
+            return true;
+        }
         let pressed = input.mouse_down && !self.mouse_was_down;
         let Some((mx, my)) = input.mouse.filter(|_| pressed) else {
             return false;
         };
-        let (cx, _cy, cw, ch) = self.content_box;
-        let fx = (mx - cx) as f32 * 2560.0 / cw.max(1) as f32;
-        let fy = my as f32 * 1440.0 / ch.max(1) as f32;
+        let (fx, fy) = to_content((mx, my));
         let Some(hit) = galaxycraft::menu::mission_scrollbar_hit(fx, fy, self.mission_list.thumb())
         else {
             return false;
@@ -5971,7 +6192,11 @@ impl App {
             galaxycraft::menu::ScrollHit::Down => 1,
             galaxycraft::menu::ScrollHit::PageUp => -page,
             galaxycraft::menu::ScrollHit::PageDown => page,
-            galaxycraft::menu::ScrollHit::Thumb => 0,
+            galaxycraft::menu::ScrollHit::Thumb => {
+                let top = galaxycraft::menu::mission_thumb_top(self.mission_list.thumb());
+                self.mission_drag = Some(fy - top);
+                0
+            }
         });
         self.play("ui_click");
         true
@@ -9368,6 +9593,32 @@ impl App {
         self.hd_sprites.image(image, |path| install?.read(path))
     }
 
+    /// Overlays the unit's Init animation attaches (`imgul` shadows below,
+    /// `imgol` glows above), from the retail iscript: image id, offset and
+    /// whether it is drawn under the main image.
+    fn hd_unit_layers(&self, type_id: u16) -> Vec<(u16, i8, i8, bool)> {
+        let ty = self.data.unit(type_id);
+        let Some(script) = self.data.unit_iscript_id(ty) else {
+            return Vec::new();
+        };
+        let Some(mut st) = self.data.iscript.start_animation(script, 0, 0) else {
+            return Vec::new();
+        };
+        let mut ctx = galaxycraft::iscript::AnimContext::default();
+        let mut out = Vec::new();
+        for _ in 0..4 {
+            for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
+                if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e {
+                    out.push((id, x, y, below));
+                }
+            }
+            if st.ended {
+                break;
+            }
+        }
+        out
+    }
+
     /// Draw one unit from its HD sprite at screen resolution.  Directional
     /// images store 17 facings (north..south through east); the western ones
     /// are the mirrored frames, as in the SD GRPs.
@@ -9390,19 +9641,45 @@ impl App {
         let (cx, cy, cw, ch) = content;
         let sx = cx as f32 + (u.x as f32 / 256.0 - self.camera.0 as f32) * s;
         let sy = cy as f32 + (u.y as f32 / 256.0 - self.camera.1 as f32) * s;
-        let team = galaxycraft::render::PLAYER_COLORS
-            [u.owner as usize % galaxycraft::render::PLAYER_COLORS.len()];
-        galaxycraft::hd_sprites::draw_frame(
-            fb,
-            &img,
-            frame,
-            sx,
-            sy,
-            s,
-            flip,
-            Some(team),
-            (cx, cy, cx + cw, cy + ch),
-        );
+        let team = match self.local_team_color {
+            Some(c) if u.owner as usize == self.local_player => c,
+            _ => {
+                galaxycraft::render::PLAYER_COLORS
+                    [u.owner as usize % galaxycraft::render::PLAYER_COLORS.len()]
+            }
+        };
+        let clip = (cx, cy, cx + cw, cy + ch);
+        let layers = self.hd_unit_layers(u.type_id);
+        let install = self.install.as_ref();
+        let layer = |below: bool, fb: &mut Framebuffer| {
+            for &(id, ox, oy, b) in layers.iter().filter(|l| l.3 == below) {
+                let _ = b;
+                if let Some(li) = self.hd_sprites.image(id, |path| install?.read(path)) {
+                    let lf = frame.min(li.header.frames.len().saturating_sub(1));
+                    let (lx, ly) = (sx + ox as f32 * s, sy + oy as f32 * s);
+                    if below {
+                        galaxycraft::hd_sprites::draw_shadow(
+                            fb,
+                            &li,
+                            lf,
+                            lx,
+                            ly,
+                            s,
+                            flip,
+                            HD_SHADOW_ALPHA,
+                            clip,
+                        );
+                    } else {
+                        galaxycraft::hd_sprites::draw_frame(
+                            fb, &li, lf, lx, ly, s, flip, None, clip,
+                        );
+                    }
+                }
+            }
+        };
+        layer(true, fb);
+        galaxycraft::hd_sprites::draw_frame(fb, &img, frame, sx, sy, s, flip, Some(team), clip);
+        layer(false, fb);
     }
 
     /// Screen rectangle of a console-dialog rect given in absolute classic
@@ -9418,7 +9695,7 @@ impl App {
         let extra = cw as f32 / s - 640.0;
         let anchor = match dialog {
             "minimap" => 0.0,
-            "statdata" => 0.5,
+            "statdata" | "objctdlg" | "tips_dlg" => 0.5,
             _ => 1.0,
         };
         let x = cx as f32 + (r.x as f32 + anchor * extra) * s;
@@ -9460,9 +9737,12 @@ impl App {
         self.draw_hud_resources(fb);
         self.draw_hud_minimap(fb);
         self.draw_hud_selection(fb);
+        self.draw_hud_minimap_buttons(fb);
+        self.draw_hud_upgrade(fb);
         self.draw_hud_portrait(fb);
         self.draw_hud_menu_label(fb);
         self.draw_hud_card(fb);
+        self.draw_hud_tooltip(fb);
         // Status line in the game view.
         if Instant::now() < self.status_until && !self.status.is_empty() {
             fb.text_centered(
@@ -9546,7 +9826,7 @@ impl App {
                 x,
                 (r.y as f32) / k + HUD_RES_BASE,
                 &text,
-                HUD_SMALL_PX,
+                HUD_NAME_PX,
                 HUD_RES_COLOR,
                 None,
                 GlueFace::Small,
@@ -9559,11 +9839,13 @@ impl App {
     fn draw_hud_minimap(&mut self, fb: &mut Framebuffer) {
         let (rx, ry, rw, rh) = self.minimap_rect();
         let units = self.world.minimap_units(self.local_player as u8, self.fog);
+        // The box frames the playfield above the console: 368 game px tall
+        // (135051: inner box 1371..1406 at 3 px per tile).
         let cam = (
             self.camera.0,
             self.camera.1,
             self.camera.0 + self.view.0,
-            self.camera.1 + self.view.1,
+            self.camera.1 + MINIMAP_VIEW_H,
         );
         self.tileset.draw_minimap_with_terrain(
             fb,
@@ -9690,7 +9972,9 @@ impl App {
             let fit = (port.w as f32 / frame.width as f32).min(port.h as f32 / frame.height as f32);
             let dw = (frame.width as f32 * fit).round().max(1.0) as i32;
             let dh = (frame.height as f32 * fit).round().max(1.0) as i32;
-            blit_additive(
+            // The portrait clips are opaque (135051: the advisor's dark
+            // backdrop hides the blue well behind it).
+            blit_opaque(
                 &frame,
                 fb,
                 port.x + (port.w - dw) / 2,
@@ -9699,6 +9983,358 @@ impl App {
                 dh,
             );
         }
+        // Race frame over the portrait well (`conover.dds`).
+        let k = self.content_box.3 as f32 / 1440.0;
+        if let Some(img) = self.console.as_ref().and_then(|c| c.con_over.as_ref()) {
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            img.draw_scaled(
+                fb,
+                port.x + (port.w - w) / 2,
+                port.y + (port.h - h) / 2,
+                w,
+                h,
+            );
+        }
+    }
+
+    /// HUD element under the pointer that carries a retail tooltip.
+    fn hud_hover(&self) -> Option<HudHover> {
+        let (mx, my) = self.pointer?;
+        let inside = |r: UiRect| mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h;
+        if let Some(i) = self.command_slots().into_iter().position(inside) {
+            return Some(HudHover::Card(i));
+        }
+        let protoss_selected = self
+            .first_selected()
+            .is_some_and(|u| self.data.unit(u.type_id).has_shields);
+        if protoss_selected && self.selected.len() == 1 && inside(self.upgrade_button_rect()) {
+            return Some(HudHover::Shields);
+        }
+        if inside(self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24))) {
+            return Some(HudHover::MinimapTerrain);
+        }
+        None
+    }
+
+    /// `statdata` button 3 (classic 242,441 39x36): the shield/armour
+    /// upgrade of a single selection.
+    fn upgrade_button_rect(&self) -> UiRect {
+        // Control 3 (classic 242,441): measured at y 1323 = 441 * 3 on 135109.
+        self.hud_control("statdata", 3, UiRect::new(242, 441, 39, 36))
+    }
+
+    /// Retail tooltip of the hovered HUD element: a near-black box with a
+    /// 3.5 px blue rim, BlizzardGlobal 27.2 px/em text whose `\x03` spans
+    /// are yellow, and a cost row for buttons that make a unit.  Box
+    /// placement relative to the element as measured on 135109 / 135114 /
+    /// 135121 (the captures hovered the element's middle).
+    fn draw_hud_tooltip(&mut self, fb: &mut Framebuffer) {
+        let Some(hover) = self.hud_hover() else {
+            return;
+        };
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cx0 = self.content_box.0;
+        let to_c = |x: i32, y: i32| ((x - cx0) as f32 / k, y as f32 / k);
+        let mut lines: Vec<String> = Vec::new();
+        let mut cost: Option<(i32, i32, i32)> = None;
+        // (anchor point in content px, true = box bottom-left, false = top-left)
+        let anchor: ((f32, f32), bool) = match hover {
+            HudHover::Card(i) => {
+                let Some(u) = self.first_selected().cloned() else {
+                    return;
+                };
+                let card = galaxycraft::buttons::card(&self.world, &u);
+                let Some((b, st)) = card[i] else {
+                    return;
+                };
+                let id = if st == galaxycraft::buttons::ButtonState::Disabled
+                    && b.disabled_string != 0
+                {
+                    b.disabled_string
+                } else {
+                    b.enabled_string
+                };
+                let raw = self
+                    .data
+                    .strings
+                    .get(id.saturating_sub(1))
+                    .unwrap_or("")
+                    .to_string();
+                lines.push(button_tooltip_text(&raw));
+                if galaxycraft::buttons::Cond::of(b.cond) == galaxycraft::buttons::Cond::MakeUnit {
+                    let ty = self.data.unit(b.cond_var);
+                    cost = Some((
+                        ty.mineral_cost as i32,
+                        ty.gas_cost as i32,
+                        (ty.supply_required as i32 + 1) / 2,
+                    ));
+                }
+                let r = self.command_slots()[i];
+                let (x, y) = to_c(r.x, r.y);
+                ((x - 13.0, y + 5.0), true)
+            }
+            HudHover::Shields => {
+                lines.push(self.data.upgrade_name(PLASMA_SHIELDS).to_string());
+                let level = self.world.players[self.local_player].upgrade_level(PLASMA_SHIELDS);
+                lines.push(format!(
+                    "{} {level}",
+                    self.data.strings.get(778).unwrap_or("Shields:")
+                ));
+                let r = self.upgrade_button_rect();
+                let (x, y) = to_c(r.x, r.y);
+                ((x + 94.0, y - 16.0), false)
+            }
+            HudHover::MinimapTerrain => {
+                // Retail shows string 810 ("Hide Terrain ...") while the
+                // terrain layer is off (135121); kept as observed.
+                let id = if self.minimap_terrain { 809 } else { 810 };
+                lines.push(self.data.strings.get(id).unwrap_or("").to_string());
+                let r = self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24));
+                let (x, y) = to_c(r.x, r.y);
+                ((x + 181.0, y - 8.0), false)
+            }
+        };
+        let widths: Vec<f32> = lines
+            .iter()
+            .map(|l| self.glue_measure(&strip_codes(l), TOOLTIP_PX, GlueFace::Small))
+            .collect();
+        let mut w = widths.iter().cloned().fold(0.0, f32::max);
+        if let Some((m, g, sup)) = cost {
+            w = w.max(self.tooltip_cost_width(m, g, sup));
+        }
+        let bw = (w + TOOLTIP_PAD_L + TOOLTIP_PAD_R).round();
+        let bh = TOOLTIP_LINE0_H
+            + TOOLTIP_PITCH * (lines.len() as f32 - 1.0)
+            + if cost.is_some() { TOOLTIP_COST_H } else { 0.0 };
+        let ((ax, ay), bottom) = anchor;
+        let (bx, by) = if bottom { (ax, ay - bh) } else { (ax, ay) };
+        let px = |x: f32| cx0 + (x * k).round() as i32;
+        let py = |y: f32| (y * k).round() as i32;
+        draw_rounded_box(
+            fb,
+            (
+                px(bx),
+                py(by),
+                (bw * k).round() as i32,
+                (bh * k).round() as i32,
+            ),
+            TOOLTIP_RADIUS * k,
+            TOOLTIP_RIM * k,
+            TOOLTIP_FILL,
+            TOOLTIP_RIM_COLOR,
+        );
+        for (i, line) in lines.iter().enumerate() {
+            self.glue_coded_text(
+                fb,
+                bx + TOOLTIP_PAD_L,
+                by + TOOLTIP_BASE + i as f32 * TOOLTIP_PITCH,
+                line,
+            );
+        }
+        if let Some((m, g, sup)) = cost {
+            self.draw_tooltip_cost(
+                fb,
+                bx + TOOLTIP_PAD_L,
+                by + TOOLTIP_LINE0_H - 6.0,
+                m,
+                g,
+                sup,
+            );
+        }
+    }
+
+    /// Text with `\x01` (default) / `\x03` (yellow) colour codes.
+    fn glue_coded_text(&mut self, fb: &mut Framebuffer, x: f32, base: f32, text: &str) {
+        let mut pen = x;
+        let mut colour = HUD_TEXT_COLOR;
+        let mut run = String::new();
+        for ch in text.chars().chain(std::iter::once('\u{0}')) {
+            match ch {
+                '\u{1}' | '\u{3}' | '\u{0}' => {
+                    if !run.is_empty() {
+                        pen = self.glue_text_face(
+                            fb,
+                            pen,
+                            base,
+                            &run,
+                            TOOLTIP_PX,
+                            colour,
+                            None,
+                            GlueFace::Small,
+                        );
+                        run.clear();
+                    }
+                    colour = if ch == '\u{3}' {
+                        TOOLTIP_HOTKEY
+                    } else {
+                        HUD_TEXT_COLOR
+                    };
+                }
+                c if (c as u32) < 0x20 => {}
+                c => run.push(c),
+            }
+        }
+    }
+
+    /// Width (content px) of a tooltip cost row.
+    fn tooltip_cost_width(&self, minerals: i32, gas: i32, supply: i32) -> f32 {
+        let mut w = 0.0;
+        for (v, show) in [(minerals, true), (gas, gas > 0), (supply, supply > 0)] {
+            if show {
+                w += TOOLTIP_ICON
+                    + 8.0
+                    + self.glue_measure(&v.to_string(), TOOLTIP_PX, GlueFace::Small)
+                    + 12.0;
+            }
+        }
+        w
+    }
+
+    /// Cost row: each value after its resource icon in a rimmed square.
+    fn draw_tooltip_cost(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: f32,
+        y: f32,
+        minerals: i32,
+        gas: i32,
+        supply: i32,
+    ) {
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cx0 = self.content_box.0;
+        let (gas_icon, supply_icon) = match self.console_race {
+            Race::Zerg => (1, 4),
+            Race::Protoss => (3, 6),
+            _ => (2, 5),
+        };
+        let mut pen = x;
+        for (v, icon, show) in [
+            (minerals, 0usize, true),
+            (gas, gas_icon, gas > 0),
+            (supply, supply_icon, supply > 0),
+        ] {
+            if !show {
+                continue;
+            }
+            let rect = (
+                cx0 + (pen * k).round() as i32,
+                (y * k).round() as i32,
+                (TOOLTIP_ICON * k).round() as i32,
+                (TOOLTIP_ICON * k).round() as i32,
+            );
+            draw_rounded_box(
+                fb,
+                rect,
+                3.0 * k,
+                2.0 * k,
+                Rgb::new(10, 20, 50),
+                TOOLTIP_RIM_COLOR,
+            );
+            if let Some(img) = self
+                .console
+                .as_ref()
+                .and_then(|c| c.icons4.as_ref())
+                .and_then(|g| g.frame(icon))
+            {
+                img.draw_scaled(fb, rect.0 + 2, rect.1 + 2, rect.2 - 4, rect.3 - 4);
+            }
+            pen += TOOLTIP_ICON + 8.0;
+            pen = self.glue_text_face(
+                fb,
+                pen,
+                y + TOOLTIP_ICON - 10.0,
+                &v.to_string(),
+                TOOLTIP_PX,
+                HUD_TEXT_COLOR,
+                None,
+                GlueFace::Small,
+            ) + 12.0;
+        }
+    }
+
+    /// The two buttons above the radar (`minimap` controls 2 and 3) from the
+    /// HD `dlg` sheet; the terrain toggle shows its highlighted frame while
+    /// hovered.
+    fn draw_hud_minimap_buttons(&mut self, fb: &mut Framebuffer) {
+        let hover = self.hud_hover();
+        let k = self.content_box.3 as f32 / 1440.0;
+        let terrain = self.hud_control("minimap", 2, UiRect::new(3, 320, 64, 24));
+        let other = self.hud_control("minimap", 3, UiRect::new(76, 320, 52, 24));
+        let Some(sheet) = self.console.as_ref().and_then(|c| c.dlg4.as_ref()) else {
+            return;
+        };
+        let terrain_frame = if hover == Some(HudHover::MinimapTerrain) {
+            5
+        } else {
+            4
+        };
+        for (rect, frame) in [(terrain, terrain_frame), (other, 0)] {
+            if let Some(img) = sheet.frame(frame) {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(
+                    fb,
+                    rect.x + (rect.w - w) / 2,
+                    rect.y + (rect.h - h) / 2,
+                    w,
+                    h,
+                );
+            }
+        }
+    }
+
+    /// Shield upgrade of a single Protoss selection: `cmdbtns` frame 12
+    /// (button with the level box), the upgrade icon and its level.
+    fn draw_hud_upgrade(&mut self, fb: &mut Framebuffer) {
+        let Some(u) = self.first_selected().cloned() else {
+            return;
+        };
+        if self.selected.len() != 1 || !self.data.unit(u.type_id).has_shields {
+            return;
+        }
+        let r = self.upgrade_button_rect();
+        let k = self.content_box.3 as f32 / 1440.0;
+        let Some(console) = &self.console else {
+            return;
+        };
+        if let Some(img) = console
+            .command_buttons_hd
+            .as_ref()
+            .and_then(|g| g.frame(12))
+        {
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+        }
+        let icon = self
+            .data
+            .upgrade(PLASMA_SHIELDS)
+            .map(|t| t.icon)
+            .unwrap_or(0);
+        if let Some(img) = console
+            .cmdicons4
+            .as_ref()
+            .and_then(|g| g.frame(icon as usize))
+        {
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+        }
+        let level = self.world.players[self.local_player]
+            .upgrade_level(PLASMA_SHIELDS)
+            .to_string();
+        let x = (r.x + r.w - self.content_box.0) as f32 / k - UPGRADE_LEVEL_DX;
+        self.glue_text_face(
+            fb,
+            x,
+            (r.y + r.h) as f32 / k - UPGRADE_LEVEL_DY,
+            &level,
+            HUD_SMALL_PX,
+            HUD_TEXT_COLOR,
+            None,
+            GlueFace::Small,
+        );
     }
 
     /// `stat_f10` button 1: the MENU label over the console's own well.
@@ -9738,10 +10374,31 @@ impl App {
             return;
         };
         let k = self.content_box.3 as f32 / 1440.0;
-        for (slot, entry) in slots.iter().zip(card.iter()) {
+        let hovered = match self.hud_hover() {
+            Some(HudHover::Card(i)) => Some(i),
+            _ => None,
+        };
+        for (i, (slot, entry)) in slots.iter().zip(card.iter()).enumerate() {
             let Some((button, state)) = entry else {
                 continue;
             };
+            // Button background (`cmdbtns` frame 0, frame 1 while hovered).
+            let frame = if hovered == Some(i) { 1 } else { 0 };
+            if let Some(img) = console
+                .command_buttons_hd
+                .as_ref()
+                .and_then(|g| g.frame(frame))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(
+                    fb,
+                    slot.x + (slot.w - w) / 2,
+                    slot.y + (slot.h - h) / 2,
+                    w,
+                    h,
+                );
+            }
             let colour = match state {
                 galaxycraft::buttons::ButtonState::Enabled => HUD_GLYPH_ENABLED,
                 galaxycraft::buttons::ButtonState::Disabled => HUD_GLYPH_DISABLED,
@@ -14897,162 +15554,221 @@ impl App {
         }
     }
 
-    fn draw_objectives_panel(&self, fb: &mut Framebuffer) {
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let dim: u8 = 96;
-        for y in 0..ch {
-            for x in cx..cx + cw {
-                let c = fb.get(x, y);
-                fb.put(x, y, c.blend(Rgb::new(0, 0, 0), dim));
-            }
-        }
-        let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
-        let (px, py) = at(0.2781, 0.066);
-        let pw = (cw as f32 * (0.7316 - 0.2781)) as i32;
-        let ph = (ch as f32 * (0.597 - 0.066)) as i32;
-        for y in py..py + ph {
-            for x in px..px + pw {
-                let c = fb.get(x, y);
-                // Measured sweep: 225 (near opaque) matches the reference best;
-                // the retail panel is more translucent, but the world behind it
-                // is a different match state, so transparency only adds error.
-                fb.put(x, y, c.blend(Rgb::new(13, 21, 56), 225));
-            }
-        }
-        fb.rect_outline(px, py, pw, ph, Rgb::new(46, 54, 110));
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let white = Rgb::new(232, 236, 246);
-        let body = Rgb::new(214, 220, 232);
-        let title = "Mission Objectives";
-        let tw = title.chars().count() as i32 * 8 * big;
-        fb.text(
-            px + (pw - tw) / 2,
-            py + (ph as f32 * 0.0536) as i32,
-            title,
-            white,
-            big,
-        );
-        let tx = cx + (cw as f32 * 0.2840) as i32;
-        let mut ty = py + (ph as f32 * 0.1478) as i32;
-        let line_h = (ch as f32 * 0.033) as i32;
-        for line in wrap_text(
-            "Destroy all of an opponent's buildings to eliminate him.",
-            52,
-        )
-        .iter()
-        .take(6)
-        {
-            fb.text(tx, ty, line, body, big);
-            ty += line_h;
-        }
-        // Previous (Esc) button across the bottom of the panel.
-        let (bx, by) = at(0.3656, 0.5146);
-        let bw = (cw as f32 * (0.5988 - 0.3656)) as i32;
-        let bh = (ch as f32 * 0.0451) as i32;
-        fb.rect(bx, by, bw, bh, Rgb::new(10, 14, 32));
-        fb.rect_outline(bx, by, bw, bh, Rgb::new(40, 46, 130));
-        fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(90, 30, 40));
-        let label = "Previous (Esc)";
-        let lw = label.chars().count() as i32 * 8 * big;
-        fb.text(
-            bx + (bw - lw) / 2,
-            by + (bh - 8 * big) / 2,
-            label,
-            Rgb::new(238, 232, 120),
-            big,
+    /// Mission Objectives (`objctdlg`): title, the objective text and the
+    /// default `Previous (Esc)` button (134919).
+    fn draw_objectives_panel(&mut self, fb: &mut Framebuffer) {
+        let body = "Destroy all of an opponent's buildings to eliminate him.";
+        self.draw_glue_dialog(
+            fb,
+            "objctdlg",
+            "Mission Objectives",
+            (2, body),
+            &[(-3, "\u{1b}Previous (\u{4}Esc\u{1})", true)],
+            None,
         );
     }
 
-    /// Retail "StarCraft Tips" dialog (reference #39). Every rectangle below
-    /// is measured on that 3440x1440 screenshot and expressed as a fraction of
-    /// the 2560x1440 content box: panel 0.278..0.732 x 0.066..0.597, body text
-    /// at 0.285, checkbox row at 0.466, button row at 0.520..0.567.
-    fn draw_tips_panel(&self, fb: &mut Framebuffer) {
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        // Dim the battlefield behind the modal.
-        let dim: u8 = 96;
-        for y in 0..ch {
-            for x in cx..cx + cw {
+    /// StarCraft Tips (`tips_dlg`): title, tip text, the "Show Tips at
+    /// Startup" checkbox and OK / Previous Tip / Next Tip (134931).
+    fn draw_tips_panel(&mut self, fb: &mut Framebuffer) {
+        let body = "To toggle subtitles on or off, go to MENU. Under OPTIONS, select SOUND and click on the box marked TOGGLE SUBTITLES.";
+        self.draw_glue_dialog(
+            fb,
+            "tips_dlg",
+            "StarCraft Tips",
+            (-10, body),
+            &[
+                (-2, "o\u{4}O\u{1}K", true),
+                (3, "p\u{4}P\u{1}revious Tip", false),
+                (1, "n\u{4}N\u{1}ext Tip", false),
+            ],
+            Some((2, "Show Tips at Startup")),
+        );
+    }
+
+    /// In-game glue dialog (centre-anchored like `statdata`): a translucent
+    /// navy pane (fitted on 134931 against 134905, same scene: colour
+    /// (4,17,54) at 75 %), `RC_BIGTEXT` Eurostile with a drop shadow, and
+    /// buttons whose label is yellow with the `\x04` hotkey span white.
+    #[allow(clippy::type_complexity)]
+    fn draw_glue_dialog(
+        &mut self,
+        fb: &mut Framebuffer,
+        dialog: &str,
+        title: &str,
+        body: (i32, &str),
+        buttons: &[(i32, &str, bool)],
+        checkbox: Option<(i32, &str)>,
+    ) {
+        let Some(layout) = self
+            .console
+            .as_ref()
+            .and_then(|c| c.layout(dialog))
+            .cloned()
+        else {
+            return;
+        };
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cx0 = self.content_box.0;
+        let pane = self.hud_rect(dialog, layout.rect);
+        for y in pane.y..pane.y + pane.h {
+            for x in pane.x..pane.x + pane.w {
                 let c = fb.get(x, y);
-                fb.put(x, y, c.blend(Rgb::new(0, 0, 0), dim));
+                fb.put(x, y, c.blend(DIALOG_FILL, DIALOG_ALPHA));
             }
         }
-        let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
-        let (px, py) = at(0.2781, 0.066);
-        let pw = (cw as f32 * (0.7316 - 0.2781)) as i32;
-        let ph = (ch as f32 * (0.597 - 0.066)) as i32;
-        // Panel: dark navy, translucent, thin blue edge.
-        for y in py..py + ph {
-            for x in px..px + pw {
-                let c = fb.get(x, y);
-                // Measured sweep: 225 (near opaque) matches the reference best;
-                // the retail panel is more translucent, but the world behind it
-                // is a different match state, so transparency only adds error.
-                fb.put(x, y, c.blend(Rgb::new(13, 21, 56), 225));
+        fb.rect_outline(pane.x, pane.y, pane.w, pane.h, DIALOG_EDGE);
+        let to_c = |r: UiRect| {
+            (
+                (r.x - cx0) as f32 / k,
+                r.y as f32 / k,
+                r.w as f32 / k,
+                r.h as f32 / k,
+            )
+        };
+        let rects: Vec<(i32, UiRect)> = layout
+            .controls
+            .iter()
+            .filter(|c| c.id != 0)
+            .map(|c| (c.id, self.hud_rect(dialog, c.abs)))
+            .collect();
+        let ctrl = |id: i32| rects.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
+        // Title (CTEXT -1), centred.
+        if let Some(r) = ctrl(-1) {
+            let (x, y, w, _) = to_c(r);
+            let tw = self.glue_measure(title, GLUE_BIG_PX, GlueFace::Big);
+            self.glue_shadow_text(fb, x + (w - tw) / 2.0, y + DIALOG_TITLE_BASE, title, None);
+        }
+        // Body, word-wrapped to the LTEXT width.
+        if let Some(r) = ctrl(body.0) {
+            let (x, y, w, _) = to_c(r);
+            let mut line = String::new();
+            let mut lines = Vec::new();
+            for word in body.1.split_whitespace() {
+                let cand = if line.is_empty() {
+                    word.to_string()
+                } else {
+                    format!("{line} {word}")
+                };
+                if !line.is_empty() && self.glue_measure(&cand, GLUE_BIG_PX, GlueFace::Big) > w {
+                    lines.push(std::mem::take(&mut line));
+                    line = word.to_string();
+                } else {
+                    line = cand;
+                }
+            }
+            lines.push(line);
+            for (i, l) in lines.iter().enumerate() {
+                self.glue_shadow_text(
+                    fb,
+                    x + DIALOG_BODY_DX,
+                    y + DIALOG_BODY_BASE + i as f32 * DIALOG_BODY_PITCH,
+                    l,
+                    None,
+                );
             }
         }
-        fb.rect_outline(px, py, pw, ph, Rgb::new(46, 54, 110));
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let white = Rgb::new(232, 236, 246);
-        let body = Rgb::new(214, 220, 232);
-        // Title, centred on the panel.
-        let title = "StarCraft Tips";
-        let tw = title.chars().count() as i32 * 8 * big;
-        fb.text(
-            px + (pw - tw) / 2,
-            py + (ph as f32 * 0.0536) as i32,
-            title,
-            white,
-            big,
-        );
-        // Body copy, left aligned, wrapped exactly like the retail dialog.
-        let tx = cx + (cw as f32 * 0.285) as i32;
-        // Measured on reference #39: first body line at y 208 (0.1478 of the
-        // panel height), 64 px pitch.
-        let mut ty = py + (ph as f32 * 0.1478) as i32;
-        let line_h = (ch as f32 * 0.0444) as i32;
-        // Wrapped to the dialog width for our 8px glyph cell (the retail
-        // font is narrower, so the same copy needs one extra break here).
-        for line in [
-            "To toggle subtitles on or off, go to MENU.",
-            "Under OPTIONS, select SOUND and click on the",
-            "box marked TOGGLE SUBTITLES.",
-        ] {
-            fb.text(tx, ty, line, body, big);
-            ty += line_h;
+        if let Some((id, label)) = checkbox {
+            if let Some(r) = ctrl(id) {
+                let side = (r.h as f32).max(28.0 * k) as i32;
+                fb.rect(r.x, r.y, side, side, Rgb::new(40, 8, 8));
+                fb.rect_outline(r.x, r.y, side, side, Rgb::new(110, 30, 30));
+                let (x, y, _, _) = to_c(r);
+                self.glue_text_face(
+                    fb,
+                    x + side as f32 / k + 10.0,
+                    y + 26.0,
+                    label,
+                    HUD_SMALL_PX,
+                    HUD_TEXT_COLOR,
+                    None,
+                    GlueFace::Small,
+                );
+            }
         }
-        // "Show Tips at Startup" checkbox with the red tick.
-        let (bx, by) = at(0.3055, 0.4806);
-        let bs = (ph as f32 * 0.056) as i32;
-        fb.rect_outline(bx, by, bs, bs, Rgb::new(150, 30, 30));
-        fb.rect(bx + 2, by + 2, bs / 2, bs - 4, Rgb::new(150, 30, 30));
-        fb.text(
-            bx + bs + (cw as f32 * 0.008) as i32,
-            by + (bs - 8 * big) / 2,
-            "Show Tips at Startup",
-            body,
-            big,
-        );
-        // OK / Previous Tip / Next Tip.
-        for (label, x0, x1) in [
-            ("OK", 0.2984f32, 0.4195),
-            ("Previous Tip", 0.4363, 0.5637),
-            ("Next Tip", 0.5773, 0.7016),
-        ] {
-            let (x0p, y0p) = at(x0, 0.5146);
-            let bw = (cw as f32 * (x1 - x0)) as i32;
-            let bh = (ch as f32 * 0.047) as i32;
-            fb.rect(x0p, y0p, bw, bh, Rgb::new(10, 14, 32));
-            fb.rect_outline(x0p, y0p, bw, bh, Rgb::new(40, 46, 130));
-            fb.rect_outline(x0p + 2, y0p + 2, bw - 4, bh - 4, Rgb::new(90, 30, 40));
-            let lw = label.chars().count() as i32 * 8 * big;
-            fb.text(
-                x0p + (bw - lw) / 2,
-                y0p + (bh - 8 * big) / 2,
-                label,
-                Rgb::new(238, 232, 120),
-                big,
+        for &(id, label, default) in buttons {
+            let Some(r) = ctrl(id) else {
+                continue;
+            };
+            if default {
+                fb.rect_outline(r.x, r.y, r.w, r.h, DIALOG_BUTTON_OUTER);
+                fb.rect_outline(r.x + 1, r.y + 1, r.w - 2, r.h - 2, DIALOG_BUTTON_OUTER);
+            }
+            let inset = (6.0 * k) as i32;
+            // Only the rim: the button face stays the translucent pane.
+            draw_rounded_rim(
+                fb,
+                (r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset),
+                8.0 * k,
+                3.0 * k,
+                DIALOG_BUTTON_INNER,
             );
+            // `rc3.json` labels start with their hotkey (`o\x04O\x01K`,
+            // `\x1bPrevious ...` for Esc), which is not drawn.
+            let label: String = label.chars().skip(1).collect();
+            let label = label.as_str();
+            let (x, y, w, h) = to_c(r);
+            let plain: String = label.chars().filter(|c| (*c as u32) >= 0x20).collect();
+            let tw = self.glue_measure(&plain, GLUE_BIG_PX, GlueFace::Big);
+            self.glue_shadow_text(
+                fb,
+                x + (w - tw) / 2.0,
+                y + h / 2.0 + DIALOG_BUTTON_BASE,
+                label,
+                Some(TOOLTIP_HOTKEY),
+            );
+        }
+    }
+
+    /// Eurostile `RC_BIGTEXT` with the retail 2 px black drop shadow; `\x04`
+    /// spans are white, the rest `base` (lavender when `None`, else e.g.
+    /// the button yellow).
+    fn glue_shadow_text(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: f32,
+        base: f32,
+        text: &str,
+        colour: Option<Rgb>,
+    ) {
+        let normal = colour.unwrap_or(HUD_TEXT_COLOR);
+        let mut runs: Vec<(String, Rgb)> = Vec::new();
+        let mut cur = normal;
+        let mut run = String::new();
+        for ch in text.chars() {
+            match ch {
+                '\u{4}' | '\u{1}' => {
+                    if !run.is_empty() {
+                        runs.push((std::mem::take(&mut run), cur));
+                    }
+                    cur = if ch == '\u{4}' {
+                        Rgb::new(255, 255, 255)
+                    } else {
+                        normal
+                    };
+                }
+                c if (c as u32) < 0x20 => {}
+                c => run.push(c),
+            }
+        }
+        if !run.is_empty() {
+            runs.push((run, cur));
+        }
+        for (dx, dy, shadow) in [(DIALOG_SHADOW, DIALOG_SHADOW, true), (0.0, 0.0, false)] {
+            let mut pen = x + dx;
+            for (t, c) in &runs {
+                let col = if shadow { Rgb::new(0, 0, 0) } else { *c };
+                pen = self.glue_text_face(
+                    fb,
+                    pen,
+                    base + dy,
+                    t,
+                    GLUE_BIG_PX,
+                    col,
+                    None,
+                    GlueFace::Big,
+                );
+            }
         }
     }
 }

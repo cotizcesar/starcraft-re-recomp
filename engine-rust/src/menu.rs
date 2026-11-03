@@ -771,6 +771,16 @@ pub enum ScrollHit {
     Thumb,
 }
 
+/// Scroll fraction for a thumb whose top is at content y `top`.
+pub fn mission_thumb_fraction(top: f32) -> f32 {
+    ((top - MISSION_THUMB_TOP.0) / (MISSION_THUMB_TOP.1 - MISSION_THUMB_TOP.0)).clamp(0.0, 1.0)
+}
+
+/// Content y of the thumb top for a scroll fraction.
+pub fn mission_thumb_top(fraction: f32) -> f32 {
+    MISSION_THUMB_TOP.0 + (MISSION_THUMB_TOP.1 - MISSION_THUMB_TOP.0) * fraction
+}
+
 /// Hit-test the mission scrollbar; `thumb` is the scroll fraction 0..=1.
 pub fn mission_scrollbar_hit(x: f32, y: f32, thumb: f32) -> Option<ScrollHit> {
     if x < MISSION_SCROLL_X.0 || x >= MISSION_SCROLL_X.1 {

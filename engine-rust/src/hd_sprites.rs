@@ -203,6 +203,39 @@ pub fn draw_frame(
     team: Option<Rgb>,
     clip: (i32, i32, i32, i32),
 ) {
+    draw_frame_mode(fb, img, frame, cx, cy, s, flip, team, None, clip);
+}
+
+/// [`draw_frame`] as a shadow: translucent black at `alpha` times the
+/// image's own alpha.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_shadow(
+    fb: &mut Framebuffer,
+    img: &HdImage,
+    frame: usize,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    flip: bool,
+    alpha: f32,
+    clip: (i32, i32, i32, i32),
+) {
+    draw_frame_mode(fb, img, frame, cx, cy, s, flip, None, Some(alpha), clip);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_frame_mode(
+    fb: &mut Framebuffer,
+    img: &HdImage,
+    frame: usize,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    flip: bool,
+    team: Option<Rgb>,
+    shadow: Option<f32>,
+    clip: (i32, i32, i32, i32),
+) {
     let Some(f) = img.header.frames.get(frame).copied() else {
         return;
     };
@@ -245,6 +278,23 @@ pub fn draw_frame(
                 continue;
             }
             let (mut r, mut g, mut b) = (c[0], c[1], c[2]);
+            if let Some(alpha) = shadow {
+                // Shadow images draw as translucent black (their colour is
+                // not used).
+                let a = (c[3] * alpha).min(1.0);
+                let dst = fb.get(x, y).0;
+                let k = 1.0 - a;
+                fb.put(
+                    x,
+                    y,
+                    Rgb::new(
+                        (((dst >> 16) & 0xff) as f32 * k) as u8,
+                        (((dst >> 8) & 0xff) as f32 * k) as u8,
+                        ((dst & 0xff) as f32 * k) as u8,
+                    ),
+                );
+                continue;
+            }
             if let (Some(tc), Some(mask)) = (team_rgb, img.team.as_ref()) {
                 let m = sample(mask, u, v, tx0, ty0, tx1, ty1);
                 // Team mask is grey: its premultiplied red is the weight.

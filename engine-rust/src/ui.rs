@@ -13,6 +13,8 @@
 
 pub const UI_JSON: &[&str] = &[
     "minimap",
+    "objctdlg",
+    "tips_dlg",
     "statdata",
     "statres",
     "statport",

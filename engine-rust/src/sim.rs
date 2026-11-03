@@ -802,13 +802,24 @@ impl World {
                 Race::Neutral => (uid::COMMAND_CENTER, uid::SCV),
             };
             let _ = world.spawn_px(p, town, sx, sy);
-            for k in 0..4 {
-                let _ = world.spawn_px(p, worker, sx + 32 + k * 20, sy + 48);
+            // Start-unit offsets measured on the retail captures of
+            // (8)The Hunters (135051: probes in a row under the Nexus;
+            // 134905: drones around the Hatchery, whose larvae take the
+            // spots under it, and the Overlord to the lower left).
+            // INFERENCE: retail runs its placement search; these are its
+            // results for an unobstructed start location.
+            let workers: [(i32, i32); 4] = if race == Race::Zerg {
+                [(-49, 45), (11, 45), (39, 45), (54, 0)]
+            } else {
+                [(-48, 53), (-24, 53), (0, 53), (24, 53)]
+            };
+            for (dx, dy) in workers {
+                let _ = world.spawn_px(p, worker, sx + dx, sy + dy);
             }
             // A melee Zerg start also includes one Overlord; it is the
             // starting supply provider (the Hatchery alone provides 1).
             if race == Race::Zerg {
-                let _ = world.spawn_px(p, uid::OVERLORD, sx + 48, sy - 32);
+                let _ = world.spawn_px(p, uid::OVERLORD, sx - 106, sy + 63);
             }
             world.players[p].minerals = 50;
         }
@@ -1256,18 +1267,20 @@ impl World {
     /// rules-level fog can currently see them.  Each unit is tested by its own
     /// index; using one shared index would leak every enemy once any unit was
     /// visible.
-    pub fn minimap_units(&self, owner: u8, fog: bool) -> Vec<(i32, i32, u8, bool)> {
+    pub fn minimap_units(&self, owner: u8, fog: bool) -> Vec<crate::render::MinimapDot> {
         self.units
             .iter()
             .enumerate()
             .filter(|(i, u)| u.alive && (u.owner == owner || !fog || self.can_see_unit(owner, *i)))
             .map(|(_, u)| {
-                (
-                    u.x / 256,
-                    u.y / 256,
-                    u.owner,
-                    self.data.unit(u.type_id).is_building(),
-                )
+                let ty = self.data.unit(u.type_id);
+                crate::render::MinimapDot {
+                    x: u.x / 256,
+                    y: u.y / 256,
+                    owner: u.owner,
+                    size: ty.placement.x.max(8) as i32,
+                    resource: is_resource_type(u.type_id),
+                }
             })
             .collect()
     }

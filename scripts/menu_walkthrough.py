@@ -114,6 +114,10 @@ SCRIPT = ",".join(
         "wheel:2",                          # wheel: top 3, selection kept
         "key:Down",                         # selection 1, scrolled into view
         "move:1200:670", "click",           # Mission row 3 (entry 4)
+        "move:1794:603", "hold",            # grab the scrollbar thumb (top 1)
+        "move:1794:700",                    # drag: top 3, selection kept
+        "move:1794:950",                    # past the track end: last page
+        "release",
         "move:1477:1015", "click",          # Cancel -> Episode
         "move:1332:1134", "click",          # Load Saved -> Saved Games
         "move:600:380", "click",            # saved row
@@ -200,6 +204,77 @@ CLIP_RECTS = ((260, 0, 1535, 600), (368, 555, 1370, 1365), (1499, 948, 2111, 144
 # menu/campaign clips show whatever the decoder had ready at that step, so a
 # frame could match or not depending on machine load.
 WALK_MENU_AT = "2.0"
+
+
+# Victory end to end, in two processes sharing a temporary save directory:
+# the first plays Terran "9. New Gettysburg" (history up to it), wins through
+# the real result path and must write campaign.bin; the second starts fresh
+# and must list "10. The Hammer Falls" (14 entries) for the same profile.
+TO_TERRAN_LIST = [
+    "move:700:300", "click",            # Single Player
+    "move:1103:618", "click",           # Original
+    "move:1869:1178", "click",          # Registry Ok (default profile)
+]
+WIN_SCRIPT = ",".join(
+    TO_TERRAN_LIST
+    + ["fixture:progress:1=10", "move:1262:666", "click"]   # 13 entries
+    + ["key:Down"] * 12                                      # 9. New Gettysburg
+    + ["key:Enter", "fixture:win"]
+)
+RELOAD_SCRIPT = ",".join(TO_TERRAN_LIST + ["move:1262:666", "click"])
+
+
+def read_progress_book(path: Path) -> dict:
+    """Decode a `GCPR` book: magic, u16 version, u16 count, records
+    `{u8 len, name, 6 x u16}`, SHA-256 trailer."""
+    import hashlib
+    import struct
+    raw = path.read_bytes()
+    body, digest = raw[:-32], raw[-32:]
+    if body[:4] != b"GCPR" or hashlib.sha256(body).digest() != digest:
+        fail(f"{path} is not a valid GCPR book")
+    count = struct.unpack_from("<H", body, 6)[0]
+    at, book = 8, {}
+    for _ in range(count):
+        n = body[at]
+        name = body[at + 1:at + 1 + n].decode()
+        at += 1 + n
+        book[name] = list(struct.unpack_from("<6H", body, at))
+        at += 12
+    return book
+
+
+def campaign_win_check(args) -> None:
+    saves = Path(tempfile.mkdtemp(prefix="gc-win-"))
+    outdir = Path(tempfile.mkdtemp(prefix="gc-win-walk-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir),
+               GALAXYCRAFT_SAVES=str(saves))
+    for script in (WIN_SCRIPT, RELOAD_SCRIPT):
+        proc = subprocess.run(
+            [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
+             "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", script],
+            env=env, text=True, capture_output=True,
+        )
+        if proc.returncode != 0:
+            fail(f"win check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
+        rows = parse_tsv(outdir / "walk.tsv")
+        if script is WIN_SCRIPT:
+            win = [r for r in rows if r["action"] == "fixture:win"]
+            if not win or "result=Some(true)" not in win[-1]["state"]:
+                fail(f"victory not recorded: {win[-1]['state'] if win else 'no step'}")
+            book_path = saves / "campaign.bin"
+            if not book_path.is_file():
+                fail("winning did not write campaign.bin")
+            book = read_progress_book(book_path)
+            profile = win[-1]["state"].split("profile=")[1].split()[0]
+            if book.get(profile, [0])[0] != 11:
+                fail(f"Terran progress of {profile} after winning mission 10: {book}")
+        else:
+            mis = [r["state"] for r in rows if r["screen"] == "Mission"]
+            if not any("len=14" in st for st in mis):
+                fail(f"reloaded list does not offer 10. The Hammer Falls: {mis}")
+    print(f"PASS campaign win: New Gettysburg won -> campaign.bin Terran next=11 -> "
+          f"fresh process lists 14 entries ({saves})")
 
 
 def run_shot(
@@ -379,12 +454,15 @@ def main() -> int:
         ("wheel", "len=13 sel=0 top=3"),
         ("Down key", "len=13 sel=1 top=1"),
         ("row click", "len=13 sel=4 top=1"),
+        ("thumb drag", "len=13 sel=4 top=3"),
+        ("thumb drag to the end", "len=13 sel=4 top=5"),
     ]
     for what, frag in want:
         if not any(frag in st for st in mis):
             fail(f"mission list state after {what} not observed ({frag}); saw {sorted(set(mis))}")
+    campaign_win_check(args)
     print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
-          "keep the selection, Down scrolls it into view, row click selects")
+          "keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls")
 
     # ---- 4. Lobby races -------------------------------------------------
     lobby = [r for r in rows if r["screen"] == "Lobby" and "races=" in r["state"]]

@@ -505,7 +505,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v12 (hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v14 (objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1061,6 +1061,8 @@ pub const CONSOLE_FILES: &[&str] = &[
     "cmdbtns.grp",
     "cmdbtns.dds.grp",
     "dlg.grp",
+    // HD console dialog sheet: minimap buttons (frames 0-5) and more.
+    "dlg.dds.grp",
     "pbrempt.dds",
     "pbrfull.dds",
 ];
