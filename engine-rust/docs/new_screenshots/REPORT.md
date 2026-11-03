@@ -19,9 +19,9 @@ Live captures: the user's retail client driven with a uinput mouse.
 | campaign | 130832 | `episode-expansion-hover-terran` | 1.61 | 1.77% | `campaign-130832-episode-expansion-hover-terran.png` |
 | campaign | 130840 | `episode-expansion-hover-zerg` | 1.92 | 2.10% | `campaign-130840-episode-expansion-hover-zerg.png` |
 | campaign | 131132 | `mission` | 1.78 | 2.01% | `campaign-131132-mission.png` |
-| ingame | 134905 | `ingame-zerg` | 4.89 | 5.17% | `ingame-134905-ingame-zerg.png` |
-| ingame | 134919 | `objectives` | 4.86 | 4.77% | `ingame-134919-objectives.png` |
-| ingame | 134931 | `tips` | 5.37 | 5.40% | `ingame-134931-tips.png` |
+| ingame | 134905 | `ingame-zerg` | 4.87 | 5.11% | `ingame-134905-ingame-zerg.png` |
+| ingame | 134919 | `objectives` | 4.85 | 4.74% | `ingame-134919-objectives.png` |
+| ingame | 134931 | `tips` | 5.36 | 5.37% | `ingame-134931-tips.png` |
 | ingame | 135020 | `ingame-terran2` | 4.35 | 4.78% | `ingame-135020-ingame-terran2.png` |
 | ingame | 135051 | `ingame-protoss` | 5.61 | 6.47% | `ingame-135051-ingame-protoss.png` |
 | ingame | 135109 | `ingame-protoss-tip-shields` | 5.99 | 6.88% | `ingame-135109-ingame-protoss-tip-shields.png` |

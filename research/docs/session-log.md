@@ -3560,3 +3560,9 @@ Hojas en `engine-rust/docs/new_screenshots/` (`ingame-*.png`, locales) y
 `REPORT.md`.  Residuo: poses/facings de unidades, larvas, humo del géiser,
 iluminación HD, márgenes del retrato; los frames del retrato más allá de
 1 s no se decodifican (límite de `decode_frame_at`, anotado).
+
+Adenda (72): el Overlord inicial y las larvas pasan de medida a regla
+(`create_starting_units`: extensión del ayuntamiento + 1 hacia el centro
+del mapa; dos larvas 10 px bajo la caja de la Hatchery), con test en
+`melee_start_composition_matches_retail`.  134905 4.89→4.87.  Re-verificado:
+`cargo test` 370/370, clippy 0, puerta en partida 8/8, walkthrough PASS.

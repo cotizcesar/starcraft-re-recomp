@@ -818,8 +818,24 @@ impl World {
             }
             // A melee Zerg start also includes one Overlord; it is the
             // starting supply provider (the Hatchery alone provides 1).
+            // Retail `create_starting_units` (OpenBW): the Overlord sits the
+            // town hall's full extent + 1 px from the start location, toward
+            // the map centre on each axis; the Hatchery spawns two larvae at
+            // its first larva spot, 10 px below its box.
             if race == Race::Zerg {
-                let _ = world.spawn_px(p, uid::OVERLORD, sx - 106, sy + 63);
+                let d = world.data.unit(town).dimensions;
+                let add_x = d.left as i32 + d.right as i32 + 1;
+                let add_y = d.top as i32 + d.bottom as i32 + 1;
+                let (mw, mh) = (
+                    world.terrain.width as i32 * 32,
+                    world.terrain.height as i32 * 32,
+                );
+                let ox = if sx >= mw / 2 { sx - add_x } else { sx + add_x };
+                let oy = if sy >= mh / 2 { sy - add_y } else { sy + add_y };
+                let _ = world.spawn_px(p, uid::OVERLORD, ox, oy);
+                for _ in 0..2 {
+                    let _ = world.spawn_px(p, uid::LARVA, sx, sy + d.bottom as i32 + 10);
+                }
             }
             world.players[p].minerals = 50;
         }

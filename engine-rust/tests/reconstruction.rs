@@ -1361,6 +1361,24 @@ fn melee_start_composition_matches_retail() {
         assert_eq!(own(worker), 4, "{race:?} workers");
         if race == Race::Zerg {
             assert_eq!(own(uid::OVERLORD), 1, "Zerg start includes an Overlord");
+            // Retail create_starting_units: the Overlord sits the Hatchery's
+            // extent + 1 toward the map centre (start (128,128) is not left
+            // of / above the centre of this 256 px map, so it goes up-left),
+            // and two larvae spawn 10 px below the Hatchery's box.
+            let d = w.data.unit(uid::HATCHERY).dimensions;
+            let ov = w
+                .units
+                .iter()
+                .find(|u| u.alive && u.type_id == uid::OVERLORD)
+                .expect("overlord");
+            assert_eq!(
+                (ov.x / 256, ov.y / 256),
+                (
+                    128 - (d.left as i32 + d.right as i32 + 1),
+                    128 - (d.top as i32 + d.bottom as i32 + 1)
+                )
+            );
+            assert_eq!(own(uid::LARVA), 2, "two starting larvae");
             assert!(
                 w.supply_cap(0) >= 8,
                 "the starting Overlord supplies the initial army"
