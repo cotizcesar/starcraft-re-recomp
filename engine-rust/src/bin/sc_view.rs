@@ -2323,14 +2323,18 @@ const DIALOG_FILL: Rgb = Rgb::new(4, 17, 54);
 const DIALOG_ALPHA: u8 = 190;
 const DIALOG_EDGE: Rgb = Rgb::new(9, 15, 70);
 const DIALOG_BUTTON_OUTER: Rgb = Rgb::new(12, 72, 204);
-const DIALOG_BUTTON_INNER: Rgb = Rgb::new(28, 32, 196);
+const DIALOG_BUTTON_INNER: Rgb = Rgb::new(33, 23, 184);
 /// Baselines/offsets in content px (first pass from the 134931 zoom).
 const DIALOG_TITLE_BASE: f32 = 48.0;
 const DIALOG_TITLE_DX: f32 = -3.0;
 const DIALOG_BODY_DX: f32 = -1.0;
 const DIALOG_BODY_BASE: f32 = 48.0;
-const DIALOG_CHECK_DX: f32 = 23.0;
-const DIALOG_CHECK_BASE: f32 = 29.0;
+/// Label pen x from the control's left edge (content px).
+const DIALOG_CHECK_DX: f32 = 59.0;
+const DIALOG_CHECK_PX: f32 = 30.0;
+const DIALOG_CHECK_BORDER: Rgb = Rgb::new(143, 27, 0);
+const DIALOG_CHECK_FILL: Rgb = Rgb::new(14, 2, 0);
+const DIALOG_CHECK_BASE: f32 = 30.0;
 const DIALOG_BODY_PITCH: f32 = 64.0;
 const DIALOG_BUTTON_BASE: f32 = 16.0;
 const DIALOG_SHADOW: f32 = 2.0;
@@ -2445,6 +2449,11 @@ const TOOLTIP_SINGLE_H: f32 = 59.0;
 const TOOLTIP_PITCH: f32 = 38.0;
 const TOOLTIP_BASE: f32 = 34.0;
 const TOOLTIP_COST_H: f32 = 56.0;
+/// Cost row top below the first line, and the gap after each value
+/// (135114: icons 9 px lower and the supply icon 5 px closer than a
+/// first pass).
+const TOOLTIP_COST_DY: f32 = 3.0;
+const TOOLTIP_COST_GAP: f32 = 7.0;
 const TOOLTIP_ICON: f32 = 40.0;
 const TOOLTIP_RADIUS: f32 = 15.0;
 const TOOLTIP_RIM: f32 = 3.5;
@@ -10476,7 +10485,7 @@ impl App {
             self.draw_tooltip_cost(
                 fb,
                 bx + TOOLTIP_PAD_L,
-                by + TOOLTIP_LINE0_H - 6.0,
+                by + TOOLTIP_LINE0_H + TOOLTIP_COST_DY,
                 m,
                 g,
                 sup,
@@ -10525,7 +10534,7 @@ impl App {
                 w += TOOLTIP_ICON
                     + 8.0
                     + self.glue_measure(&v.to_string(), TOOLTIP_PX, GlueFace::Hud)
-                    + 12.0;
+                    + TOOLTIP_COST_GAP;
             }
         }
         w
@@ -10589,7 +10598,7 @@ impl App {
                 HUD_TEXT_COLOR,
                 None,
                 GlueFace::Hud,
-            ) + 12.0;
+            ) + TOOLTIP_COST_GAP;
         }
     }
 
@@ -10726,16 +10735,13 @@ impl App {
             return;
         };
         let k = self.content_box.3 as f32 / 1440.0;
-        let hovered = match self.hud_hover() {
-            Some(HudHover::Card(i)) => Some(i),
-            _ => None,
-        };
-        for (i, (slot, entry)) in slots.iter().zip(card.iter()).enumerate() {
+        for (slot, entry) in slots.iter().zip(card.iter()) {
             let Some((button, state)) = entry else {
                 continue;
             };
-            // Button background (`cmdbtns` frame 0, frame 1 while hovered).
-            let frame = if hovered == Some(i) { 1 } else { 0 };
+            // Button background: `cmdbtns` frame 0, also under the pointer
+            // (135114 keeps it; frame 1 is not the hover state).
+            let frame = 0;
             if let Some(img) = console
                 .command_buttons_hd
                 .as_ref()
@@ -16047,37 +16053,67 @@ impl App {
         }
         if let Some((id, label)) = checkbox {
             if let Some(r) = ctrl(id) {
-                let side = (r.h as f32).max(28.0 * k) as i32;
-                fb.rect(r.x, r.y, side, side, Rgb::new(40, 8, 8));
-                fb.rect_outline(r.x, r.y, side, side, Rgb::new(110, 30, 30));
-                let (x, y, _, _) = to_c(r);
-                // `RC_SMALLTEXT`-sized label (134931: ink 824..1128 x
-                // 677..704 for "Show Tips at Startup").
-                self.glue_text_face(
-                    fb,
-                    x + side as f32 / k + DIALOG_CHECK_DX,
-                    y + DIALOG_CHECK_BASE,
-                    label,
-                    GLUE_SMALL_PX,
-                    HUD_TEXT_COLOR,
-                    None,
-                    GlueFace::Small,
+                // 134931: a 48 px box from 2 px left of the control, 3 px
+                // (143,27,0) border around near-black (14,2,0).
+                let side = (48.0 * k).round() as i32;
+                let (bx, t) = (r.x - (2.0 * k).round() as i32, (3.0 * k).round() as i32);
+                fb.rect(bx, r.y, side, side, DIALOG_CHECK_BORDER);
+                fb.rect(
+                    bx + t,
+                    r.y + t,
+                    side - 2 * t,
+                    side - 2 * t,
+                    DIALOG_CHECK_FILL,
                 );
+                let (x, y, _, _) = to_c(r);
+                // `RC_SMALLTEXT`-sized label with the dialog's drop shadow
+                // (134931: ink 824..1128 x 677..704 for "Show Tips at
+                // Startup").
+                // Laid out like the HUD text (whole-pixel advances) at
+                // 30 px/em plus 1 px per glyph: ink 304 x 29 vs retail 305 x 28.
+                for (d, colour) in [(DIALOG_SHADOW, Rgb::new(0, 0, 0)), (0.0, HUD_TEXT_COLOR)] {
+                    let mut pen = x + DIALOG_CHECK_DX + d;
+                    for ch in label.chars() {
+                        let g = ch.to_string();
+                        pen = self.glue_text_face(
+                            fb,
+                            pen,
+                            y + DIALOG_CHECK_BASE + d,
+                            &g,
+                            DIALOG_CHECK_PX,
+                            colour,
+                            None,
+                            GlueFace::Hud,
+                        ) + 1.0;
+                    }
+                }
             }
         }
         for &(id, label, default) in buttons {
             let Some(r) = ctrl(id) else {
                 continue;
             };
+            // Two 3 px rims per button, measured on 134931 relative to the
+            // control rect: outer (-2, 0, +1, 0), inner rounded (+7, +9,
+            // -17, -18); the default button is brighter and has a third rim
+            // 3 px further out at its top and left.  Only rims: the face
+            // stays the translucent pane.
+            let px = |v: f32| (v * k).round() as i32;
+            let rim = if default {
+                DIALOG_BUTTON_OUTER
+            } else {
+                DIALOG_BUTTON_INNER
+            };
+            let outer = (r.x - px(2.0), r.y, r.w + px(1.0), r.h);
+            draw_rounded_rim(fb, outer, 4.0 * k, 3.0 * k, rim);
             if default {
-                fb.rect_outline(r.x, r.y, r.w, r.h, DIALOG_BUTTON_OUTER);
-                fb.rect_outline(r.x + 1, r.y + 1, r.w - 2, r.h - 2, DIALOG_BUTTON_OUTER);
+                let t = px(3.0);
+                fb.rect(outer.0 - t, outer.1 - t, outer.2 + t, t, rim);
+                fb.rect(outer.0 - t, outer.1 - t, t, outer.3 + t, rim);
             }
-            let inset = (6.0 * k) as i32;
-            // Only the rim: the button face stays the translucent pane.
             draw_rounded_rim(
                 fb,
-                (r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset),
+                (r.x + px(7.0), r.y + px(9.0), r.w - px(17.0), r.h - px(18.0)),
                 8.0 * k,
                 3.0 * k,
                 DIALOG_BUTTON_INNER,

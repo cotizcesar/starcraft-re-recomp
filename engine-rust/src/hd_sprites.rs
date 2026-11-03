@@ -127,18 +127,21 @@ pub struct Lighting {
     pub specular: DdsImage,
 }
 
-/// Retail HD lighting, fitted jointly on the Nexus (135051), Command Center
-/// (135020) and Hatchery (134905): colour = diffuse * AO * (ambient +
-/// diffuse_k * n.l) + specular_k * specular * n.l, light from the right and
-/// above (n.l = 0.643 nx + 0.766 nz).  Per-pixel error on those buildings
-/// 40.1 / 32.9 / 18.6 (diffuse only) -> 22.4 / 22.7 / 15.1.
-/// INFERENCE: the client's shader is not recovered; this is the best fit
-/// of a Lambert + specular model.  Falsifier: a capture where a building's
-/// right-facing faces are darker than its left ones.
-const LIGHT: [f32; 3] = [0.643, 0.0, 0.766];
-const AMBIENT: [f32; 3] = [0.385, 0.418, 0.548];
-const DIFFUSE_K: [f32; 3] = [0.519, 0.484, 0.397];
-const SPECULAR_K: [f32; 3] = [0.403, 0.371, 0.334];
+/// Retail HD lighting: colour = diffuse * AO * (ambient + diffuse_k * n.l)
+/// + specular_k * specular * n.l + emissive_k * emissive.  Fitted jointly
+/// (equal weight per object type, light direction by grid) on the Nexus,
+/// Command Center, Hatchery, the three mineral-field types and the geysers
+/// of 134905 / 135020 / 135051; per-pixel error with the earlier
+/// building-only fit vs. this one: buildings 22.5/22.1/15.1 -> 22.6/23.8/
+/// 15.5, minerals 25.9/25.4/27.6 -> 21.9/21.1/23.0, geysers 19.1 -> 20.2;
+/// whole frames 4.10/3.20/4.39 -> 4.07/3.14/4.35.
+/// INFERENCE: the client's shader is not recovered.  Falsifier: a capture
+/// where a building's right-facing faces are darker than its left ones.
+const LIGHT: [f32; 3] = [0.47, 0.171, 0.866];
+const AMBIENT: [f32; 3] = [0.207, 0.3, 0.46];
+const DIFFUSE_K: [f32; 3] = [0.63, 0.502, 0.198];
+const SPECULAR_K: [f32; 3] = [0.378, 0.365, 0.382];
+const EMISSIVE_K: [f32; 3] = [0.0, 0.771, 0.98];
 
 /// Apply [`LIGHT`] to one premultiplied pixel (`rgb` 0..255 times alpha).
 /// `normal` is the raw (R, A) texel pair in 0..1; mirrored frames negate
@@ -441,13 +444,12 @@ fn draw_frame_mode(
                     alpha,
                     flip,
                 );
-                // Emissive glow is added unlit (weight swept 0..2 on the
-                // three scenes: best at 1.0, average 4.47 -> 4.19).
+                // Emissive glow is added unlit, per channel (`EMISSIVE_K`).
                 if let Some(em) = lit.emissive.as_ref() {
                     let e = sample_raw(em, u, v);
-                    r += e[0] * 255.0 * alpha;
-                    g += e[1] * 255.0 * alpha;
-                    b += e[2] * 255.0 * alpha;
+                    r += e[0] * 255.0 * alpha * EMISSIVE_K[0];
+                    g += e[1] * 255.0 * alpha * EMISSIVE_K[1];
+                    b += e[2] * 255.0 * alpha * EMISSIVE_K[2];
                 }
             }
             let a = c[3].min(1.0);

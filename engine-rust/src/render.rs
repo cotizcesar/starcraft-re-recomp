@@ -727,6 +727,26 @@ fn apply_gain(p: u32) -> u32 {
 /// Measured brightness of the retail HD terrain relative to its texels.
 pub const HD_TERRAIN_GAIN: f32 = 0.91;
 
+/// Minimap camera box `(x, y, w, h, stroke)` in screen px for a minimap
+/// whose left edge is `x0` and width `w`, top `y0`, over a `tiles` map:
+/// the view `cam` (x0, y0, x1, y1 game px) on the classic 128 px grid,
+/// position floored and size ceiled, stroke one classic px.
+pub fn minimap_view_box(
+    (x0, w): (i32, i32),
+    y0: i32,
+    (mw, mh): (usize, usize),
+    cam: (i32, i32, i32, i32),
+) -> (i32, i32, i32, i32, i32) {
+    let classic_per_tile = 128.0 / mw.max(mh).max(1) as f32;
+    let q = w as f32 / (mw.max(1) as f32 * classic_per_tile);
+    let to_classic = |v: i32| v as f32 / TILE_PX as f32 * classic_per_tile;
+    let sx = (to_classic(cam.0).floor() * q).round() as i32;
+    let sy = (to_classic(cam.1).floor() * q).round() as i32;
+    let sw = (to_classic(cam.2 - cam.0).ceil() * q).round() as i32;
+    let sh = (to_classic(cam.3 - cam.1).ceil() * q).round() as i32;
+    (x0 + sx, y0 + sy, sw, sh, q.round().max(1.0) as i32)
+}
+
 /// One unit on the minimap: position and placement width in game px.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MinimapDot {
@@ -1255,12 +1275,11 @@ impl Tileset {
             };
             fb.rect(px, py, side, side, c);
         }
-        // Camera viewport: white, a 1-game-px stroke outside the view.
-        let vx = x + (cam.0 as f32 / TILE_PX as f32 * sx).round() as i32;
-        let vy = y + (cam.1 as f32 / TILE_PX as f32 * sy).round() as i32;
-        let vw = ((cam.2 - cam.0) as f32 / TILE_PX as f32 * sx).round() as i32;
-        let vh = ((cam.3 - cam.1) as f32 / TILE_PX as f32 * sy).round() as i32;
-        let t = (sx / 3.0).round().max(1.0) as i32;
+        // Camera viewport, on the classic 128 px minimap grid (134905 /
+        // 135051: every edge reproduced): position floored and size ceiled
+        // in classic px, scaled to the screen, with a 1-classic-px white
+        // stroke outside the view.
+        let (vx, vy, vw, vh, t) = minimap_view_box((x, w), y, (mw, mh), cam);
         let white = Rgb::new(255, 255, 255);
         fb.rect(vx - t, vy - t, vw + 2 * t, t, white);
         fb.rect(vx - t, vy + vh, vw + 2 * t, t, white);
@@ -1827,6 +1846,20 @@ mod hd_terrain_tests {
         r.extend_from_slice(&(dds.len() as u32).to_le_bytes());
         r.extend_from_slice(&dds);
         r
+    }
+
+    #[test]
+    fn minimap_box_follows_the_classic_grid() {
+        // 134905: 384 px minimap at x 18, y 1044, 128-tile map, camera
+        // (1936, 112) + 853 x 368 view -> inner box 198..279 x 1053..1089,
+        // 3 px stroke (measured edges 195/281 and 1050/1091).
+        let b = super::minimap_view_box(
+            (18, 384),
+            1044,
+            (128, 128),
+            (1936, 112, 1936 + 853, 112 + 368),
+        );
+        assert_eq!(b, (198, 1053, 81, 36, 3));
     }
 
     #[test]
