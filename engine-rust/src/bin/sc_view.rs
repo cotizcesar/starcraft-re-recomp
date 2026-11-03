@@ -11919,7 +11919,11 @@ impl App {
             _ => OptionsTab::Speed,
         };
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        dim_screen(fb, cx, cw, ch, 90);
+        // The retail CEF modal applies `rgba(0,0,0,.6)` to the whole content
+        // box.  Measured against the five references: the background outside
+        // the plate is exactly 0.4164x the undimmed menu (alpha 149), and the
+        // plate interior follows once the same dim is used underneath it.
+        dim_screen(fb, cx, cw, ch, 149);
         let unit = ch as f32 / 1440.0;
         let dx = |p: f32| cx + (cw as f32 * p / 2560.0).round() as i32;
         let dy = |p: f32| (ch as f32 * p / 1440.0).round() as i32;
@@ -11929,15 +11933,20 @@ impl App {
         let green = CSS_GREEN;
         let dxw = |p: f32| (cw as f32 * p / 2560.0).round() as i32;
 
-        // Panel plate: 2 px #331f1f outer frame, 4 px black gap and a 3 px
-        // #6c0000 inner frame (measured on the captures).
-        fill_alpha_rect(fb, dx(515.0), dy(175.0), dxw(1532.0), dy(975.0), 230);
-        for t in 0..2 {
+        // Panel plate, measured on the five references:
+        //   5 px #331f1f outer band at 513..2049 / 172..1151,
+        //   3 px black gap, 3 px #6c0000 inner band at 520..2042 /
+        //   180..1144, interior black at alpha 230 (rgba(0,0,0,.9)).
+        // The tab column is only filled down to the last tab (812); below
+        // it the retail plate is transparent and the dimmed space shows.
+        fill_alpha_rect(fb, dx(848.0), dy(183.0), dxw(1191.0), dy(958.0), 230);
+        fill_alpha_rect(fb, dx(524.0), dy(183.0), dxw(313.0), dy(629.0), 230);
+        for t in 0..5 {
             fb.rect_outline(
-                dx(515.0) + t,
-                dy(175.0) + t,
-                dxw(1532.0) - 2 * t,
-                dy(975.0) - 2 * t,
+                dx(513.0) + t,
+                dy(173.0) + t,
+                dxw(1537.0) - 2 * t,
+                dy(979.0) - 2 * t,
                 CSS_OUTER,
             );
         }
@@ -11966,65 +11975,72 @@ impl App {
             );
         }
 
-        // Tab stack: one continuous plate whose cells carry a raised 24 px
-        // lip. The active tab has no right edge below its lip (the sidebar
-        // divider continues from the second tab down to the panel bottom).
+        // Tab cells: 93 px pitch with a raised 24 px lip.  Each lip carries
+        // the same bevel bands as the retail CEF chrome (4 px #331f1f,
+        // 6 px near-black, 4 px #331f1f) and an inner #6c0000 line at +24.
         let rows = [345.0f32, 438.0, 531.0, 624.0, 717.0];
         let tx = dx(521.0);
         let tw = dxw(327.0);
+        let cell_w = dxw(315.0);
         let active_i = OptionsTab::all()
             .iter()
             .position(|t| *t == tab)
             .unwrap_or(0);
-        fill_alpha_rect(fb, tx, dy(345.0), tw, dy(468.0), 240);
-        for row in rows {
-            fb.rect(tx, dy(row), dxw(3.0), dy(27.0), Rgb::new(2, 0, 0));
-        }
-        // Inactive cells stop 8 px short of the sidebar divider; the active
-        // cell merges with the content column (its bottom line is full width).
         for (i, row) in rows.iter().enumerate() {
-            if i == active_i {
-                continue;
-            }
+            let active = i == active_i;
+            // The active cell merges with the content column, so its top,
+            // lip and bottom rules run through to the divider.
+            let line_w = if active { tw } else { cell_w };
             for off in [0.0f32, 24.0, 93.0] {
-                fb.rect(tx, dy(row + off), dxw(315.0), dy(3.0), CSS_INNER);
+                fb.rect(tx, dy(*row + off), line_w, dy(3.0), CSS_INNER);
+            }
+            // Bevel of the raised lip, left/right black reveals included.
+            fb.rect(tx, dy(*row), dxw(3.0), dy(27.0), Rgb::new(2, 0, 0));
+            fb.rect(
+                tx + dxw(3.0),
+                dy(*row + 6.0),
+                cell_w - dxw(3.0),
+                dy(4.0),
+                CSS_OUTER,
+            );
+            fb.rect(
+                tx + dxw(3.0),
+                dy(*row + 10.0),
+                cell_w - dxw(3.0),
+                dy(6.0),
+                Rgb::new(4, 1, 1),
+            );
+            fb.rect(
+                tx + dxw(3.0),
+                dy(*row + 16.0),
+                cell_w - dxw(3.0),
+                dy(4.0),
+                CSS_OUTER,
+            );
+        }
+        // Sidebar divider: 4 px #331f1f + 3 px black + 3 px #6c0000.  It is
+        // present through every inactive cell and through the active cell's
+        // lip; the active body opens into the content column.
+        let active_row = rows[active_i];
+        let brown_gap = (active_row + 21.0, active_row + 98.0);
+        let red_gap = (active_row + 29.0, active_row + 98.0);
+        for (x, w, color, gap) in [
+            (838.0f32, 4.0, CSS_OUTER, brown_gap),
+            (845.0, 3.0, CSS_INNER, red_gap),
+        ] {
+            for (y0, y1) in [(350.0f32, gap.0), (gap.1, 1140.0)] {
+                if y1 > y0 {
+                    fb.rect(dx(x), dy(y0), dxw(w), dy(y1 - y0), color);
+                }
             }
         }
-        for off in [0.0f32, 24.0, 93.0] {
-            fb.rect(tx, dy(rows[active_i] + off), tw, dy(3.0), CSS_INNER);
-        }
-        fb.rect(dx(845.0), dy(350.0), dxw(3.0), dy(24.0), CSS_INNER);
-        let divider_top = rows[active_i] + 98.0;
-        fb.rect(
-            dx(845.0),
-            dy(divider_top),
-            dxw(3.0),
-            dy(1140.0 - divider_top),
-            CSS_INNER,
-        );
         for (i, t) in OptionsTab::all().iter().enumerate() {
             let cy = dy(rows[i] + 48.0);
             let active = *t == tab;
             if let Some(font) = self.ui_font_hover.as_mut() {
-                if !active {
-                    // A 1 px lit rim on the top/left edges only; a full halo
-                    // reads ~60 % heavier than the retail CEF glyphs.
-                    for (ox, oy) in [(-1, 0), (0, -1)] {
-                        font.draw_centered_stretched(
-                            fb,
-                            dx(679.0) + ox,
-                            cy + oy - dy(1.0),
-                            t.name(),
-                            px(30.0),
-                            0.0,
-                            0.98,
-                            1.02,
-                            CSS_GREEN_HI,
-                            None,
-                            2.0,
-                        );
-                    }
-                }
+                // No lit rim: the retail CEF face has a flat coverage and
+                // only the body text-shadow.  A rim reads 30-40 % heavier on
+                // the inactive tabs (measured ink 771 vs 578 ... 982 vs 723).
                 font.draw_centered_stretched(
                     fb,
                     dx(679.0),
@@ -12033,10 +12049,10 @@ impl App {
                     px(30.0),
                     0.0,
                     0.98,
-                    if active { 1.08 } else { 1.02 },
+                    if active { 1.08 } else { 1.05 },
                     if active { CSS_GREEN_HI } else { green },
                     None,
-                    if active { 1.0 } else { 1.3 },
+                    if active { 0.85 } else { 1.0 },
                 );
             }
         }
@@ -12676,23 +12692,20 @@ impl App {
             );
         }
 
-        // Restore to Default (left) and Ok (right): 2 px dark outer frame,
-        // black gap and a 3 px red inner frame around centred green text.
+        // Restore to Default (left) and Ok (right): 5 px #331f1f outer frame
+        // with a 10 px radius, black gap, and a 3 px #6c0000 inner frame with
+        // a 4 px radius.  Fills are rgba(0,0,0,.8) as in the CEF CSS.
         for (label, ox, ow, ix, iw) in [
-            ("Restore to Default", 513.0f32, 387.0, 522.0, 372.0),
-            ("Ok", 1672.0, 378.0, 1681.0, 360.0),
+            ("Restore to Default", 513.0f32, 389.0, 523.0, 370.0),
+            ("Ok", 1672.0, 378.0, 1682.0, 357.0),
         ] {
             let (bx, by) = (dx(ox), dy(1212.0));
             let (bw, bh) = (dxw(ow), dy(84.0));
-            fill_alpha_rect(fb, bx, by, bw, bh, 230);
-            for t in 0..2 {
-                fb.rect_outline(bx + t, by + t, bw - 2 * t, bh - 2 * t, CSS_OUTER);
-            }
+            rounded_fill_alpha(fb, bx, by, bw, bh, 10.0 * unit, 204);
+            rounded_band(fb, bx, by, bw, bh, 10.0 * unit, 0, 5, CSS_OUTER);
             let (px0, py0) = (dx(ix), dy(1221.0));
             let (pw, ph) = (dxw(iw), dy(65.0));
-            for t in 0..3 {
-                fb.rect_outline(px0 + t, py0 + t, pw - 2 * t, ph - 2 * t, CSS_INNER);
-            }
+            rounded_band(fb, px0, py0, pw, ph, 4.0 * unit, 0, 3, CSS_INNER);
             if let Some(font) = self.ui_font_hover.as_mut() {
                 font.draw_centered_stretched(
                     fb,

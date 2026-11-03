@@ -312,6 +312,33 @@ avanza a 10.5 fps desde el frame 0, sin recortar el loop:
 casi un frame y el loop retenía o saltaba uno.  Test:
 `menu_layers_use_the_measured_retail_10_5_fps_loop`.
 
+### Diff frame a frame (cierre)
+
+Cursor a 1080p: 3 s a 60 fps con el puntero quieto en ambos clientes.  Los
+tres estados visibles A/B/C alinean con traslación (0,0); el diff medio es
+**0.81/0.94/0.98** y los píxeles >30 son **1.83/2.00/2.08 %**.  El 86 % de
+esos píxeles cae sobre gradiente >10 y las zonas planas dan **0.29** de
+media: es AA de escalado (cursor X del retail vs. bilineal premultiplicado
+nuestro), no tamaño, posición ni orden de frames.  El patrón de duplicados
+(retardo inicial de 3 frames) coincide con el retail.
+
+Loops: captura retail 64-bit estable a 1280x720/30 fps contra render
+propio.  La traslación óptima es (0,0); la pendiente de tasa sobre 33 s es
+**1.00138** (Single), **0.99783** (Multi) y **0.99965** (Exit), con residuo
+de 1-2 frames (Single/Exit P50/P95 |res| 1/2, máx. 3; Multi 2/7, máx. 10).
+A 1920x1080, comparando el mismo frame autoral: Single **1.02** de media
+(p95 2, >30 1.39 %), Multi **2.82** (p95 16, 3.84 %), Exit **1.89** (p95 5,
+1.15 %); fuera de los clips el fondo y las etiquetas dan **0.21-0.63**.  El
+residuo restante es decodificación/filtrado del WebM (ffmpeg vs. el decoder
+retail), no fase ni corte.
+
+Tolerancia registrada para los clips animados: media <= 3, p95 <= 16 y
+outliers <= 4 % en la región del clip; fondo/UI <= 0.63.  No se declara
+0.00 píxel para video porque exigiría el decoder exacto del cliente retail;
+sí queda 1:1 en geometría, escala, orden de frames y tasa (151/151 y
+105/105 frames), y las capturas estáticas de UI sí cierran a 0.00 con las
+capas `.gcal`.
+
 ### Options
 
 Se rehízo `draw_options` para las cinco pestañas contra 130933/130938/
