@@ -127,13 +127,14 @@ pub struct Lighting {
     pub specular: DdsImage,
 }
 
-/// Retail HD lighting: colour = diffuse * AO * (ambient + diffuse_k * n.l)
-/// + specular_k * specular * n.l + emissive_k * emissive.  Fitted jointly
+/// Retail HD lighting:
+/// `colour = diffuse * AO * (ambient + diffuse_k * n.l) + specular_k *
+/// specular * n.l + emissive_k * emissive`.  Fitted jointly
 /// (equal weight per object type, light direction by grid) on the Nexus,
 /// Command Center, Hatchery, the three mineral-field types and the geysers
 /// of 134905 / 135020 / 135051; per-pixel error with the earlier
-/// building-only fit vs. this one: buildings 22.5/22.1/15.1 -> 22.6/23.8/
-/// 15.5, minerals 25.9/25.4/27.6 -> 21.9/21.1/23.0, geysers 19.1 -> 20.2;
+/// building-only fit vs. this one: buildings 22.5/22.1/15.1 to
+/// 22.6/23.8/15.5, minerals 25.9/25.4/27.6 -> 21.9/21.1/23.0, geysers 19.1 -> 20.2;
 /// whole frames 4.10/3.20/4.39 -> 4.07/3.14/4.35.
 /// INFERENCE: the client's shader is not recovered.  Falsifier: a capture
 /// where a building's right-facing faces are darker than its left ones.
