@@ -526,3 +526,61 @@ real del cliente); lista, colores, selección, scrollbar, prompt y botones
 coinciden.  Verificación: `cargo test` 354/354, clippy 0, `ui_diff.py`
 39/39, `ui_visual_diff.py` 43/43 crudo y calibrado, `menu_walkthrough.py`
 PASS (140 pasos, sección campaña).
+
+## En partida: las 8 capturas de (8)The Hunters (2026-11-03, sesión 72)
+
+Referencias 134905 / 134919 / 134931 (Zerg, ranura 1), 135020 (Terran,
+ranura 7) y 135051 / 135109 / 135114 / 135121 (Protoss, ranura 6).  Los
+replays retail no traen flujo de comandos, así que la escena se reconstruye
+con las reglas de inicio melee (`App::hunters_start`).  Puerta:
+`ui_visual_diff.py --ingame-only`; hojas: `make_proof_sheets.py` (grupo
+`ingame`).
+
+### Reglas portadas (OpenBW como referencia de comportamiento)
+
+- Creep: `spread_creep_completely` — elipse 25·dx² + 64·dy² ≤ 25·320²,
+  8-conexo, `tile_can_have_creep` (cv5 0x80 = no edificable), casillas
+  ocupadas excluidas; bordes con `tileset/<era>.dds.grp` (37 marcos) por la
+  tabla de vecinos de 9 bits; variantes 0-5 al 96 %, 6-12 al 4 %.
+- Visión: máscaras de `generate_sight_values` y propagación por altura de
+  `reveal_sight_at` (sustituye el círculo r+1 + altura del destino).
+- Barras de vida (`draw_health_bars`) y círculos de selección (561 + n).
+
+### Datos corregidos
+
+- `sprites.dat`: barras/círculos indexados desde el sprite 130 (antes 0).
+- vf4 se indexaba por grupo cv5 en vez de por megatile (lagos caminables).
+- Arte HD por GRP: `anim/main_NNN` existe una vez por GRP, bajo la primera
+  imagen que lo usa (Command Center 275 → 63).
+- Botonera: `statbtndefault` para todas las razas (statbtnz descuadraba
+  12/8 px).
+
+### Medido sobre las capturas (constantes documentadas en el código)
+
+Consola (placas por raza ±1-2 px, cuadros de minimapa, mejora, retrato,
+MENU), texto del HUD con avances redondeados hacia arriba a píxel entero
+(`GlueFace::Hud`), wireframe HD por capas, colores de equipo, fog muestreada
+medio tile a la derecha (sin explicar), y — como estado de la captura, no
+regla — las variantes de creep de 134905 (RNG de sesión del cliente) y el
+ajuste de cámara de cada partida.
+
+### Resultado (crudo, media |diff| 0-255 sobre 2560x1440)
+
+```text
+ref     inicio sesión  ahora
+134905  25.3           4.89
+134919  20.4           4.86
+134931  21.8           5.37
+135020  28.4           4.35
+135051  24.3           5.61
+135109  —              5.99
+135114  —              5.82
+135121  —              5.68
+```
+
+Residuo: pose y fase de unidades (SCV en marcha, facings aleatorios de
+zánganos/overlord, larvas), humo del géiser, iluminación HD (normal/
+especular) de minerales y edificios, márgenes del retrato.  Verificación:
+`cargo test` 370/370, clippy 0, `ui_visual_diff.py` 51/51 crudo y
+calibrado, `ui_diff.py` 39/39, `menu_walkthrough.py` PASS (145 pasos,
+victoria de extremo a extremo y arrastre del pulgar).

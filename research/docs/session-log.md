@@ -3508,3 +3508,55 @@ tuviera listo.  Ahora el guion y las capturas de comparación fijan
 GameType, PASS 140 pasos.  Re-verificado tras ambos cambios: `cargo test`
 354/354, clippy 0, `ui_diff` 39/39, `ui_visual_diff` 43/43 crudo y
 calibrado, hojas de prueba regeneradas.
+
+## 2026-11-03 (72) — En partida 1:1: las 8 capturas de (8)The Hunters
+
+Objetivo del usuario: que 134905, 134919, 134931, 135020, 135051, 135109,
+135114 y 135121 se vean igual; además, verificar en el juego (no solo por
+test) que ganar guarda el progreso y que el pulgar del scrollbar se arrastra.
+
+**Escena.**  Las capturas son el inicio de tres partidas melee en (8)The
+Hunters (ranuras 1 Zerg, 7 Terran, 6 Protoss, identificadas por la
+disposición géiser/minerales).  Los autosaves retail no traen comandos, así
+que `App::hunters_start` reconstruye la escena con las reglas de inicio
+(posiciones de arranque por dueño, no por orden del CHK).
+
+**Falsaciones / errores encontrados.**  (1) vf4 se indexaba por grupo cv5:
+casi todo el mapa era caminable, lagos incluidos (`TileData`).  (2)
+`sprites.dat`: los arrays de barra/círculo empiezan en el sprite 130; el
+parser los leía desde 0 (test con Hatchery 167: 109/8/7).  (3) El arte HD
+existe una vez por GRP: `main_275.anim` (Command Center) no existe, es
+`main_063`.  (4) La visión «círculo r+1 sin ver altura mayor» era una
+INFERENCIA; se sustituye por el port de `generate_sight_values` /
+`reveal_sight_at` (la cara del acantilado se ve, lo de detrás no).  (5) El
+creep en caja ±10×±6 era falso: elipse 320×200 8-conexa de
+`spread_creep_completely`.  (6) `statbtnz` no se usa en la consola HD.  (7)
+Una INFERENCIA descartada: sumar la capa emisiva HD mejora el color medio de
+los minerales pero empeora el error por píxel (revertido).
+
+**Referencia de comportamiento.**  OpenBW (`bwgame.h`, `ui.h`,
+`game_types.h`, descargados a /tmp, solo lectura) para creep, bordes de
+creep, visión, barras de vida y unidades iniciales.  Cada regla portada
+lleva test (`hatchery_creep_fills_the_retail_ellipse`,
+`a_cliff_hides_what_lies_behind_it_but_not_itself`,
+`sight_masks_propagate_from_earlier_nodes`,
+`creep_edge_table_matches_the_retail_frame_set`, …).
+
+**Estado de captura (no reglas).**  Variantes de creep de 134905 (RNG de
+sesión; 128/132 en 0-5 como predice la regla 96/4), ajuste de cámara de
+cada partida, colores de equipo.  Documentados como tales en el código.
+
+**Pendientes del objetivo anterior, cerrados.**  `menu_walkthrough.py`
+juega «9. New Gettysburg», gana por la ruta real de resultado, comprueba
+`campaign.bin` y un segundo proceso lista «10. The Hammer Falls» (14
+entradas).  El pulgar se arrastra (`MissionList::set_thumb`, pasos
+`hold`/`release`), con test unitario y paso en el walkthrough.
+
+**Resultado** (media cruda): 134905 25.3→4.89, 134919 20.4→4.86, 134931
+21.8→5.37, 135020 28.4→4.35, 135051 24.3→5.61, 135109 5.99, 135114 5.82,
+135121 5.68.  `cargo test` 370/370, clippy 0, `ui_visual_diff.py` 51/51
+crudo y calibrado, `ui_diff.py` 39/39, walkthrough PASS (145 pasos).
+Hojas en `engine-rust/docs/new_screenshots/` (`ingame-*.png`, locales) y
+`REPORT.md`.  Residuo: poses/facings de unidades, larvas, humo del géiser,
+iluminación HD, márgenes del retrato; los frames del retrato más allá de
+1 s no se decodifican (límite de `decode_frame_at`, anotado).

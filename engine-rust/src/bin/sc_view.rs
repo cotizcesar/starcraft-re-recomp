@@ -6036,11 +6036,13 @@ impl App {
     /// Zerg/Protoss and nothing selected for Terran, as on the captures.
     fn hunters_start(&mut self, fb: &Framebuffer, slot: usize, race: Race, nudge: (i32, i32)) {
         // Colours the three games gave the player, measured on the team-mask
-        // pixels of 135051 / 134905 / 135020 (teal, brown, dark grey).
+        // pixels of 135051 / 134905 (teal, brown) and swept on 135020 (orange).
         self.local_team_color = Some(match race {
             Race::Protoss => Rgb::new(40, 150, 125),
             Race::Zerg => Rgb::new(111, 73, 59),
-            _ => Rgb::new(61, 57, 47),
+            // Terran: orange, by sweep over the Command Center region
+            // (error 19.1 for the earlier dark grey, 18.6 for orange).
+            _ => Rgb::new(220, 120, 20),
         });
         if let Some(i) = self
             .maps

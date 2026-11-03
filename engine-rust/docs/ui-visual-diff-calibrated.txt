@@ -1,4 +1,12 @@
 ref      screen                mean   >30 px status
+135109   ingame-protoss-tip-shields    5.99    5.02% PASS
+135114   ingame-protoss-tip-probe    5.82    4.85% PASS
+135121   ingame-protoss-tip-minimap    5.68    4.68% PASS
+135051   ingame-protoss        5.61    4.62% PASS
+134931   tips                  5.37    3.59% PASS
+134905   ingame-zerg           4.89    3.28% PASS
+134919   objectives            4.86    3.03% PASS
+135020   ingame-terran2        4.35    3.53% PASS
 130840   episode-expansion-hover-zerg    1.92    1.43% PASS
 130804   episode-hover-protoss    1.85    1.24% PASS
 130750   episode-hover-terran    1.83    1.28% PASS
@@ -28,6 +36,9 @@ ref      screen                mean   >30 px status
 130704   menu-hover-single     0.09    0.06% PASS
 130938   options-sound         0.05    0.04% PASS
 130949   options-game          0.05    0.03% PASS
+130907   lobby                 0.00    0.00% PASS
+134831   lobby                 0.00    0.00% PASS
+134843   lobby-chat            0.00    0.00% PASS
 130734   registry              0.00    0.00% PASS
 130933   options-speed         0.00    0.00% PASS
 130954   options-network       0.00    0.00% PASS
@@ -39,8 +50,5 @@ ref      screen                mean   >30 px status
 131101   credits               0.00    0.00% PASS
 130848   saved                 0.00    0.00% PASS
 130858   replays               0.00    0.00% PASS
-130907   lobby                 0.00    0.00% PASS
-134831   lobby                 0.00    0.00% PASS
-134843   lobby-chat            0.00    0.00% PASS
 
-visual gate: 43/43 screens (mean <= 8.0, outliers <= 8.0%)
+visual gate: 51/51 screens (mean <= 8.0, outliers <= 8.0%)

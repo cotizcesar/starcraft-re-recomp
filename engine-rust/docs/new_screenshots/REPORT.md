@@ -19,6 +19,14 @@ Live captures: the user's retail client driven with a uinput mouse.
 | campaign | 130832 | `episode-expansion-hover-terran` | 1.61 | 1.77% | `campaign-130832-episode-expansion-hover-terran.png` |
 | campaign | 130840 | `episode-expansion-hover-zerg` | 1.92 | 2.10% | `campaign-130840-episode-expansion-hover-zerg.png` |
 | campaign | 131132 | `mission` | 1.78 | 2.01% | `campaign-131132-mission.png` |
+| ingame | 134905 | `ingame-zerg` | 4.89 | 5.17% | `ingame-134905-ingame-zerg.png` |
+| ingame | 134919 | `objectives` | 4.86 | 4.77% | `ingame-134919-objectives.png` |
+| ingame | 134931 | `tips` | 5.37 | 5.40% | `ingame-134931-tips.png` |
+| ingame | 135020 | `ingame-terran2` | 4.35 | 4.78% | `ingame-135020-ingame-terran2.png` |
+| ingame | 135051 | `ingame-protoss` | 5.61 | 6.47% | `ingame-135051-ingame-protoss.png` |
+| ingame | 135109 | `ingame-protoss-tip-shields` | 5.99 | 6.88% | `ingame-135109-ingame-protoss-tip-shields.png` |
+| ingame | 135114 | `ingame-protoss-tip-probe` | 5.82 | 6.73% | `ingame-135114-ingame-protoss-tip-probe.png` |
+| ingame | 135121 | `ingame-protoss-tip-minimap` | 5.68 | 6.51% | `ingame-135121-ingame-protoss-tip-minimap.png` |
 | live | live-mission-list-top | `mission-live` | 3.46 | 4.66% | `proof-live-mission-list-top.png` |
 | live | live-mission-list-scrolled | `mission-live-scrolled` | 3.40 | 4.55% | `proof-live-mission-list-scrolled.png` |
 | live | live-locked-zerg-prompt | `episode-locked-zerg` | 3.42 | 4.49% | `proof-live-locked-zerg-prompt.png` |
