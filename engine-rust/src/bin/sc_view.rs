@@ -885,6 +885,9 @@ struct App {
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
+    /// Smoke shown over one geyser in a reference capture: geyser unit id,
+    /// smoke image, its animation frame and offset (game px).
+    geyser_smoke: Option<(u32, u16, usize, f32, f32)>,
     /// Poses (game px x, y, facing) recorded from a reference capture, by
     /// unit id; drawing only, the simulation is untouched.
     unit_poses: std::collections::HashMap<u32, (i32, i32, u8)>,
@@ -4080,6 +4083,7 @@ fn main() {
         creep_variants: Default::default(),
         portrait_pick: None,
         unit_poses: Default::default(),
+        geyser_smoke: None,
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -6141,6 +6145,27 @@ impl App {
                 self.unit_poses.insert(id, (x, y, facing));
             }
         }
+        // Geyser smoke of each capture: `creategasoverlays n` draws image
+        // 430 + n at the geyser's LO offset n.  Matched over all five
+        // smoke images x 8 frames: overlay 2 sits at (+34, +2.5) in both the
+        // Protoss and Terran games, overlay 0 at (+11, -19) in the Zerg one;
+        // the frame is the capture's moment.
+        let (image, sframe, dx, dy) = match race {
+            Race::Zerg => (430, 6, 11.4, -19.3),
+            Race::Protoss => (432, 6, 34.25, 2.5),
+            _ => (432, 4, 33.75, 2.5),
+        };
+        let start = self
+            .scenario
+            .start_location_of(self.local_player as u8)
+            .unwrap_or((0, 0));
+        self.geyser_smoke = self
+            .world
+            .units
+            .iter()
+            .filter(|u| u.alive && u.type_id == galaxycraft::ids::unit::VESPENE_GEYSER)
+            .min_by_key(|u| (u.x / 256 - start.0).pow(2) + (u.y / 256 - start.1).pow(2))
+            .map(|g| (g.id, image, sframe, dx, dy));
         self.creep_variants.clear();
         if race == Race::Zerg && slot == 1 {
             self.creep_variants = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
@@ -9931,6 +9956,28 @@ impl App {
         layer(true, fb);
         galaxycraft::hd_sprites::draw_frame(fb, &img, frame, sx, sy, s, flip, Some(team), clip);
         layer(false, fb);
+        // Geyser smoke (`creategasoverlays`): image 430 + overlay at the
+        // geyser's LO offset, above it.
+        if let Some((gid, image, sframe, dx, dy)) = self.geyser_smoke {
+            if gid == u.id {
+                if let Some(smoke) = self
+                    .hd_sprites
+                    .image(self.data.hd_anim_id(image), |path| install?.read(path))
+                {
+                    galaxycraft::hd_sprites::draw_frame(
+                        fb,
+                        &smoke,
+                        sframe,
+                        sx + dx * s,
+                        sy + dy * s,
+                        s,
+                        false,
+                        None,
+                        clip,
+                    );
+                }
+            }
+        }
         if let Some((ci, vpos, bar)) = circle {
             // Retail `draw_health_bars`: centred `vpos + circle_h / 2 + 8`
             // below the sprite.

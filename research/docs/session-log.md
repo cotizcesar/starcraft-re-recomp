@@ -3566,3 +3566,20 @@ Adenda (72): el Overlord inicial y las larvas pasan de medida a regla
 del mapa; dos larvas 10 px bajo la caja de la Hatchery), con test en
 `melee_start_composition_matches_retail`.  134905 4.89→4.87.  Re-verificado:
 `cargo test` 370/370, clippy 0, puerta en partida 8/8, walkthrough PASS.
+
+Adenda 2 (72): (a) Iluminación HD: modelo Lambert + especular con normal
+(R/A), AO (G de `ao_depth`) y especular, más la emisiva sin iluminar,
+ajustado sobre Nexus/CC/Hatchery (error por píxel 40.1/32.9/18.6 →
+22.4/22.7/15.1); INFERENCIA, test `lighting_favours_normals_toward_the_light`.
+La emisiva sola (sin luz) empeoraba; con luz mejora (4.47→4.19 de media).
+(b) Retrato: el clip de 224x240 se estira a 160x164 en (+11,+17) del
+control y `conover` va (−9,+18) del centro (ajuste en 4 capturas, región
+24.6→5.9-8.1); el cliente elige clip de reposo al azar (`padfid00-03`, 10
+frames cada uno) → elección registrada por captura.  (c) Poses de los
+trabajadores/Overlord/larva registradas por búsqueda de plantilla (solo
+dibujo; el mundo no cambia).  (d) Humo de géiser (`creategasoverlays`):
+overlay 2 en (+34,+2.5) en dos partidas distintas → offset LO; el frame es
+estado de captura.  Resultado: 134905 4.21, 134919 4.47, 134931 4.99,
+135020 3.39, 135051 4.49, 135109 4.72, 135114 4.75, 135121 4.63.
+`cargo test` 372/372, clippy 0, `ui_visual_diff` 51/51 crudo y calibrado,
+walkthrough PASS (145 pasos, victoria de extremo a extremo).
