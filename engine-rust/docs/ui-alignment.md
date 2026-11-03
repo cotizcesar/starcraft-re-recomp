@@ -359,3 +359,102 @@ Sin capas, Options queda en 5.20-6.26 de media (el fondo translúcido
 fuera de los controles).  `ui_diff.py` 39/39, Hotkeys 16/16 (0.00-1.12),
 `cargo test` **318/318**, clippy 0.  Capturas locales:
 `/tmp/opencode/n4-options-{speed,sound,video,game,network}.png`.
+
+## Options: rasterizado CEF, chrome sub-píxel y menú vivo (2026-11-02, sesión 70)
+
+**Corrección.** La sesión 69 declaró que la geometría de Options ya era 1:1
+y que el residuo era solo antialias de fuente y fase de vídeo.  Era falso:
+las comparaciones lado a lado mostraban errores estructurales que se
+midieron y corrigieron aquí (placa, controles, contenido y fondo).  Prueba
+visual: `docs/options-1to1-proof.png` (retail a la izquierda, `sc_view` a
+la derecha, las cinco pestañas).
+
+### Placa (`draw_options_plate`)
+
+La placa retail no es un rectángulo: es una L.  El título y cada pestaña
+son cajas separadas (banda #331f1f de 4.6 px, r 4.5, y #6c0000 de 3 px,
+r 5) con huecos de 7-9 px **sin relleno** (el texto "Single Player" del menú
+se ve en 832..836 x 358); bajo la última pestaña (y > 820.5) no hay placa y
+se ve el planeta; el divisor (marrón 837.2..841.9, rojo 844.9..847.9) baja
+hasta y 1152 y la banda inferior empieza en x 837.  CEF dibuja en
+posiciones fraccionarias (filas de borde a medio cubrir), así que las
+bandas se rasterizan con `cef_band` (SDF exacto + supersampling 4x4).  El
+`rounded_sdf` previo recorta el interior a `-r` y no sirve para bandas más
+gruesas que el radio.
+
+### Controles (medidos en 130933/130942/130949)
+
+| Control | Retail | Antes |
+|---|---|---|
+| checkbox | caja 29.9x30, anillo 2.9 px r 5; marca 14.9 px con rampa 3.7 px | cuadrado duro sin radio |
+| deshabilitado | anillo #404040, marca #808080 (Use Mouse Confine **marcado**) | gris sin marcar |
+| slider | raíl 6 px, topes r 12 (anillo 3), knob r 18, marca r 8.5 rampa 4; 1.er tope x0+18.4 | círculos aliased, 1.er tope +16 |
+| radio | r 17.85, anillo 2.7, marca r 8.8 rampa 4.3 | anillo de 4 px, punto duro |
+| dropdown | caja r 7 con borde superior continuo (Video 373.5, Game 638.17, Language 449.17); valor en top+30; chevron 31.8x15.6 #6f6809→#c4c60e | rectángulo, flecha verde pequeña |
+| Monitor | caja gris r 8 **sin flecha** | dropdown con flecha |
+| ayuda | disco r 9 antialiasado (Environment Effects y Real-Time Lighting también lo llevan) | faltaban dos |
+
+Contenido: "Console"/"Portraits"/"Mini-Map Position" son lavanda (no
+blancos); "Music/Digital Volume" son blancos; "take effect" sin punto;
+Color Text / Play Sound anidados 42 px y 7 px más abajo; Display Mode y
+Gamma Correction 5 px más abajo; columna izquierda de Game 1 px más abajo.
+Primera letra de pestañas y botones en #b4fc74 (`::first-letter`; la
+pestaña activa entera #b4fc74).
+
+### Fondo: el modal está sobre el menú vivo
+
+- Marco del título con el anclaje del menú principal (dx 0): con el
+  desplazamiento de sub-pantalla (5.55 %) estaba 142 px a la derecha.
+- Los clips Single/Multi/Exit se componen bajo el modal (la galaxia de Exit
+  tras "Ok", la nave de Multi).  Fases medidas por barrido 1/8 s del área
+  propia de cada clip, en `scripts/ui_visual_diff.py` (`PHASES`).
+- Las etiquetas del menú se dibujan en su color idle y luego el dim:
+  (42,93,22) = 0.416 x (102,227,53) exacto.
+
+### Texto: rasterizador de contorno CEF (`UiFont::draw_cef`)
+
+La blandura no venía del antialias de fontdue sino de **desplazar el
+bitmap** con interpolación bilineal (cada trazo se reparte en dos
+columnas/filas).  CEF rasteriza cada glifo en su posición sub-píxel exacta
+(línea base 361.5, pluma 899.75).  `draw_cef` lee el contorno con
+`ttf-parser` (ya presente vía fontdue), aplana curvas, acumula área exacta
+no-cero (`raster_lines`, tests de cuadrado sub-píxel, contraforma y
+diagonal) y aplica la curva de contraste `1-(1-a)^1.2`.
+
+Ajustes con un prototipo idéntico (fontTools + barrido) sobre las capturas:
+cuerpo 23.8 px/em, extremos de slider 20.7, títulos 29.9, pestañas 30.05
+(Extended), título 41.5, botones 30.0, "60" 21.35.  Error medio por texto
+de 0.102 (fontdue desplazado) a 0.027-0.05.
+
+Hipótesis falsadas (registradas): hinting vertical tipo autohinter (0.069
+vs 0.066 sin hinting); kerning GPOS (rms de orígenes 0.50 px vs 0.42; "Tu"
+-85 empeora "Smooth Unit Turning" de 0.033 a 0.076); avances enteros (rms
+1.23); avances redondeados a DSF 1.25/1.333/1.5/2 (0.66-2.4).  Se adopta
+avance de diseño + 0.03 px (0.00125 em).
+
+### Resultado (sin capas de calibración)
+
+```text
+ref     pantalla         inicio sesión 69   ahora
+130933  options-speed    2.19 / 1.46 %     0.82 / 0.48 %
+130938  options-sound    2.25 / 1.52 %     0.92 / 0.60 %
+130942  options-video    2.52 / 1.89 %     0.93 / 0.60 %
+130949  options-game     2.95 / 2.11 %     1.08 / 0.77 %
+130954  options-network  1.89 / 1.13 %     0.71 / 0.35 %
+```
+
+Las capas `.gcal` de las cinco Options eran correcciones del render viejo
+(con ellas el render nuevo daba 4.7-5.1); se apartaron a
+`fixtures/calibration/stale-options-pre-cef/` (gitignored) y la puerta
+calibrada mide ya el render real: 19/19.
+
+Residuo restante, medido: decodificación de los clips del menú (Exit
+1.2-2.7 en su área), forma de glifo CEF frente al contorno CFF (0.03-0.05
+por texto) y la fase de los clips en vivo, que avanza con el reloj real
+(dos ejecuciones del walkthrough difieren 0.041 de media).  Por eso
+`menu_walkthrough.py` exige identidad exacta de Options fuera de los
+rectángulos de clip de `flc.json` y ≤0.02 % de píxeles transitorios dentro.
+
+Verificación: `cargo test` 342/342, clippy 0, `ui_diff.py` 39/39,
+`ui_visual_diff.py --goal-only` 19/19 (crudo y calibrado),
+`menu_walkthrough.py` PASS.

@@ -20,7 +20,28 @@ pub struct UiFont {
     font: fontdue::Font,
     cache: HashMap<(u16, u32, i32, i32), CachedGlyph>,
     pub name: String,
+    /// The face file, kept for the outline rasteriser ([`Self::draw_cef`]).
+    bytes: Vec<u8>,
+    cef_cache: HashMap<(u16, u32, u8, u8), CefGlyph>,
 }
+
+/// Coverage of one glyph rasterised from its outline at a sub-pixel pen
+/// and baseline phase (see [`UiFont::draw_cef`]).
+struct CefGlyph {
+    left: i32,
+    top: i32,
+    w: usize,
+    h: usize,
+    cov: Vec<u8>,
+}
+
+/// Sub-pixel phases per pixel cached for [`UiFont::draw_cef`].
+const CEF_PHASES: f32 = 16.0;
+
+/// Chromium's grayscale glyph masks are lifted by `1 - (1 - a)^k`.  Fitted
+/// on the retail Options captures (130933 "Game Speed": mean coverage
+/// error 0.027 against 0.102 for the shifted fontdue bitmap).
+const CEF_CONTRAST: f32 = 1.2;
 
 struct CachedGlyph {
     metrics: fontdue::Metrics,
@@ -31,7 +52,8 @@ impl UiFont {
     /// Load a TrueType/OpenType face from an on-disk file.
     pub fn load(path: &std::path::Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
-        let font = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()?;
+        let font =
+            fontdue::Font::from_bytes(bytes.clone(), fontdue::FontSettings::default()).ok()?;
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -41,6 +63,8 @@ impl UiFont {
             font,
             cache: HashMap::new(),
             name,
+            bytes,
+            cef_cache: HashMap::new(),
         })
     }
 
@@ -707,6 +731,282 @@ impl UiFont {
     }
 }
 
+impl UiFont {
+    /// Width of `text` laid out by [`Self::draw_cef`] (unrounded advances,
+    /// as the CEF lays text out with sub-pixel positioning).
+    pub fn measure_cef(&self, text: &str, px: f32, tracking: f32) -> f32 {
+        let Ok(face) = ttf_parser::Face::parse(&self.bytes, 0) else {
+            return 0.0;
+        };
+        let s = px / face.units_per_em() as f32;
+        let mut w = 0.0;
+        for (i, ch) in text.chars().enumerate() {
+            let id = face.glyph_index(ch).unwrap_or(ttf_parser::GlyphId(0));
+            w += face.glyph_hor_advance(id).unwrap_or(0) as f32 * s;
+            if i > 0 {
+                w += tracking;
+            }
+        }
+        w
+    }
+
+    /// Draw `text` the way the retail Chromium (CEF) front-end does: every
+    /// glyph is rasterised from its outline at its exact sub-pixel pen and
+    /// baseline (no bitmap shifting, which blurs stems), with exact-area
+    /// non-zero coverage and the CEF contrast curve.  `x` is the pen origin
+    /// and `baseline` the baseline, both in fractional window pixels.  The
+    /// first glyph uses `first` (CSS `::first-letter`), the rest `rest`.
+    /// Returns the pen position after the text.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_cef(
+        &mut self,
+        fb: &mut Framebuffer,
+        x: f32,
+        baseline: f32,
+        text: &str,
+        px: f32,
+        tracking: f32,
+        first: Rgb,
+        rest: Rgb,
+    ) -> f32 {
+        if px <= 0.0 {
+            return x;
+        }
+        let Self {
+            bytes, cef_cache, ..
+        } = self;
+        let Ok(face) = ttf_parser::Face::parse(bytes, 0) else {
+            return x;
+        };
+        let s = px / face.units_per_em() as f32;
+        let iy = baseline.floor();
+        let mut fy = ((baseline - iy) * CEF_PHASES).round() as u32;
+        let iy = iy as i32 + (fy / CEF_PHASES as u32) as i32;
+        fy %= CEF_PHASES as u32;
+        let mut pen = x;
+        for (i, ch) in text.chars().enumerate() {
+            let id = face.glyph_index(ch).unwrap_or(ttf_parser::GlyphId(0));
+            let ix = pen.floor();
+            let mut fx = ((pen - ix) * CEF_PHASES).round() as u32;
+            let ix = ix as i32 + (fx / CEF_PHASES as u32) as i32;
+            fx %= CEF_PHASES as u32;
+            let key = (id.0, (px * 64.0).round() as u32, fx as u8, fy as u8);
+            let g = cef_cache.entry(key).or_insert_with(|| {
+                cef_rasterise(&face, id, s, fx as f32 / CEF_PHASES, fy as f32 / CEF_PHASES)
+            });
+            let color = if i == 0 { first } else { rest };
+            for row in 0..g.h {
+                for col in 0..g.w {
+                    let a = g.cov[row * g.w + col];
+                    if a == 0 {
+                        continue;
+                    }
+                    let (px_, py_) = (ix + g.left + col as i32, iy + g.top + row as i32);
+                    fb.put(px_, py_, fb.get(px_, py_).blend(color, a));
+                }
+            }
+            pen += face.glyph_hor_advance(id).unwrap_or(0) as f32 * s + tracking;
+        }
+        pen
+    }
+}
+
+/// Outline -> line segments in glyph-bitmap pixels (y down).
+struct Flatten {
+    s: f32,
+    ox: f32,
+    oy: f32,
+    start: (f32, f32),
+    last: (f32, f32),
+    lines: Vec<[f32; 4]>,
+}
+
+impl Flatten {
+    fn map(&self, x: f32, y: f32) -> (f32, f32) {
+        (self.ox + x * self.s, self.oy - y * self.s)
+    }
+    fn push(&mut self, p: (f32, f32)) {
+        self.lines.push([self.last.0, self.last.1, p.0, p.1]);
+        self.last = p;
+    }
+}
+
+impl ttf_parser::OutlineBuilder for Flatten {
+    fn move_to(&mut self, x: f32, y: f32) {
+        let p = self.map(x, y);
+        self.start = p;
+        self.last = p;
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        let p = self.map(x, y);
+        self.push(p);
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        let p0 = self.last;
+        let p1 = self.map(x1, y1);
+        let p2 = self.map(x, y);
+        for k in 1..=8 {
+            let t = k as f32 / 8.0;
+            let mt = 1.0 - t;
+            self.push((
+                mt * mt * p0.0 + 2.0 * mt * t * p1.0 + t * t * p2.0,
+                mt * mt * p0.1 + 2.0 * mt * t * p1.1 + t * t * p2.1,
+            ));
+        }
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let p0 = self.last;
+        let p1 = self.map(x1, y1);
+        let p2 = self.map(x2, y2);
+        let p3 = self.map(x, y);
+        for k in 1..=12 {
+            let t = k as f32 / 12.0;
+            let mt = 1.0 - t;
+            let (a, b, c, d) = (mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t);
+            self.push((
+                a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0,
+                a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1,
+            ));
+        }
+    }
+    fn close(&mut self) {
+        if self.last != self.start {
+            let start = self.start;
+            self.push(start);
+        }
+    }
+}
+
+/// Rasterise glyph `id` at scale `s` (px per font unit) with the pen at
+/// sub-pixel phase `fx` and the baseline at phase `fy`.
+fn cef_rasterise(
+    face: &ttf_parser::Face,
+    id: ttf_parser::GlyphId,
+    s: f32,
+    fx: f32,
+    fy: f32,
+) -> CefGlyph {
+    let empty = CefGlyph {
+        left: 0,
+        top: 0,
+        w: 0,
+        h: 0,
+        cov: Vec::new(),
+    };
+    let Some(bb) = face.glyph_bounding_box(id) else {
+        return empty;
+    };
+    let left = (fx + bb.x_min as f32 * s).floor() as i32;
+    let right = (fx + bb.x_max as f32 * s).ceil() as i32;
+    let top = (fy - bb.y_max as f32 * s).floor() as i32;
+    let bottom = (fy - bb.y_min as f32 * s).ceil() as i32;
+    let (w, h) = (
+        (right - left).max(0) as usize + 1,
+        (bottom - top).max(0) as usize + 1,
+    );
+    if w * h > 1 << 20 {
+        return empty;
+    }
+    let mut fl = Flatten {
+        s,
+        ox: fx - left as f32,
+        oy: fy - top as f32,
+        start: (0.0, 0.0),
+        last: (0.0, 0.0),
+        lines: Vec::new(),
+    };
+    face.outline_glyph(id, &mut fl);
+    let cov = raster_lines(&fl.lines, w, h)
+        .into_iter()
+        .map(|c| ((1.0 - (1.0 - c).powf(CEF_CONTRAST)) * 255.0).round() as u8)
+        .collect();
+    CefGlyph {
+        left,
+        top,
+        w,
+        h,
+        cov,
+    }
+}
+
+/// Exact-area coverage of closed polylines (non-zero, non-overlapping
+/// contours) on a `w x h` grid: each segment deposits its signed area into
+/// the cells it crosses, and a running sum along every row integrates it.
+fn raster_lines(lines: &[[f32; 4]], w: usize, h: usize) -> Vec<f32> {
+    let stride = w + 2;
+    let mut acc = vec![0.0f32; stride * h];
+    for l in lines {
+        let (mut x0, mut y0, mut x1, mut y1) = (l[0], l[1], l[2], l[3]);
+        if (y1 - y0).abs() <= f32::EPSILON {
+            continue;
+        }
+        let dir = if y0 < y1 {
+            1.0
+        } else {
+            std::mem::swap(&mut x0, &mut x1);
+            std::mem::swap(&mut y0, &mut y1);
+            -1.0
+        };
+        let dxdy = (x1 - x0) / (y1 - y0);
+        let ystart = y0.max(0.0);
+        let mut x = x0 + (ystart - y0) * dxdy;
+        let row_end = (y1.ceil() as usize).min(h);
+        for row in (ystart as usize)..row_end {
+            let dy = ((row + 1) as f32).min(y1) - (row as f32).max(y0);
+            if dy <= 0.0 {
+                continue;
+            }
+            let xnext = x + dxdy * dy;
+            let d = dy * dir;
+            let (xa, xb) = if x < xnext { (x, xnext) } else { (xnext, x) };
+            let base = row * stride;
+            let put = |acc: &mut Vec<f32>, col: i64, v: f32| {
+                let c = col.clamp(0, stride as i64 - 1) as usize;
+                acc[base + c] += v;
+            };
+            let xaf = xa.floor();
+            let xai = xaf as i64;
+            let xbc = xb.ceil();
+            let xbi = xbc as i64;
+            if xbi <= xai + 1 {
+                // The segment stays inside one column on this row.
+                let xm = 0.5 * (x + xnext) - xaf;
+                put(&mut acc, xai, d * (1.0 - xm));
+                put(&mut acc, xai + 1, d * xm);
+            } else {
+                let inv = 1.0 / (xb - xa);
+                let fa = xa - xaf;
+                let a0 = 0.5 * inv * (1.0 - fa) * (1.0 - fa);
+                let fb = xb - xbc + 1.0;
+                let am = 0.5 * inv * fb * fb;
+                put(&mut acc, xai, d * a0);
+                if xbi == xai + 2 {
+                    put(&mut acc, xai + 1, d * (1.0 - a0 - am));
+                } else {
+                    let a1 = inv * (1.5 - fa);
+                    put(&mut acc, xai + 1, d * (a1 - a0));
+                    for col in xai + 2..xbi - 1 {
+                        put(&mut acc, col, d * inv);
+                    }
+                    let a2 = a1 + (xbi - xai - 3) as f32 * inv;
+                    put(&mut acc, xbi - 1, d * (1.0 - a2 - am));
+                }
+                put(&mut acc, xbi, d * am);
+            }
+            x = xnext;
+        }
+    }
+    let mut out = vec![0.0f32; w * h];
+    for row in 0..h {
+        let mut sum = 0.0f32;
+        for col in 0..w {
+            sum += acc[row * stride + col];
+            out[row * w + col] = sum.abs().min(1.0);
+        }
+    }
+    out
+}
+
 fn blit_coverage(
     fb: &mut Framebuffer,
     g: &CachedGlyph,
@@ -764,6 +1064,90 @@ mod tests {
             fb.pixels.iter().any(|p| *p != 0),
             "the face must put pixels on the framebuffer"
         );
+    }
+
+    #[test]
+    fn cef_text_splits_first_letter_and_places_subpixel() {
+        let Some(mut font) = face() else {
+            eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+            return;
+        };
+        let (first, rest) = (Rgb::new(255, 0, 0), Rgb::new(0, 255, 0));
+        let mut fb = Framebuffer::new(200, 40);
+        font.draw_cef(&mut fb, 10.0, 30.0, "Speed", 23.8, 0.0, first, rest);
+        let cols = |want: fn(u32) -> bool| -> Vec<i32> {
+            (0..200)
+                .filter(|&x| (0..40).any(|y| want(fb.get(x, y).0)))
+                .collect()
+        };
+        let red = cols(|p| (p >> 16) & 0xff > 128 && (p >> 8) & 0xff < 64);
+        let green = cols(|p| (p >> 8) & 0xff > 128 && (p >> 16) & 0xff < 64);
+        assert!(!red.is_empty() && !green.is_empty());
+        assert!(red.iter().max() < green.iter().max(), "only the S is red");
+        // A half-pixel pen shift changes the coverage (no integer snapping).
+        let mut a = Framebuffer::new(200, 40);
+        let mut b = Framebuffer::new(200, 40);
+        font.draw_cef(&mut a, 10.0, 30.0, "l", 23.8, 0.0, rest, rest);
+        font.draw_cef(&mut b, 10.5, 30.0, "l", 23.8, 0.0, rest, rest);
+        assert_ne!(a.pixels, b.pixels, "sub-pixel pen must be honoured");
+        assert!(
+            (font.measure_cef("Speed", 23.8, 0.0) - font.measure_cef("Speed", 23.8, 1.0)).abs()
+                > 3.9
+        );
+    }
+
+    /// Closed axis-aligned rectangle as four segments.
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<[f32; 4]> {
+        vec![
+            [x0, y0, x1, y0],
+            [x1, y0, x1, y1],
+            [x1, y1, x0, y1],
+            [x0, y1, x0, y0],
+        ]
+    }
+
+    #[test]
+    fn exact_area_coverage_of_a_subpixel_square() {
+        // A 2x2 square at (0.5, 0.5): corners get 1/4, edges 1/2, centre 1.
+        let c = raster_lines(&rect(0.5, 0.5, 2.5, 2.5), 4, 4);
+        let at = |x: usize, y: usize| c[y * 4 + x];
+        assert!((at(0, 0) - 0.25).abs() < 1e-4, "corner {}", at(0, 0));
+        assert!((at(1, 0) - 0.5).abs() < 1e-4, "edge {}", at(1, 0));
+        assert!((at(1, 1) - 1.0).abs() < 1e-4, "centre {}", at(1, 1));
+        assert!((at(2, 2) - 0.25).abs() < 1e-4);
+        assert_eq!(at(3, 3), 0.0);
+        let total: f32 = c.iter().sum();
+        assert!((total - 4.0).abs() < 1e-3, "area {total}");
+    }
+
+    #[test]
+    fn coverage_is_nonzero_with_counters_left_open() {
+        // An outer square with an inner counter wound the other way (an
+        // "o"): the counter must stay empty, the ring full.
+        let mut lines = rect(0.0, 0.0, 6.0, 6.0);
+        lines.extend(rect(2.0, 4.0, 4.0, 2.0)); // reversed winding
+        let c = raster_lines(&lines, 6, 6);
+        assert!((c[6 + 1] - 1.0).abs() < 1e-4, "ring");
+        assert!(
+            c[2 * 6 + 2].abs() < 1e-4,
+            "counter must be open: {}",
+            c[2 * 6 + 2]
+        );
+    }
+
+    #[test]
+    fn diagonal_edge_splits_area_exactly() {
+        // Triangle (0,0)-(2,0)-(0,2): area 2 distributed over 4 cells.
+        let lines = vec![
+            [0.0, 0.0, 2.0, 0.0],
+            [2.0, 0.0, 0.0, 2.0],
+            [0.0, 2.0, 0.0, 0.0],
+        ];
+        let c = raster_lines(&lines, 3, 3);
+        let total: f32 = c.iter().sum();
+        assert!((total - 2.0).abs() < 1e-3, "area {total}");
+        assert!((c[0] - 1.0).abs() < 1e-4);
+        assert!((c[1] - 0.5).abs() < 1e-4 && (c[3] - 0.5).abs() < 1e-4);
     }
 
     #[test]

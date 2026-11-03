@@ -70,6 +70,14 @@ PHASES = {
     "episode-expansion-hover-terran": (0.0667, {"xterron": 0.0667}),
     "episode-expansion-hover-zerg": (0.0667, {"xzergon": 0.0667}),
     "mission": (2.3333, {}),
+    # Options: the CEF modal sits over the running menu, so its clips are
+    # visible under the dim.  Phases from a 1/8 s sweep (0..14.4 s) of each
+    # clip's own area against the five captures (2026-11-02).
+    "options-speed": (2.875, {"single": 2.875, "multi": 2.375, "exit": 6.125}),
+    "options-sound": (8.25, {"single": 8.25, "multi": 6.125, "exit": 4.375}),
+    "options-video": (2.0, {"single": 2.0, "multi": 2.375, "exit": 1.375}),
+    "options-game": (8.125, {"single": 8.125, "multi": 8.75, "exit": 0.5}),
+    "options-network": (2.5, {"single": 2.5, "multi": 2.375, "exit": 4.875}),
 }
 
 GOAL = {

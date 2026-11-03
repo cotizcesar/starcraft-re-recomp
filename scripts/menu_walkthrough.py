@@ -31,7 +31,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "engine-rust/target/release/sc_view"
@@ -170,13 +170,27 @@ def shots_by_screen(rows: list[dict]) -> dict[str, int]:
     return first
 
 
+# Screens drawn over the running main menu (Options composites the live
+# Single/Multi/Exit clips under its modal, 130933..130954): their frame is
+# compared outside the pixels the clip phase can change, because the phase
+# depends on the wall-clock time the walkthrough reaches the screen.
+LIVE_MENU_SCREENS = {"Options"}
+# One sample per second over the 14.4 s Single/Multi loop (Exit is 10 s).
+CLIP_PHASES = tuple(f"{t:.1f}" for t in range(15))
+# flc.json clip rectangles (Single/Multi/Exit and their On variants) at
+# 2560x1440: x0, y0, x1, y1 of the content box.  The live clips advance on
+# the wall clock, so two walkthrough runs differ only inside these.
+CLIP_RECTS = ((260, 0, 1535, 600), (368, 555, 1370, 1365), (1499, 948, 2111, 1440))
+
+
 def run_shot(
-    install: str, screen: str, out: Path, width: int = 2560, height: int = 1440
+    install: str, screen: str, out: Path, width: int = 2560, height: int = 1440,
+    extra: tuple[str, ...] = (),
 ) -> np.ndarray:
     env = dict(os.environ, SC_NO_AUDIO="1")
     subprocess.run(
         [str(BIN), "--install", install, "--shot", str(out), "--shot-screen", screen,
-         "--no-intro", "--width", str(width), "--height", str(height)],
+         "--no-intro", "--width", str(width), "--height", str(height), *extra],
         check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return np.asarray(Image.open(out).convert("RGB")).astype(np.int16)
@@ -351,11 +365,39 @@ def main() -> int:
             Image.open(outdir / f"walk-{first[screen]:02d}-{screen}.bmp").convert("RGB")
         ).astype(np.int16)
         ref = run_shot(args.install, shot_name, tmp / f"{shot_name}.bmp")
-        diff = np.abs(walk - ref)
+        diff = np.abs(walk - ref).max(axis=2)
+        note = ""
+        if screen in LIVE_MENU_SCREENS:
+            clip = np.zeros(diff.shape, bool)
+            for at in CLIP_PHASES:
+                alt = run_shot(args.install, shot_name, tmp / f"{shot_name}-{at}.bmp",
+                               extra=("--menu-at", at))
+                clip |= np.abs(alt - ref).max(axis=2) > 0
+            # Pixels between the sampled phases: grow the mask by 4 px.
+            clip = np.asarray(
+                Image.fromarray(clip.astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(9))
+            ) > 0
+            # The flc.json clip rectangles span ~45 % of the frame; the
+            # phase changes well under a fifth of it (stars, ships, galaxy).
+            if clip.mean() > 0.20:
+                fail(f"{screen}: clip-phase mask covers {clip.mean():.1%} of the frame")
+            in_rect = np.zeros(diff.shape, bool)
+            for x0, y0, x1, y1 in CLIP_RECTS:
+                in_rect[y0:y1, x0:x1] = True
+            if diff[~in_rect].max() != 0:
+                fail(f"{screen}: frame differs outside the menu-clip rectangles "
+                     f"(max {diff[~in_rect].max()})")
+            stray = (diff > 0) & ~clip
+            if stray.mean() > 0.0002:
+                fail(f"{screen}: {stray.sum()} px differ inside the clip rectangles "
+                     f"but outside the sampled clip footprint")
+            diff = np.zeros_like(diff)
+            note = (f" outside the menu clips (footprint {clip.mean():.2%}, "
+                    f"{stray.sum()} transient px)")
         if diff.max() != 0:
             fail(f"{screen}: walkthrough frame differs from the {shot_name} render "
                  f"(mean {diff.mean():.3f}, max {diff.max()})")
-        print(f"PASS frame {screen:12s} == verified headless render ({shot_name})")
+        print(f"PASS frame {screen:12s} == verified headless render ({shot_name}){note}")
 
     lobby_shot = run_shot(args.install, "lobby", tmp / "lobby.bmp")
     closed = np.asarray(Image.open(outdir / f"walk-{first['Lobby']:02d}-Lobby.bmp").convert("RGB")).astype(np.int16)

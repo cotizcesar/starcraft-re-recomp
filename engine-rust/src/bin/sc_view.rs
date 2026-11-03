@@ -1621,19 +1621,64 @@ const CSS_GREEN_HI: Rgb = Rgb::new(0xb4, 0xfc, 0x74);
 const CSS_LAVENDER: Rgb = Rgb::new(0xa2, 0xb1, 0xf5);
 const CSS_YELLOW: Rgb = Rgb::new(0xfc, 0xfc, 0x4c);
 
-/// Retail CEF dialog plate: translucent black, 1px #331f1f outer border and
-/// 1px #6c0000 inner hairline (scaled ~2 px at 2560x1440).
-/// Filled circle used by the retail slider knob and radio dots.
-fn fill_circle(fb: &mut Framebuffer, cx: i32, cy: i32, r: i32, color: Rgb) {
-    if r <= 0 {
-        return;
-    }
-    for dy in -r..=r {
-        let dx = ((r * r - dy * dy) as f32).sqrt() as i32;
-        fb.rect(cx - dx, cy + dy, dx * 2 + 1, 1, color);
+/// Draw CEF body text at a fractional pen and baseline (see
+/// [`galaxycraft::text::UiFont::draw_cef`]).
+#[allow(clippy::too_many_arguments)]
+fn opt_text_at(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    pen: f32,
+    baseline: f32,
+    text: &str,
+    ppem: f32,
+    color: Rgb,
+) {
+    if let Some(f) = font.as_mut() {
+        f.draw_cef(
+            fb,
+            pen,
+            baseline,
+            text,
+            ppem,
+            ppem * CEF_TRACKING,
+            color,
+            color,
+        );
+    } else {
+        let scale = (ppem / 8.0).round().max(1.0) as i32;
+        fb.text(
+            pen as i32,
+            (baseline - ppem * 0.67) as i32,
+            text,
+            color,
+            scale,
+        );
     }
 }
 
+/// Extra advance of the CEF layout over the font's design advances, in em.
+/// Measured on the glyph origins of ten long Options labels: plain design
+/// advances + 0.03 px at 23.8 px/em give rms 0.42 px; GPOS kerning (0.50),
+/// whole-pixel advances (1.23) and 0.06 px (0.49) fit worse.
+const CEF_TRACKING: f32 = 0.00125;
+
+/// CEF size and ascent for the Options body styles, keyed by the legacy
+/// `px` of the call sites.  Fitted with the outline rasteriser on
+/// 130933/130942/130949 (`Game Speed` 23.8 px/em, baseline top+15.44;
+/// `slow` 20.7/+14.25; `Gameplay` 29.9/+20.5).
+fn cef_body_metrics(px: f32, unit: f32) -> (f32, f32) {
+    let p = px / unit.max(0.01);
+    let (ppem, asc) = if p < 21.5 {
+        (20.7, 14.25)
+    } else if p < 27.0 {
+        (23.8, 15.4)
+    } else {
+        (29.9, 20.5)
+    };
+    (ppem * unit, asc * unit)
+}
+
+/// Body text whose `top` is the legacy glyph-top anchor of the call site.
 fn opt_text(
     fb: &mut Framebuffer,
     font: &mut Option<galaxycraft::text::UiFont>,
@@ -1643,26 +1688,20 @@ fn opt_text(
     px: f32,
     color: Rgb,
 ) {
-    if let Some(f) = font.as_mut() {
-        // CEF's coverage is a touch heavier than fontdue at the same size.
-        f.draw_top_stretched(
-            fb,
-            x,
-            top,
-            text,
-            px,
-            0.3,
-            1.0,
-            1.0,
-            color,
-            Some(Rgb::new(0, 0, 0)),
-            0.85,
-        );
-    } else {
-        fb.text(x, top, text, color, (px / 8.0).round().max(1.0) as i32);
-    }
+    let unit = fb.height as f32 / 1440.0;
+    let (ppem, asc) = cef_body_metrics(px, unit);
+    opt_text_at(
+        fb,
+        font,
+        x as f32 - 0.375 * unit,
+        top as f32 + asc,
+        text,
+        ppem,
+        color,
+    );
 }
 
+/// Right-aligned [`opt_text`].
 fn opt_text_right(
     fb: &mut Framebuffer,
     font: &mut Option<galaxycraft::text::UiFont>,
@@ -1672,58 +1711,51 @@ fn opt_text_right(
     px: f32,
     color: Rgb,
 ) {
-    if let Some(f) = font.as_mut() {
-        f.draw_right(
-            fb,
-            right,
-            top,
-            text,
-            px,
-            0.3,
-            color,
-            Some(Rgb::new(0, 0, 0)),
-        );
-    } else {
-        let w = text.chars().count() as i32 * (px / 8.0).round().max(1.0) as i32;
-        fb.text(
-            right - w,
-            top,
-            text,
-            color,
-            (px / 8.0).round().max(1.0) as i32,
-        );
-    }
+    let unit = fb.height as f32 / 1440.0;
+    let (ppem, asc) = cef_body_metrics(px, unit);
+    let w = font
+        .as_ref()
+        .map(|f| f.measure_cef(text, ppem, ppem * CEF_TRACKING))
+        .unwrap_or(0.0);
+    // The CEF right edge sits 0.4 px past the column edge (fast/max/300/
+    // Filtered on 130933..130942).
+    opt_text_at(
+        fb,
+        font,
+        right as f32 - w + 0.4 * unit,
+        top as f32 + asc,
+        text,
+        ppem,
+        color,
+    );
 }
 
-/// Shared help disc: a filled circle in the label colour with a dark "?".
+/// Shared help disc: an anti-aliased r 9 disc in the label colour with a
+/// dark "?".  `(cx, cy)` is the continuous centre (130933: 1682.05,349.5).
 fn opt_help(
     fb: &mut Framebuffer,
     font: &mut Option<galaxycraft::text::UiFont>,
-    cx: i32,
-    cy: i32,
-    r: i32,
+    cx: f32,
+    cy: f32,
+    r: f32,
     color: Rgb,
     px: f32,
 ) {
-    fill_circle(fb, cx, cy, r, color);
+    aa_circle(fb, cx, cy, r, 0.0, color);
     let qpx = (px * 0.62).max(6.0);
     if let Some(f) = font.as_mut() {
-        let w = f.measure("?", qpx, 0.0);
-        f.draw_top(
-            fb,
-            cx - w / 2,
-            cy - (qpx * 0.40).round() as i32,
-            "?",
-            qpx,
-            0.0,
-            Rgb::new(10, 5, 5),
-            None,
-        );
+        let w = f.measure_cef("?", qpx, 0.0);
+        let ink = Rgb::new(10, 5, 5);
+        f.draw_cef(fb, cx - w / 2.0, cy + qpx * 0.36, "?", qpx, 0.0, ink, ink);
     }
 }
 
-/// Retail checkbox: 29 px plate with a 2 px red border, optional yellow
-/// fill, lavender label and optional trailing help disc.
+/// Retail checkbox, measured on 130933 (Mouse Sensitivity box at
+/// 1455.7..1485.6 x 340.5..370.5): 2.9 px ring with a 5 px radius,
+/// #6c0000 (enabled) or #404040 (disabled), and a 14.9 px mark with a
+/// 3.7 px glow ramp, #fcfc4c (enabled) or #808080 (disabled).  `(x, y)`
+/// is the nominal 29 px slot; the label starts 13 px after it and sits
+/// 8 px below its top.
 #[allow(clippy::too_many_arguments)]
 fn opt_checkbox(
     fb: &mut Framebuffer,
@@ -1738,65 +1770,120 @@ fn opt_checkbox(
     px: f32,
 ) {
     let unit = s as f32 / 29.0;
-    let border = if enabled {
-        CSS_INNER
+    let (fx, fy) = (x as f32 - 0.3 * unit, y as f32 - 0.5 * unit);
+    let b = [fx, fy, fx + 29.9 * unit, fy + 30.0 * unit];
+    let (ring, mark) = if enabled {
+        (CSS_INNER, CSS_YELLOW)
     } else {
-        Rgb::new(120, 120, 125)
+        (Rgb::new(64, 64, 64), Rgb::new(128, 128, 128))
     };
-    fb.rect(x + 3, y + 3, s - 6, s - 6, Rgb::new(4, 0, 0));
-    for t in 0..2 {
-        fb.rect_outline(x + t, y + t, s - 2 * t, s - 2 * t, border);
-    }
+    aa_box(fb, b, 5.0 * unit, 2.9 * unit, ring);
     if checked {
-        let inset = (8.0 * unit).round() as i32;
-        fb.rect(
-            x + inset,
-            y + inset,
-            s - 2 * inset,
-            s - 2 * inset,
-            CSS_YELLOW,
-        );
+        let (mx, my) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+        let h = 7.45 * unit;
+        soft_box(fb, [mx - h, my - h, mx + h, my + h], 0.0, 3.7 * unit, mark);
     }
     let lx = x + s + (13.0 * unit).round() as i32;
-    // Retail checkbox labels sit low in the 29 px plate; "Mouse
-    // Sensitivity" is the one white label in the Speed column.
-    let color = if label == "Mouse Sensitivity" {
+    // Checkboxes that title a slider use the white heading colour
+    // (130933 Mouse Sensitivity, 130938 Music/Digital Volume).
+    let color = if matches!(
+        label,
+        "Mouse Sensitivity" | "Music Volume" | "Digital Volume"
+    ) {
         Rgb::new(255, 255, 255)
     } else if enabled {
         CSS_LAVENDER
     } else {
         Rgb::new(128, 128, 128)
     };
-    let label_px = px * 0.97;
-    opt_text(
-        fb,
-        font,
-        lx,
-        y + (7.0 * unit).round() as i32,
-        label,
-        label_px,
-        color,
-    );
+    // Fitted on 130938 "Unit Speech": 23.8 px/em, pen lx-0.125,
+    // baseline y+23.375.  The help disc centre sits 13.44 px past the
+    // tracked pen end (130933 Mouse Sensitivity disc at 1682.0).
+    let _ = px;
+    let ppem = 23.8 * unit;
+    let pen = lx as f32 - 0.125 * unit;
+    opt_text_at(fb, font, pen, y as f32 + 23.375 * unit, label, ppem, color);
     if help {
-        if let Some(f) = font.as_mut() {
-            let w = f.measure(label, label_px, 0.3);
-            let r = (9.0 * unit).round() as i32;
-            let hx = lx + w + (5.0 * unit).round() as i32 + r;
+        if let Some(w) = font
+            .as_ref()
+            .map(|f| f.measure_cef(label, ppem, ppem * CEF_TRACKING))
+        {
             opt_help(
                 fb,
                 font,
-                hx,
-                y + (8.0 * unit).round() as i32,
-                r,
+                pen + w + 13.44 * unit,
+                y as f32 + 8.5 * unit,
+                9.0 * unit,
                 color,
-                label_px,
+                ppem,
             );
         }
     }
 }
 
-/// Seven-stop retail slider. Seven circular stops on a 5 px rail; the knob
-/// is the larger yellow-eyed disc. `frac` selects the stop.
+/// Palette of a seven-stop retail slider.
+struct SliderLook {
+    rail: Rgb,
+    stop_fill: Rgb,
+    mark: Rgb,
+    label: Rgb,
+}
+
+/// Seven-stop retail slider, measured on 130933/130942: 6 px rail centred
+/// on `cy + 0.5`, stops of radius 12 (3 px ring) from `x0 + 18.4` to
+/// `x1 - 17.45`, knob of radius 18 (3 px ring) with an r 8.5 glowing mark.
+#[allow(clippy::too_many_arguments)]
+fn opt_slider_look(
+    fb: &mut Framebuffer,
+    font: &mut Option<galaxycraft::text::UiFont>,
+    x0: i32,
+    x1: i32,
+    cy: i32,
+    frac: f32,
+    left: &str,
+    right: &str,
+    label_y: i32,
+    unit: f32,
+    label_px: f32,
+    look: &SliderLook,
+) {
+    let yc = cy as f32 + 0.5;
+    aa_box(
+        fb,
+        [
+            x0 as f32 - 0.4,
+            yc - 3.0 * unit,
+            x1 as f32 + 0.5,
+            yc + 3.0 * unit,
+        ],
+        0.0,
+        0.0,
+        look.rail,
+    );
+    let sx0 = x0 as f32 + 18.4 * unit;
+    let sx1 = x1 as f32 - 17.45 * unit;
+    let stop = |i: f32| sx0 + (sx1 - sx0) * i / 6.0;
+    for i in 0..7 {
+        let cx = stop(i as f32);
+        aa_circle(fb, cx, yc, 12.0 * unit, 0.0, look.stop_fill);
+        aa_circle(fb, cx, yc, 12.0 * unit, 3.0 * unit, look.rail);
+    }
+    let kx = stop((frac.clamp(0.0, 1.0) * 6.0).round());
+    aa_circle(fb, kx, yc, 18.0 * unit, 0.0, look.stop_fill);
+    aa_circle(fb, kx, yc, 18.0 * unit, 3.0 * unit, look.rail);
+    let r = 8.5 * unit;
+    soft_box(
+        fb,
+        [kx - r, yc - r, kx + r, yc + r],
+        r,
+        4.0 * unit,
+        look.mark,
+    );
+    opt_text(fb, font, x0, label_y, left, label_px, look.label);
+    opt_text_right(fb, font, x1, label_y, right, label_px, look.label);
+}
+
+/// Enabled slider: #6c0000 rail, navy stops, yellow mark.
 #[allow(clippy::too_many_arguments)]
 fn opt_slider(
     fb: &mut Framebuffer,
@@ -1811,39 +1898,19 @@ fn opt_slider(
     unit: f32,
     label_px: f32,
 ) {
-    let th = (5.0 * unit).round().max(2.0) as i32;
-    fb.rect(x0, cy - th / 2, x1 - x0, th, CSS_INNER);
-    let sx0 = x0 + (16.0 * unit).round() as i32;
-    let sx1 = x1 - (17.0 * unit).round() as i32;
-    for i in 0..7 {
-        let cx = sx0 + ((sx1 - sx0) as f32 * i as f32 / 6.0).round() as i32;
-        fill_circle(fb, cx, cy, (12.0 * unit).round() as i32, CSS_INNER);
-        fill_circle(
-            fb,
-            cx,
-            cy,
-            (9.0 * unit).round() as i32,
-            Rgb::new(20, 24, 52),
-        );
-    }
-    let kx = sx0 + ((sx1 - sx0) as f32 * frac.clamp(0.0, 1.0)).round() as i32;
-    fill_circle(fb, kx, cy, (17.0 * unit).round() as i32, CSS_INNER);
-    fill_circle(
-        fb,
-        kx,
-        cy,
-        (15.0 * unit).round() as i32,
-        Rgb::new(20, 24, 52),
+    let look = SliderLook {
+        rail: CSS_INNER,
+        stop_fill: Rgb::new(20, 24, 52),
+        mark: CSS_YELLOW,
+        label: CSS_LAVENDER,
+    };
+    opt_slider_look(
+        fb, font, x0, x1, cy, frac, left, right, label_y, unit, label_px, &look,
     );
-    fill_circle(fb, kx, cy, (7.0 * unit).round() as i32, CSS_YELLOW);
-    opt_text(fb, font, x0, label_y, left, label_px, CSS_LAVENDER);
-    if let Some(f) = font.as_mut() {
-        let w = f.measure(right, label_px, 0.3);
-        opt_text(fb, font, x1 - w, label_y, right, label_px, CSS_LAVENDER);
-    }
 }
 
-/// Same rail with the dim grey knob used by Gamma Correction.
+/// Disabled slider (Gamma Correction): #404040 rail and rings, #0d0d0d
+/// stops, grey mark and labels.
 #[allow(clippy::too_many_arguments)]
 fn opt_slider_grey(
     fb: &mut Framebuffer,
@@ -1858,92 +1925,77 @@ fn opt_slider_grey(
     unit: f32,
     label_px: f32,
 ) {
-    let th = (5.0 * unit).round().max(2.0) as i32;
-    fb.rect(x0, cy - th / 2, x1 - x0, th, Rgb::new(90, 90, 96));
-    let sx0 = x0 + (16.0 * unit).round() as i32;
-    let sx1 = x1 - (17.0 * unit).round() as i32;
-    for i in 0..7 {
-        let cx = sx0 + ((sx1 - sx0) as f32 * i as f32 / 6.0).round() as i32;
-        fill_circle(
-            fb,
-            cx,
-            cy,
-            (12.0 * unit).round() as i32,
-            Rgb::new(110, 110, 115),
-        );
-        fill_circle(fb, cx, cy, (9.0 * unit).round() as i32, Rgb::new(4, 4, 6));
-    }
-    let kx = sx0 + ((sx1 - sx0) as f32 * frac.clamp(0.0, 1.0)).round() as i32;
-    fill_circle(
-        fb,
-        kx,
-        cy,
-        (17.0 * unit).round() as i32,
-        Rgb::new(110, 110, 115),
+    let look = SliderLook {
+        rail: Rgb::new(64, 64, 64),
+        stop_fill: Rgb::new(13, 13, 13),
+        mark: Rgb::new(128, 128, 128),
+        label: Rgb::new(128, 128, 128),
+    };
+    opt_slider_look(
+        fb, font, x0, x1, cy, frac, left, right, label_y, unit, label_px, &look,
     );
-    fill_circle(fb, kx, cy, (15.0 * unit).round() as i32, Rgb::new(4, 4, 6));
-    fill_circle(
-        fb,
-        kx,
-        cy,
-        (7.0 * unit).round() as i32,
-        Rgb::new(160, 160, 166),
-    );
-    let label = Rgb::new(128, 128, 128);
-    opt_text(fb, font, x0, label_y, left, label_px, label);
-    if let Some(f) = font.as_mut() {
-        let w = f.measure(right, label_px, 0.3);
-        opt_text(fb, font, x1 - w, label_y, right, label_px, label);
-    }
 }
 
-/// Retail dropdown: black plate, double red border, green value and chevron.
-/// Disabled combos use the 64-grey frame and 128-grey value.
+/// Retail dropdown, measured on 130942/130949: a 45 px box from `x - 0.4`
+/// to `x + w + 0.5` whose top edge `top` is continuous (Video 373.5, Game
+/// Console 638.17, Language 449.17); 3 px #6c0000 ring with a 7 px radius,
+/// green value at baseline `top + 30` and pen `x + 8.75`, and a 31.8 x 15.6
+/// chevron shaded #6f6809 -> #c4c60e, 25.9 px left of the right edge.  A
+/// disabled field (Monitor, 130942: 899.64..1416.6 x 475.5..520.5) is a
+/// grey #404040 rounded box with no chevron.
 #[allow(clippy::too_many_arguments)]
 fn opt_dropdown(
     fb: &mut Framebuffer,
     font: &mut Option<galaxycraft::text::UiFont>,
     x: i32,
-    y: i32,
+    top: f32,
     w: i32,
-    h: i32,
     value: &str,
     enabled: bool,
     unit: f32,
 ) {
-    let (frame, fill, ink) = if enabled {
-        (CSS_INNER, Rgb::new(3, 0, 0), CSS_GREEN)
+    let h = 45.0 * unit;
+    let ink = if enabled {
+        let b = [
+            x as f32 - 0.4 * unit,
+            top,
+            (x + w) as f32 + 0.5 * unit,
+            top + h,
+        ];
+        aa_box(fb, b, 7.0 * unit, 3.0 * unit, CSS_INNER);
+        aa_chevron(
+            fb,
+            b[2] - 25.9 * unit,
+            b[1] + 16.5 * unit,
+            15.9 * unit,
+            15.6 * unit,
+            Rgb::new(111, 104, 9),
+            Rgb::new(196, 198, 14),
+        );
+        CSS_GREEN
     } else {
-        (
-            Rgb::new(64, 64, 64),
-            Rgb::new(0, 0, 0),
-            Rgb::new(128, 128, 128),
-        )
+        let b = [
+            x as f32 - 0.36 * unit,
+            top,
+            (x + w) as f32 + 0.6 * unit,
+            top + h,
+        ];
+        aa_box(fb, b, 8.0 * unit, 3.0 * unit, Rgb::new(64, 64, 64));
+        Rgb::new(128, 128, 128)
     };
-    fb.rect(x + 3, y + 3, w - 6, h - 6, fill);
-    for t in 0..3 {
-        fb.rect_outline(x + t, y + t, w - 2 * t, h - 2 * t, frame);
-    }
-    opt_text(
+    opt_text_at(
         fb,
         font,
-        x + (9.0 * unit).round() as i32,
-        y + (14.0 * unit).round() as i32,
+        x as f32 + 8.75 * unit,
+        top + 30.0 * unit,
         value,
-        (23.3 * unit).max(6.0),
+        23.8 * unit,
         ink,
     );
-    let tw = (18.0 * unit).round() as i32;
-    let th = (10.0 * unit).round() as i32;
-    let ax = x + w - (28.0 * unit).round() as i32;
-    let ay = y + h / 2 - th / 2;
-    for row in 0..th {
-        let half = ((th - row) as f32 / th as f32 * (tw / 2) as f32).round() as i32;
-        fb.rect(ax - half, ay + row, half * 2 + 1, 1, ink);
-    }
 }
 
-/// Retail radio: red ring with a yellow centre when selected.
+/// Retail radio, measured on 130949 (Animated at 899.7..935.4): r 17.85
+/// ring of 2.7 px and an r 8.8 glowing yellow mark (4.3 px ramp).
 #[allow(clippy::too_many_arguments)]
 fn opt_radio(
     fb: &mut Framebuffer,
@@ -1957,37 +2009,40 @@ fn opt_radio(
     px: f32,
     unit: f32,
 ) {
-    let cx = x + s / 2;
-    let cy = y + s / 2;
+    let cx = x as f32 + 17.55 * unit;
+    let cy = y as f32 + 18.15 * unit;
     let ring = if enabled {
         CSS_INNER
     } else {
-        Rgb::new(120, 120, 125)
+        Rgb::new(64, 64, 64)
     };
-    fill_circle(fb, cx, cy, s / 2, ring);
-    fill_circle(
-        fb,
-        cx,
-        cy,
-        s / 2 - (4.0 * unit).round() as i32,
-        Rgb::new(2, 0, 0),
-    );
+    aa_circle(fb, cx, cy, 17.85 * unit, 2.7 * unit, ring);
     if selected {
-        fill_circle(fb, cx, cy, (8.0 * unit).round() as i32, CSS_YELLOW);
+        let r = 8.8 * unit;
+        soft_box(
+            fb,
+            [cx - r, cy - r, cx + r, cy + r],
+            r,
+            4.3 * unit,
+            CSS_YELLOW,
+        );
     }
     let color = if selected { CSS_GREEN_HI } else { CSS_LAVENDER };
-    opt_text(
+    // Fitted on 130949 "Animated": 23.75 px/em, baseline y+25.75.
+    let _ = px;
+    opt_text_at(
         fb,
         font,
-        x + s + (15.0 * unit).round() as i32,
-        y + (10.0 * unit).round() as i32,
+        (x + s) as f32 + 14.5 * unit,
+        y as f32 + 25.75 * unit,
         label,
-        px,
+        23.75 * unit,
         color,
     );
 }
 
-/// Small rounded input plate used by the APM threshold.
+/// CEF text input (APM threshold, 130949: 1779.4..1855.5 x 642..687.8):
+/// 3 px #404040 ring with an 8 px radius and a grey value.
 #[allow(clippy::too_many_arguments)]
 fn opt_input(
     fb: &mut Framebuffer,
@@ -2000,28 +2055,31 @@ fn opt_input(
     px: f32,
     unit: f32,
 ) {
-    // CEF input: rounded 2 px #404040 frame with a grey value.
-    rounded_band(
+    aa_box(
         fb,
-        x,
-        y,
-        w,
-        h,
-        (8.0 * unit).max(2.0),
-        0,
-        2,
+        [
+            x as f32 - 0.58 * unit,
+            y as f32,
+            (x + w) as f32 + 0.48 * unit,
+            (y + h) as f32 - 0.17 * unit,
+        ],
+        8.0 * unit,
+        3.0 * unit,
         Rgb::new(64, 64, 64),
     );
-    opt_text(
+    // Fitted on 130949 "60": 21.35 px/em, pen x+10, baseline y+29.5.
+    let _ = px;
+    opt_text_at(
         fb,
         font,
-        x + (14.0 * unit).round() as i32,
-        y + (11.0 * unit).round() as i32,
+        x as f32 + 10.0 * unit,
+        y as f32 + 29.5 * unit,
         value,
-        px,
+        21.35 * unit,
         Rgb::new(170, 170, 176),
     );
 }
+
 fn fill_alpha_rect(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, alpha: u8) {
     for yy in y..y + h {
         for xx in x..x + w {
@@ -2039,6 +2097,318 @@ fn rounded_sdf(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 
     let qx = ((px - (x + rx)).abs() - (rx - r)).max(0.0);
     let qy = ((py - (y + ry)).abs() - (ry - r)).max(0.0);
     (qx * qx + qy * qy).sqrt() + qx.max(qy).min(0.0) - r
+}
+
+/// Exact signed distance to the rounded box `[x0,y0,x1,y1]` (negative
+/// inside, true interior distance — unlike [`rounded_sdf`], which clamps
+/// the interior to `-r` and so cannot describe bands thicker than `r`).
+fn sdf_round_box(px: f32, py: f32, b: [f32; 4], r: f32) -> f32 {
+    let hx = (b[2] - b[0]) / 2.0;
+    let hy = (b[3] - b[1]) / 2.0;
+    let r = r.min(hx).min(hy).max(0.0);
+    let qx = (px - (b[0] + hx)).abs() - (hx - r);
+    let qy = (py - (b[1] + hy)).abs() - (hy - r);
+    let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+    (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r
+}
+
+/// Maps the 2560x1440 content units of the CEF captures to window pixels.
+#[derive(Clone, Copy)]
+struct CefSpace {
+    cx: f32,
+    kx: f32,
+    ky: f32,
+}
+
+impl CefSpace {
+    fn rect(&self, b: [f32; 4]) -> [f32; 4] {
+        [
+            self.cx + b[0] * self.kx,
+            b[1] * self.ky,
+            self.cx + b[2] * self.kx,
+            b[3] * self.ky,
+        ]
+    }
+}
+
+/// CEF border/fill primitive at sub-pixel precision.  The retail Chromium
+/// compositor places the Options chrome at fractional positions (bands of
+/// 4.6 px #331f1f and 3 px #6c0000 with half-covered edge rows), so the box
+/// `b` (content units) is rasterised with 4x4 supersampling.  `t <= 0`
+/// fills the box; otherwise only the band `0 < -sdf <= t` is painted.
+/// `clip` (content units, union of rects; empty = none) keeps the open
+/// sides of the L-shaped plate and of the selected tab out.
+#[allow(clippy::too_many_arguments)]
+fn cef_band(
+    fb: &mut Framebuffer,
+    s: CefSpace,
+    b: [f32; 4],
+    r: f32,
+    t: f32,
+    color: Rgb,
+    opacity: f32,
+    clip: &[[f32; 4]],
+) {
+    let sb = s.rect(b);
+    let (rs, ts) = (r * s.ky, t * s.ky);
+    let clips: Vec<[f32; 4]> = clip.iter().map(|c| s.rect(*c)).collect();
+    let inside_clip = |x: f32, y: f32| {
+        clips.is_empty()
+            || clips
+                .iter()
+                .any(|c| x >= c[0] && x < c[2] && y >= c[1] && y < c[3])
+    };
+    let x0 = sb[0].floor().max(0.0) as i32;
+    let y0 = sb[1].floor().max(0.0) as i32;
+    let x1 = (sb[2].ceil() as i32).min(fb.width);
+    let y1 = (sb[3].ceil() as i32).min(fb.height);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = sdf_round_box(x as f32 + 0.5, y as f32 + 0.5, sb, rs);
+            if d > 1.0 || (ts > 0.0 && d < -(ts + 1.0)) {
+                continue;
+            }
+            let mut n = 0u32;
+            for j in 0..4 {
+                for i in 0..4 {
+                    let (px, py) = (
+                        x as f32 + (i as f32 + 0.5) / 4.0,
+                        y as f32 + (j as f32 + 0.5) / 4.0,
+                    );
+                    let d = sdf_round_box(px, py, sb, rs);
+                    if d <= 0.0 && (ts <= 0.0 || d > -ts) && inside_clip(px, py) {
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                let a = (n as f32 / 16.0 * opacity * 255.0).round() as u8;
+                fb.put(x, y, fb.get(x, y).blend(color, a));
+            }
+        }
+    }
+}
+
+/// Window-pixel space for the CEF primitives (controls are positioned in
+/// window pixels by their callers).
+const PIXEL_SPACE: CefSpace = CefSpace {
+    cx: 0.0,
+    kx: 1.0,
+    ky: 1.0,
+};
+
+/// Anti-aliased rounded box (`t <= 0` fills) in window pixels.
+fn aa_box(fb: &mut Framebuffer, b: [f32; 4], r: f32, t: f32, color: Rgb) {
+    cef_band(fb, PIXEL_SPACE, b, r, t, color, 1.0, &[]);
+}
+
+/// Anti-aliased disc (`t <= 0`) or ring of outer radius `r`.
+fn aa_circle(fb: &mut Framebuffer, cx: f32, cy: f32, r: f32, t: f32, color: Rgb) {
+    aa_box(fb, [cx - r, cy - r, cx + r, cy + r], r, t, color);
+}
+
+/// CEF glow fill (the checkbox/radio/slider marks carry a `box-shadow`):
+/// the 50 % contour is the rounded box `b`, and coverage ramps linearly
+/// across `ramp` pixels around it.
+fn soft_box(fb: &mut Framebuffer, b: [f32; 4], r: f32, ramp: f32, color: Rgb) {
+    let x0 = (b[0] - ramp).floor().max(0.0) as i32;
+    let y0 = (b[1] - ramp).floor().max(0.0) as i32;
+    let x1 = ((b[2] + ramp).ceil() as i32).min(fb.width);
+    let y1 = ((b[3] + ramp).ceil() as i32).min(fb.height);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = sdf_round_box(x as f32 + 0.5, y as f32 + 0.5, b, r);
+            let cov = (0.5 - d / ramp).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                fb.put(x, y, fb.get(x, y).blend(color, (cov * 255.0).round() as u8));
+            }
+        }
+    }
+}
+
+/// Retail dropdown chevron: a downward triangle (top edge `top`, apex at
+/// `top + h`, half-width `hw`) shaded top-to-bottom from `c0` to `c1`,
+/// 4x4 supersampled.
+#[allow(clippy::too_many_arguments)]
+fn aa_chevron(fb: &mut Framebuffer, cx: f32, top: f32, hw: f32, h: f32, c0: Rgb, c1: Rgb) {
+    let lerp = |a: u32, b: u32, t: f32| (a as f32 + (b as f32 - a as f32) * t).round() as u32;
+    for y in top.floor() as i32..(top + h).ceil() as i32 {
+        let t = ((y as f32 + 0.5 - top) / h).clamp(0.0, 1.0);
+        let (a, b) = (c0.0, c1.0);
+        let col = Rgb::new(
+            lerp((a >> 16) & 0xff, (b >> 16) & 0xff, t) as u8,
+            lerp((a >> 8) & 0xff, (b >> 8) & 0xff, t) as u8,
+            lerp(a & 0xff, b & 0xff, t) as u8,
+        );
+        for x in (cx - hw).floor() as i32..(cx + hw).ceil() as i32 {
+            let mut n = 0;
+            for j in 0..4 {
+                for i in 0..4 {
+                    let px = x as f32 + (i as f32 + 0.5) / 4.0;
+                    let py = y as f32 + (j as f32 + 0.5) / 4.0;
+                    let k = (py - top) / h;
+                    if (0.0..=1.0).contains(&k) && (px - cx).abs() <= hw * (1.0 - k) {
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                fb.put(
+                    x,
+                    y,
+                    fb.get(x, y)
+                        .blend(col, (n as f32 / 16.0 * 255.0).round() as u8),
+                );
+            }
+        }
+    }
+}
+
+/// Retail Options plate (130933..130954), content units: an L-shaped
+/// frame whose title strip and five tab boxes are separate rounded boxes
+/// (4.6 px #331f1f outer band r 3.5, 3 px #6c0000 inner band r 4, 7-9 px
+/// gaps left unfilled), a divider (brown 837.2..841.9, red 844.9..847.9)
+/// running to the plate bottom, and the content column outline with
+/// 9.5/7.5 px rounded right corners.  The selected tab opens into the
+/// content column: both divider bands break and its rules run through.
+fn draw_options_plate(fb: &mut Framebuffer, s: CefSpace, rows: &[f32; 5], active: usize) {
+    const TB: f32 = 4.6;
+    const TR: f32 = 3.0;
+    const FILL: f32 = 230.0 / 255.0;
+    let black = Rgb::new(0, 0, 0);
+    let cell = |b: f32| [513.1, b + 16.5, 841.9, b + 103.5];
+    // Fills: content column + title strip, then each tab box.
+    cef_band(
+        fb,
+        s,
+        [500.0, 172.4, 2049.9, 1152.0],
+        9.5,
+        0.0,
+        black,
+        FILL,
+        &[[841.9, 0.0, 3000.0, 1500.0]],
+    );
+    cef_band(
+        fb,
+        s,
+        [513.1, 172.4, 841.9, 355.5],
+        4.5,
+        0.0,
+        black,
+        FILL,
+        &[],
+    );
+    for b in rows {
+        cef_band(fb, s, cell(*b), 4.5, 0.0, black, FILL, &[]);
+    }
+    // Red inner bands.
+    cef_band(
+        fb,
+        s,
+        [520.8, 180.0, 2042.25, 1144.5],
+        10.0,
+        TR,
+        CSS_INNER,
+        1.0,
+        &[[848.9, 0.0, 3000.0, 190.0], [844.9, 190.0, 3000.0, 1500.0]],
+    );
+    cef_band(
+        fb,
+        s,
+        [520.8, 180.0, 851.9, 348.0],
+        5.0,
+        TR,
+        CSS_INNER,
+        1.0,
+        &[
+            [0.0, 0.0, 530.0, 400.0],
+            [0.0, 180.0, 847.9, 183.5],
+            [0.0, 344.5, 847.9, 400.0],
+        ],
+    );
+    for (i, b) in rows.iter().enumerate() {
+        if i == active {
+            cef_band(
+                fb,
+                s,
+                [520.8, b + 24.0, 851.9, b + 96.0],
+                5.0,
+                TR,
+                CSS_INNER,
+                1.0,
+                &[
+                    [0.0, 0.0, 844.5, 2000.0],
+                    [0.0, 0.0, 847.9, b + 27.5],
+                    [0.0, b + 92.5, 847.9, 2000.0],
+                ],
+            );
+        } else {
+            cef_band(
+                fb,
+                s,
+                [520.8, b + 24.0, 841.9, b + 96.0],
+                5.0,
+                TR,
+                CSS_INNER,
+                1.0,
+                &[],
+            );
+        }
+    }
+    let ab = rows[active];
+    for (y0, y1) in [(349.5, ab + 28.0), (ab + 98.0, 1144.5)] {
+        if y1 > y0 {
+            cef_band(fb, s, [844.9, y0, 847.9, y1], 0.0, 0.0, CSS_INNER, 1.0, &[]);
+        }
+    }
+    // Brown outer bands.
+    cef_band(
+        fb,
+        s,
+        [513.1, 172.4, 2049.9, 1152.0],
+        9.5,
+        TB,
+        CSS_OUTER,
+        1.0,
+        &[[530.0, 0.0, 3000.0, 177.5], [837.2, 177.5, 3000.0, 1500.0]],
+    );
+    cef_band(
+        fb,
+        s,
+        [513.1, 172.4, 841.9, 355.5],
+        4.5,
+        TB,
+        CSS_OUTER,
+        1.0,
+        &[[0.0, 0.0, 530.0, 400.0], [0.0, 350.5, 841.9, 400.0]],
+    );
+    for (i, b) in rows.iter().enumerate() {
+        if i == active {
+            let mut c = cell(*b);
+            c[2] = 845.9;
+            cef_band(
+                fb,
+                s,
+                c,
+                4.5,
+                TB,
+                CSS_OUTER,
+                1.0,
+                &[
+                    [0.0, 0.0, 837.2, 2000.0],
+                    [0.0, 0.0, 841.9, b + 21.1],
+                    [0.0, b + 98.9, 841.9, 2000.0],
+                ],
+            );
+        } else {
+            cef_band(fb, s, cell(*b), 4.5, TB, CSS_OUTER, 1.0, &[]);
+        }
+    }
+    for (y0, y1) in [(349.55, ab + 21.1), (ab + 98.0, 1152.0)] {
+        if y1 > y0 {
+            cef_band(fb, s, [837.2, y0, 841.9, y1], 0.0, 0.0, CSS_OUTER, 1.0, &[]);
+        }
+    }
 }
 
 /// Opaque rounded fill (the CEF dialog plates have a 16 px radius at 3x).
@@ -9896,6 +10266,25 @@ impl App {
         self.draw_menu_entries(fb, false);
     }
 
+    /// Options backdrop: the retail CEF modal sits over the *running* main
+    /// menu, so the Single/Multi/Exit clips stay visible under the dim
+    /// (references 130933..130954 show the Exit galaxy and the Multi ship).
+    /// The title frame keeps the main-menu anchor (dx 0), not the 5.55 %
+    /// sub-screen shift: on 130933 the frame's left arm is at x 2170..2250
+    /// of the content box, 142 px left of the shifted art.
+    fn draw_menu_backdrop_live(&mut self, fb: &mut Framebuffer) {
+        self.draw_menu_backdrop_plain(fb);
+        self.draw_menu_detail_art(fb);
+        self.draw_menu_frame(fb, 0, 0);
+        self.draw_menu_clips(fb);
+        // The live menu labels in their idle faces (nothing hovered); the
+        // modal's 149 dim then gives the measured (42,93,22) = 0.416 x
+        // (102,227,53).
+        let hovered = self.main_cursor.take();
+        self.draw_menu_entries(fb, true);
+        self.main_cursor = hovered;
+    }
+
     /// Title-frame surfaces plus the profile name, as every retail front-end
     /// screen shows them behind its panel.
     fn draw_menu_frame_art(&self, fb: &mut Framebuffer, dx: i32, dy: i32) {
@@ -11913,7 +12302,7 @@ impl App {
     /// 93 px cells from y=345, content columns at x=900 and x=1456 (516 px
     /// wide each), Restore/Ok buttons along y=1221..1286.
     fn draw_options(&mut self, fb: &mut Framebuffer) {
-        self.draw_menu_backdrop(fb);
+        self.draw_menu_backdrop_live(fb);
         let tab = match &self.menu_screen {
             MenuScreen::Options { tab } => *tab,
             _ => OptionsTab::Speed,
@@ -11932,127 +12321,50 @@ impl App {
         let dim_text = Rgb::new(150, 150, 155);
         let green = CSS_GREEN;
         let dxw = |p: f32| (cw as f32 * p / 2560.0).round() as i32;
+        let fx = |p: f32| cx as f32 + cw as f32 * p / 2560.0;
+        let fy = |p: f32| ch as f32 * p / 1440.0;
 
-        // Panel plate, measured on the five references:
-        //   5 px #331f1f outer band at 513..2049 / 172..1151,
-        //   3 px black gap, 3 px #6c0000 inner band at 520..2042 /
-        //   180..1144, interior black at alpha 230 (rgba(0,0,0,.9)).
-        // The tab column is only filled down to the last tab (812); below
-        // it the retail plate is transparent and the dimmed space shows.
-        fill_alpha_rect(fb, dx(848.0), dy(183.0), dxw(1191.0), dy(958.0), 230);
-        fill_alpha_rect(fb, dx(524.0), dy(183.0), dxw(313.0), dy(629.0), 230);
-        for t in 0..5 {
-            fb.rect_outline(
-                dx(513.0) + t,
-                dy(173.0) + t,
-                dxw(1537.0) - 2 * t,
-                dy(979.0) - 2 * t,
-                CSS_OUTER,
-            );
-        }
-        for t in 0..3 {
-            fb.rect_outline(
-                dx(521.0) + t,
-                dy(180.0) + t,
-                dxw(1521.0) - 2 * t,
-                dy(964.0) - 2 * t,
-                CSS_INNER,
-            );
-        }
-        if let Some(font) = self.ui_font_hover.as_mut() {
-            font.draw_top_stretched(
-                fb,
-                dx(581.0),
-                dy(240.0),
-                "Options",
-                px(40.0),
-                0.0,
-                1.05,
-                1.06,
-                white,
-                None,
-                0.75,
-            );
-        }
-
-        // Tab cells: 93 px pitch with a raised 24 px lip.  Each lip carries
-        // the same bevel bands as the retail CEF chrome (4 px #331f1f,
-        // 6 px near-black, 4 px #331f1f) and an inner #6c0000 line at +24.
+        // Plate and tab boxes (see `draw_options_plate` for the measured
+        // geometry).  Tab boxes sit on a 93 px pitch.
         let rows = [345.0f32, 438.0, 531.0, 624.0, 717.0];
-        let tx = dx(521.0);
-        let tw = dxw(327.0);
-        let cell_w = dxw(315.0);
         let active_i = OptionsTab::all()
             .iter()
             .position(|t| *t == tab)
             .unwrap_or(0);
-        for (i, row) in rows.iter().enumerate() {
-            let active = i == active_i;
-            // The active cell merges with the content column, so its top,
-            // lip and bottom rules run through to the divider.
-            let line_w = if active { tw } else { cell_w };
-            for off in [0.0f32, 24.0, 93.0] {
-                fb.rect(tx, dy(*row + off), line_w, dy(3.0), CSS_INNER);
-            }
-            // Bevel of the raised lip, left/right black reveals included.
-            fb.rect(tx, dy(*row), dxw(3.0), dy(27.0), Rgb::new(2, 0, 0));
-            fb.rect(
-                tx + dxw(3.0),
-                dy(*row + 6.0),
-                cell_w - dxw(3.0),
-                dy(4.0),
-                CSS_OUTER,
+        let space = CefSpace {
+            cx: cx as f32,
+            kx: cw as f32 / 2560.0,
+            ky: ch as f32 / 1440.0,
+        };
+        draw_options_plate(fb, space, &rows, active_i);
+        // Extended-face text, fitted with the outline rasteriser on 130933:
+        // title 41.5 px/em at pen 581.5 / baseline 267.06; tab labels
+        // 30.05 px/em centred on x 680.0, baseline row + 69.
+        if let Some(font) = self.ui_font_hover.as_mut() {
+            font.draw_cef(
+                fb,
+                fx(581.5),
+                fy(267.06),
+                "Options",
+                px(41.5),
+                0.0,
+                white,
+                white,
             );
-            fb.rect(
-                tx + dxw(3.0),
-                dy(*row + 10.0),
-                cell_w - dxw(3.0),
-                dy(6.0),
-                Rgb::new(4, 1, 1),
-            );
-            fb.rect(
-                tx + dxw(3.0),
-                dy(*row + 16.0),
-                cell_w - dxw(3.0),
-                dy(4.0),
-                CSS_OUTER,
-            );
-        }
-        // Sidebar divider: 4 px #331f1f + 3 px black + 3 px #6c0000.  It is
-        // present through every inactive cell and through the active cell's
-        // lip; the active body opens into the content column.
-        let active_row = rows[active_i];
-        let brown_gap = (active_row + 21.0, active_row + 98.0);
-        let red_gap = (active_row + 29.0, active_row + 98.0);
-        for (x, w, color, gap) in [
-            (838.0f32, 4.0, CSS_OUTER, brown_gap),
-            (845.0, 3.0, CSS_INNER, red_gap),
-        ] {
-            for (y0, y1) in [(350.0f32, gap.0), (gap.1, 1140.0)] {
-                if y1 > y0 {
-                    fb.rect(dx(x), dy(y0), dxw(w), dy(y1 - y0), color);
-                }
-            }
-        }
-        for (i, t) in OptionsTab::all().iter().enumerate() {
-            let cy = dy(rows[i] + 48.0);
-            let active = *t == tab;
-            if let Some(font) = self.ui_font_hover.as_mut() {
-                // No lit rim: the retail CEF face has a flat coverage and
-                // only the body text-shadow.  A rim reads 30-40 % heavier on
-                // the inactive tabs (measured ink 771 vs 578 ... 982 vs 723).
-                font.draw_centered_stretched(
+            for (i, t) in OptionsTab::all().iter().enumerate() {
+                let active = *t == tab;
+                // The first letter is #b4fc74 on every tab
+                // (`::first-letter`); the selected tab is #b4fc74 throughout.
+                let w = font.measure_cef(t.name(), px(30.05), 0.0);
+                font.draw_cef(
                     fb,
-                    dx(679.0),
-                    cy - if active { 0 } else { dy(1.0) },
+                    fx(680.0) - w / 2.0,
+                    fy(rows[i] + 69.0),
                     t.name(),
-                    px(30.0),
+                    px(30.05),
                     0.0,
-                    0.98,
-                    if active { 1.08 } else { 1.05 },
+                    CSS_GREEN_HI,
                     if active { CSS_GREEN_HI } else { green },
-                    None,
-                    if active { 0.85 } else { 1.0 },
                 );
             }
         }
@@ -12091,7 +12403,7 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(899.0),
+                dx(900.0),
                 dy(499.0),
                 "Key Scroll Speed",
                 px(23.5),
@@ -12113,7 +12425,7 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(899.0),
+                dx(900.0),
                 dy(652.0),
                 "Mouse Scroll Speed",
                 px(23.5),
@@ -12161,7 +12473,7 @@ impl App {
             opt_text_right(
                 fb,
                 &mut self.ui_font,
-                right_end + dxw(1.0),
+                right_end,
                 dy(349.0),
                 &format!(
                     "{}%",
@@ -12173,7 +12485,7 @@ impl App {
             for (i, (label, checked, enabled)) in [
                 ("Use Mouse Scaling", self.game_options.mouse_scaling, true),
                 ("Hardware Cursor", self.game_options.hardware_cursor, true),
-                ("Use Mouse Confine", false, false),
+                ("Use Mouse Confine", true, false),
             ]
             .iter()
             .enumerate()
@@ -12216,7 +12528,7 @@ impl App {
                 self.game_options.music_volume.clamp(0.0, 1.0),
                 "min",
                 "max",
-                dy(430.0),
+                dy(429.0),
                 unit,
                 px(20.0),
             );
@@ -12241,7 +12553,7 @@ impl App {
                 self.game_options.sfx_volume.clamp(0.0, 1.0),
                 "min",
                 "max",
-                dy(586.0),
+                dy(585.0),
                 unit,
                 px(20.0),
             );
@@ -12287,8 +12599,8 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(901.0),
-                dy(341.0),
+                dx(900.0),
+                dy(346.0),
                 "Display Mode",
                 px(23.5),
                 CSS_LAVENDER,
@@ -12296,9 +12608,9 @@ impl App {
             opt_help(
                 fb,
                 &mut self.ui_font,
-                dx(1046.0),
-                dy(349.0),
-                dxw(18.0) / 2,
+                fx(1046.0),
+                fy(349.5),
+                9.0 * unit,
                 CSS_LAVENDER,
                 px(23.5),
             );
@@ -12306,9 +12618,8 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 left,
-                dy(374.0),
+                fy(373.5),
                 col_w,
-                dy(44.0),
                 "Windowed (Fullscreen)",
                 true,
                 unit,
@@ -12317,8 +12628,8 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(899.0),
-                dy(447.0),
+                dx(900.0),
+                dy(448.0),
                 "Monitor",
                 px(23.5),
                 CSS_LAVENDER,
@@ -12327,9 +12638,8 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 left,
-                dy(476.0),
+                fy(475.5),
                 col_w,
-                dy(44.0),
                 "1. Default",
                 false,
                 unit,
@@ -12338,7 +12648,7 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 dx(900.0),
-                dy(545.0),
+                dy(550.0),
                 "Gamma Correction",
                 px(23.5),
                 grey,
@@ -12346,9 +12656,9 @@ impl App {
             opt_help(
                 fb,
                 &mut self.ui_font,
-                dx(1102.0),
-                dy(555.0),
-                dxw(18.0) / 2,
+                fx(1105.0),
+                fy(553.5),
+                9.0 * unit,
                 grey,
                 px(23.5),
             );
@@ -12357,7 +12667,7 @@ impl App {
                 &mut self.ui_font,
                 left,
                 left + col_w,
-                dy(600.0),
+                dy(595.0),
                 0.5,
                 "min",
                 "max",
@@ -12437,7 +12747,7 @@ impl App {
                     *checked,
                     true,
                     label,
-                    false,
+                    matches!(*label, "Environment Effects" | "Real-Time Lighting"),
                     px(24.0),
                 );
             }
@@ -12448,7 +12758,7 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(901.0),
+                dx(900.0),
                 dy(346.0),
                 "Gameplay",
                 px(30.0),
@@ -12470,7 +12780,7 @@ impl App {
                     fb,
                     &mut self.ui_font,
                     left,
-                    dy(389.0 + 54.0 * i as f32),
+                    dy(390.0 + 54.0 * i as f32),
                     dxw(29.0),
                     *checked,
                     true,
@@ -12482,19 +12792,18 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(901.0),
-                dy(605.0),
+                dx(900.0),
+                dy(611.0),
                 "Console",
                 px(24.0),
-                white,
+                CSS_LAVENDER,
             );
             opt_dropdown(
                 fb,
                 &mut self.ui_font,
                 left,
-                dy(638.0),
+                fy(638.17),
                 col_w,
-                dy(45.0),
                 "Default",
                 true,
                 unit,
@@ -12502,11 +12811,11 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(901.0),
+                dx(900.0),
                 dy(713.0),
                 "Portraits",
                 px(24.0),
-                white,
+                CSS_LAVENDER,
             );
             for (x, label, selected) in [
                 (900.0f32, "Animated", self.game_options.portraits == 0),
@@ -12529,11 +12838,11 @@ impl App {
             opt_text(
                 fb,
                 &mut self.ui_font,
-                dx(901.0),
+                dx(900.0),
                 dy(830.0),
                 "Mini-Map Position",
                 px(24.0),
-                white,
+                CSS_LAVENDER,
             );
             for (i, (label, selected)) in [
                 ("Left Corner", self.game_options.minimap_position == 0),
@@ -12559,7 +12868,7 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 left,
-                dy(941.0),
+                dy(942.0),
                 dxw(29.0),
                 self.game_options.game_friend_notifications,
                 true,
@@ -12591,7 +12900,7 @@ impl App {
                 &mut self.ui_font,
                 right,
                 dy(422.0),
-                "take effect.",
+                "take effect",
                 px(23.3),
                 CSS_LAVENDER,
             );
@@ -12599,9 +12908,8 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 right,
-                dy(449.0),
+                fy(449.17),
                 col_w,
-                dy(45.0),
                 "English",
                 true,
                 unit,
@@ -12619,7 +12927,7 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 right,
-                dy(597.0),
+                dy(598.0),
                 dxw(29.0),
                 false,
                 true,
@@ -12631,7 +12939,7 @@ impl App {
                 fb,
                 &mut self.ui_font,
                 right,
-                dy(651.0),
+                dy(652.0),
                 dxw(29.0),
                 false,
                 true,
@@ -12653,8 +12961,8 @@ impl App {
             opt_checkbox(
                 fb,
                 &mut self.ui_font,
-                right,
-                dy(705.0),
+                right + dxw(42.0),
+                dy(712.0),
                 dxw(29.0),
                 false,
                 false,
@@ -12665,8 +12973,8 @@ impl App {
             opt_checkbox(
                 fb,
                 &mut self.ui_font,
-                right,
-                dy(759.0),
+                right + dxw(42.0),
+                dy(766.0),
                 dxw(29.0),
                 false,
                 false,
@@ -12706,19 +13014,21 @@ impl App {
             let (px0, py0) = (dx(ix), dy(1221.0));
             let (pw, ph) = (dxw(iw), dy(65.0));
             rounded_band(fb, px0, py0, pw, ph, 4.0 * unit, 0, 3, CSS_INNER);
+            // 30 px/em centred 0.35 px right of the outer box centre,
+            // baseline 41.875 below the inner frame (fitted on 130933
+            // "Restore to Default" / "Ok", tracking as the body text).
             if let Some(font) = self.ui_font_hover.as_mut() {
-                font.draw_centered_stretched(
+                let tr = px(30.0) * CEF_TRACKING;
+                let w = font.measure_cef(label, px(30.0), tr);
+                font.draw_cef(
                     fb,
-                    px0 + pw / 2,
-                    py0 + dy(21.0),
+                    bx as f32 + bw as f32 / 2.0 + px(0.35) - w / 2.0,
+                    py0 as f32 + px(41.875),
                     label,
                     px(30.0),
-                    0.0,
-                    1.0,
-                    1.06,
+                    tr,
+                    CSS_GREEN_HI,
                     green,
-                    None,
-                    0.8,
                 );
             }
         }
@@ -14321,5 +14631,112 @@ mod retail_timing_tests {
         assert!((start - 2.5333).abs() < 0.001, "{start}");
         assert_eq!(frames, 113);
         assert!((duration - 10.762).abs() < 0.01, "{duration}");
+    }
+}
+
+#[cfg(test)]
+mod options_chrome_tests {
+    //! Retail Options chrome (130933..130954) at the 2560x1440 content box.
+    use super::{
+        draw_options_plate, opt_checkbox, opt_dropdown, CefSpace, Framebuffer, Rgb, CSS_INNER,
+        CSS_OUTER,
+    };
+
+    const ROWS: [f32; 5] = [345.0, 438.0, 531.0, 624.0, 717.0];
+    const BG: Rgb = Rgb::new(100, 100, 100);
+
+    fn plate(active: usize) -> Framebuffer {
+        let mut fb = Framebuffer::new(2560, 1440);
+        fb.clear(BG);
+        let space = CefSpace {
+            cx: 0.0,
+            kx: 1.0,
+            ky: 1.0,
+        };
+        draw_options_plate(&mut fb, space, &ROWS, active);
+        fb
+    }
+
+    #[test]
+    fn plate_is_l_shaped_below_the_tab_column() {
+        let fb = plate(0);
+        // Left border of the tab boxes (x 513.1..517.7) stops at y 820.5;
+        // below it the dimmed menu shows through (130954: planet + labels).
+        assert_eq!(fb.get(515, 500), CSS_OUTER);
+        assert_eq!(fb.get(515, 900), BG, "no plate left of the content column");
+        assert_eq!(fb.get(700, 1149), BG, "bottom band starts at x 837");
+        assert_eq!(fb.get(1000, 1149), CSS_OUTER);
+        // The content column keeps its own divider down to the bottom.
+        assert_eq!(fb.get(839, 1000), CSS_OUTER);
+        assert_eq!(fb.get(846, 1000), CSS_INNER);
+    }
+
+    #[test]
+    fn gaps_between_tab_boxes_are_left_unfilled() {
+        let fb = plate(0);
+        // 355.5..361.5 separates the title strip from the Speed box.
+        assert_eq!(fb.get(700, 358), BG, "gap must not be filled");
+        assert_ne!(fb.get(700, 300), BG, "title strip is filled");
+        assert_ne!(fb.get(700, 400), BG, "tab box is filled");
+    }
+
+    #[test]
+    fn selected_tab_opens_both_divider_bands() {
+        // Network (row 717) selected: the divider breaks at y ~780.
+        let open = plate(4);
+        assert_ne!(open.get(839, 780), CSS_OUTER);
+        assert_ne!(open.get(846, 780), CSS_INNER);
+        let closed = plate(0);
+        assert_eq!(closed.get(839, 780), CSS_OUTER);
+        assert_eq!(closed.get(846, 780), CSS_INNER);
+    }
+
+    #[test]
+    fn disabled_checked_checkbox_is_grey() {
+        // 130933 "Use Mouse Confine": #404040 ring and a #808080 mark.
+        let mut fb = Framebuffer::new(64, 64);
+        fb.clear(Rgb::new(0, 0, 0));
+        opt_checkbox(&mut fb, &mut None, 10, 10, 29, true, false, "", false, 24.0);
+        assert_eq!(fb.get(25, 25), Rgb::new(128, 128, 128), "grey mark");
+        assert_eq!(fb.get(11, 25), Rgb::new(64, 64, 64), "grey ring");
+        let mut on = Framebuffer::new(64, 64);
+        on.clear(Rgb::new(0, 0, 0));
+        opt_checkbox(&mut on, &mut None, 10, 10, 29, true, true, "", false, 24.0);
+        assert_eq!(on.get(25, 25), Rgb::new(0xfc, 0xfc, 0x4c), "yellow mark");
+        assert_eq!(on.get(11, 25), CSS_INNER, "red ring");
+    }
+
+    #[test]
+    fn checkbox_mark_has_a_soft_glow_edge() {
+        // The CEF mark ramps over ~3.7 px (130933: 0.07/0.33/0.6/0.87/1.0).
+        let mut fb = Framebuffer::new(64, 64);
+        fb.clear(Rgb::new(0, 0, 0));
+        opt_checkbox(&mut fb, &mut None, 10, 10, 29, true, true, "", false, 24.0);
+        // Box 9.7..39.6 -> mark 50 % edge at x 17.2; ramp over 16..18.
+        let g = |x: i32| (fb.get(x, 25).0 >> 8) & 0xff;
+        assert!(
+            g(15) < g(16) && g(16) < g(17) && g(17) < g(18) && g(18) < g(19),
+            "ramp"
+        );
+        assert!(
+            g(17) > 80 && g(17) < 200,
+            "partial coverage at the edge: {}",
+            g(17)
+        );
+    }
+
+    #[test]
+    fn enabled_dropdown_has_the_yellow_chevron_and_no_chevron_when_disabled() {
+        let mut fb = Framebuffer::new(560, 80);
+        fb.clear(Rgb::new(0, 0, 0));
+        opt_dropdown(&mut fb, &mut None, 20, 10.0, 516, "", true, 1.0);
+        // Chevron centre 25.9 px left of the right edge, near its apex row.
+        let c = fb.get(20 + 516 - 26, 10 + 16 + 12);
+        let (r, g, b) = ((c.0 >> 16) & 0xff, (c.0 >> 8) & 0xff, c.0 & 0xff);
+        assert!(r > 150 && g > 150 && b < 40, "yellow chevron: {r},{g},{b}");
+        let mut off = Framebuffer::new(560, 80);
+        off.clear(Rgb::new(0, 0, 0));
+        opt_dropdown(&mut off, &mut None, 20, 10.0, 516, "", false, 1.0);
+        assert_eq!(off.get(20 + 516 - 26, 10 + 16 + 12), Rgb::new(0, 0, 0));
     }
 }

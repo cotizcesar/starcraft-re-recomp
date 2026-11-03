@@ -112,7 +112,12 @@ capas regeneradas, `ui_diff` 39/39).
     Multi/Exit a 10.5 fps (151 frames = 14.381 s; 105 = 10.0 s, sin
     corte).  Options rehecho contra 130933/130938/130942/130949/130954:
     pestañas, sliders de 7 topes, checkboxes con discos, dropdowns,
-    radios, input `60` y botones a 0-2 px.  Evidencia:
+    radios, input `60` y botones a 0-2 px.  Sesión 70 (2026-11-02): placa
+    en L con cajas sub-píxel, controles antialiasados medidos, menú vivo
+    bajo el modal (clips, marco dx 0, etiquetas idle) y texto con el
+    rasterizador de contorno CEF (`UiFont::draw_cef`): crudo 0.71-1.08 de
+    media (antes 1.89-2.95); prueba `engine-rust/docs/options-1to1-proof.png`.
+    Evidencia:
     `engine-rust/docs/hotkeys-live-proof-{units,states}.png` y
     `research/docs/hotkeys-data.md`.
     Registry se alcanza por Single → GameType → Original y su Ok lleva a

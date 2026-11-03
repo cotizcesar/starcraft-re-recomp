@@ -3424,3 +3424,30 @@ Options/Speed fullscreen para inspección.
 Queda cerrado el objetivo de Options 1:1: las cinco capturas de referencia
 están cubiertas, el layout no se rompe al maximizar y la evidencia en vivo
 coincide con la puerta.
+
+## 2026-11-02 (70) — Options: rasterizado CEF, chrome sub-píxel, menú vivo
+
+Falsación de la entrada (69): "Options 1:1, el residuo es solo antialias y
+fase de vídeo" no era cierto.  Con un detector de bloques (diff difuminado
+5 px, celdas de 16 px) y volcados de píxeles se encontraron errores
+estructurales: placa rectangular (retail es una L con cajas separadas y
+huecos sin relleno), marco del título desplazado 142 px, clips del menú
+ausentes bajo el modal, etiquetas del menú con paleta propia, controles
+aliased y con radios/tamaños distintos, Monitor con flecha, dos discos de
+ayuda ausentes, colores de etiqueta, un punto de más y filas de 1-5 px.
+
+Texto: el desenfoque era el desplazamiento bilineal del bitmap de fontdue,
+no su antialias.  Nuevo `UiFont::draw_cef` (contorno `ttf-parser`, área
+exacta no-cero, contraste `1-(1-a)^1.2`, posición sub-píxel).  Ajustado con
+un prototipo fontTools sobre las capturas (error 0.102 → 0.027-0.05 por
+texto).  Falsado: hinting vertical, kerning GPOS, avances enteros y
+redondeo por DSF (detalle en `engine-rust/docs/ui-alignment.md`, sesión 70).
+
+Resultado crudo (media / >30 px): speed 2.19→0.82, sound 2.25→0.92, video
+2.52→0.93, game 2.95→1.08, network 1.89→0.71.  Las `.gcal` de Options eran
+del render viejo (empeoraban a 4.7-5.1) y se apartaron a
+`fixtures/calibration/stale-options-pre-cef/`.  El walkthrough compara
+Options fuera de los rectángulos de clip (el reloj real de los clips hace
+que dos ejecuciones difieran 0.041).  `cargo test` 342/342, clippy 0,
+`ui_diff.py` 39/39, puerta 19/19 cruda y calibrada, walkthrough PASS.
+Prueba: `engine-rust/docs/options-1to1-proof.png`.
