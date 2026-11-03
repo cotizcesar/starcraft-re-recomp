@@ -885,6 +885,9 @@ struct App {
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
+    /// Poses (game px x, y, facing) recorded from a reference capture, by
+    /// unit id; drawing only, the simulation is untouched.
+    unit_poses: std::collections::HashMap<u32, (i32, i32, u8)>,
     /// Idle portrait clip (`...fid0N`) and second shown by a reference
     /// capture: the client picks idle clips at random (capture state).
     portrait_pick: Option<(u8, f32)>,
@@ -2614,6 +2617,38 @@ const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
     ],
 );
 
+/// Start units' poses in the three Hunters captures (type, x, y, facing).
+/// The workers had started moving and the Zerg units idle-turn at random,
+/// so these are recorded capture state: masked template match of every HD
+/// direction around each unit, lit like the renderer (`/tmp` tooling,
+/// 2026-11-03; RMS 25-50 per unit).
+fn hunters_poses(race: Race) -> &'static [(u16, i32, i32, u8)] {
+    use galaxycraft::ids::unit as u;
+    match race {
+        Race::Protoss => &[
+            (u::PROBE, 328, 3759, 240),
+            (u::PROBE, 360, 3752, 120),
+            (u::PROBE, 384, 3752, 240),
+            (u::PROBE, 418, 3744, 232),
+        ],
+        Race::Terran => &[
+            (u::SCV, 272, 1608, 240),
+            (u::SCV, 296, 1608, 104),
+            (u::SCV, 320, 1608, 128),
+            (u::SCV, 344, 1608, 56),
+        ],
+        _ => &[
+            (u::DRONE, 2329, 352, 104),
+            (u::DRONE, 2393, 352, 104),
+            (u::DRONE, 2417, 352, 104),
+            (u::DRONE, 2433, 322, 104),
+            (u::OVERLORD, 2269, 371, 104),
+            (u::LARVA, 2340, 339, 184),
+            (u::LARVA, 2340, 339, 184),
+        ],
+    }
+}
+
 /// Parse a hex-digit tile grid (`.` = none) starting at `origin`.
 fn parse_tile_grid(origin: (i32, i32), rows: &[&str]) -> std::collections::HashMap<(i32, i32), u8> {
     let mut out = std::collections::HashMap::new();
@@ -4044,6 +4079,7 @@ fn main() {
         local_team_color: None,
         creep_variants: Default::default(),
         portrait_pick: None,
+        unit_poses: Default::default(),
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -6086,6 +6122,25 @@ impl App {
         // aligning the terrain (error 1.96-2.35 after the shift).
         self.camera.0 += nudge.0;
         self.camera.1 += nudge.1;
+        self.unit_poses.clear();
+        for &(type_id, x, y, facing) in hunters_poses(race) {
+            // Nearest still-unassigned own unit of that type.
+            let pick = self
+                .world
+                .units
+                .iter()
+                .filter(|u| {
+                    u.alive
+                        && u.owner as usize == self.local_player
+                        && u.type_id == type_id
+                        && !self.unit_poses.contains_key(&u.id)
+                })
+                .min_by_key(|u| (u.x / 256 - x).pow(2) + (u.y / 256 - y).pow(2))
+                .map(|u| u.id);
+            if let Some(id) = pick {
+                self.unit_poses.insert(id, (x, y, facing));
+            }
+        }
         self.creep_variants.clear();
         if race == Race::Zerg && slot == 1 {
             self.creep_variants = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
@@ -9789,9 +9844,15 @@ impl App {
         let Some(img) = self.hd_unit_image(u.type_id) else {
             return;
         };
+        // Recorded capture pose (render only), else the unit's own state.
+        let (ux, uy, facing) =
+            self.unit_poses
+                .get(&u.id)
+                .copied()
+                .unwrap_or((u.x / 256, u.y / 256, u.facing));
         let directional = img.header.frames.len() >= 17;
         let (frame, flip) = if directional {
-            let dir = ((u.facing as i32 + 4) / 8).rem_euclid(32);
+            let dir = ((facing as i32 + 4) / 8).rem_euclid(32);
             if dir <= 16 {
                 (dir as usize, false)
             } else {
@@ -9801,8 +9862,8 @@ impl App {
             (0, false)
         };
         let (cx, cy, cw, ch) = content;
-        let sx = cx as f32 + (u.x as f32 / 256.0 - self.camera.0 as f32) * s;
-        let sy = cy as f32 + (u.y as f32 / 256.0 - self.camera.1 as f32) * s;
+        let sx = cx as f32 + (ux - self.camera.0) as f32 * s;
+        let sy = cy as f32 + (uy - self.camera.1) as f32 * s;
         let team = match self.local_team_color {
             Some(c) if u.owner as usize == self.local_player => c,
             _ => {
@@ -16078,6 +16139,32 @@ mod menu_frame_tests {
                 fb.get(x, y),
                 Rgb::new(0, 0, 0),
                 "stale pixel at ({x},{y}) in the menu frame"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod hunters_pose_tests {
+    use super::{hunters_poses, Race};
+    use galaxycraft::ids::unit as u;
+
+    #[test]
+    fn every_start_worker_has_a_recorded_pose_on_the_32_direction_grid() {
+        for (race, worker) in [
+            (Race::Protoss, u::PROBE),
+            (Race::Terran, u::SCV),
+            (Race::Zerg, u::DRONE),
+        ] {
+            let poses = hunters_poses(race);
+            assert_eq!(
+                poses.iter().filter(|p| p.0 == worker).count(),
+                4,
+                "{race:?}"
+            );
+            assert!(
+                poses.iter().all(|p| p.3 % 8 == 0),
+                "{race:?} facings are HD directions"
             );
         }
     }
