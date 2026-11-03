@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Exporta el inventario de funciones del programa actual a CSV.
+"""Export the current program's function inventory to CSV.
 
-Uso (headless):
+Usage (headless):
   analyzeHeadless <projdir> <proj> -process <exe> -noanalysis \
-    -scriptPath ~/ReverseEngineering/tools -postScript ghidra_export_functions.py <salida.csv>
+    -scriptPath research/tools -postScript ghidra_export_functions.py <output.csv>
 """
 import csv
 

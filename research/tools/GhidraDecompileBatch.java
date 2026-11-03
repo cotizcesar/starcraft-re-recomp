@@ -9,10 +9,10 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 
 /**
- * Decompila una lista de direcciones y vuelca el pseudocodigo a <salidaDir>/<addr>.c.
- * Uso (headless, con analisis ya guardado):
+ * Decompiles a list of addresses and dumps the pseudocode to <outputDir>/<addr>.c.
+ * Usage (headless, with analysis already saved):
  *   analyzeHeadless <projdir> <proj> -process <exe> -noanalysis
- *     -scriptPath ~/ReverseEngineering/tools -postScript GhidraDecompileBatch.java <salidaDir> <addr1> [<addr2> ...]
+ *     -scriptPath research/tools -postScript GhidraDecompileBatch.java <outputDir> <addr1> [<addr2> ...]
  */
 public class GhidraDecompileBatch extends GhidraScript {
 
@@ -20,7 +20,7 @@ public class GhidraDecompileBatch extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            printerr("Uso: GhidraDecompileBatch.java <salidaDir> <addr1> ...");
+            printerr("Usage: GhidraDecompileBatch.java <outputDir> <addr1> ...");
             return;
         }
         String outDir = args[0];

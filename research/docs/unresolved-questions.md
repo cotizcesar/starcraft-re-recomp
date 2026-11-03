@@ -1,23 +1,23 @@
-# Preguntas sin resolver
+# Unresolved questions
 
-1. Dump de la imagen descifrada: EXISTE y es válido
-   (`work/sc_mem_menu_pe.exe`, 17 620 992 B, `.text` entropía 6.8950 vs 7.9997
-   en disco; estado menú, 37 561 strings). Lo que falta es un dump en juego
-   (post-inicialización): ¿recapturar vía Lutris + `/proc/<pid>/mem` con
-   autorización? (P0 — amplía Fase 2/4, no la bloquea por completo.)
-2. REA MCP sobre el dump: `binary_overview` da `provider_timeout` determinista
-   (Ghidra startup deadline; ver `docs/blockers.md`). Vía alternativa:
-   `analyzeHeadless` directo en curso (`logs/ghidra-dump-analysis.log`). (P0.)
-2. Variante x86-64: **confirmada como mismo engine** (P1 → P3). 17 216
-   cadenas compartidas con el dump de 32 bits, marcadores idénticos
-   (`analysis/discovery/dump-manifest.md`). Queda comparar lógica
-   (pendiente de análisis Ghidra de ambos dumps).
-3. `Bootstrapper.pdb` del lanzador: ¿PDB del juego disponible en memoria?
-   Verificar símbolos tras dump. (P2.)
-4. `.idx`/`.index` clasificados `desconocido` en el inventario: renombrar a
-   "índice CASC" en la próxima regeneración del inventario. (P3.)
-5. Multijugador/Battle.net: fuera de alcance offline; solo documentar límites.
+1. Dump of the decrypted image: it EXISTS and is valid
+   (`work/sc_mem_menu_pe.exe`, 17 620 992 B, `.text` entropy 6.8950 vs 7.9997
+   on disk; menu state, 37 561 strings). What is missing is an in-game dump
+   (post-initialization): recapture via Lutris + `/proc/<pid>/mem` with
+   authorization? (P0 — extends Phase 2/4, does not fully block it.)
+2. REA MCP on the dump: `binary_overview` gives a deterministic `provider_timeout`
+   (Ghidra startup deadline; see `docs/blockers.md`). Alternative path:
+   direct `analyzeHeadless` in progress (`logs/ghidra-dump-analysis.log`). (P0.)
+2. x86-64 variant: **confirmed as the same engine** (P1 → P3). 17 216
+   strings shared with the 32-bit dump, identical markers
+   (`analysis/discovery/dump-manifest.md`). Logic comparison remains
+   (pending Ghidra analysis of both dumps).
+3. Launcher `Bootstrapper.pdb`: is the game's PDB available in memory?
+   Check symbols after the dump. (P2.)
+4. `.idx`/`.index` classified `unknown` in the inventory: rename to
+   "CASC index" in the next inventory regeneration. (P3.)
+5. Multiplayer/Battle.net: out of offline scope; only document limits.
    (P3.)
-6. Diferencia CLI `opencode mcp list` según cwd ("No MCP servers configured"
-   desde `~/ReverseEngineering` vs 4/4 connected desde el repo): ¿config por
-   proyecto? No bloquea (la sesión MCP funciona), pero documentar causa. (P3.)
+6. `opencode mcp list` CLI difference depending on cwd ("No MCP servers configured"
+   from `research/` vs 4/4 connected from the repo): per-project
+   config? Not blocking (the MCP session works), but document the cause. (P3.)

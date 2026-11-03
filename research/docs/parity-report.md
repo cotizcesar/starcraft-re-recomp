@@ -1,10 +1,10 @@
-# Informe de paridad visual (44 referencias)
+# Visual parity report (44 references)
 
-Métrica: diferencia absoluta media por canal (0..255) entre nuestro
-render headless a 3440x1440 y la captura retail correspondiente.
-Menor es mejor; 0 sería idéntico (imposible con distinto estado de mapa).
+Metric: mean absolute per-channel difference (0..255) between our
+headless render at 3440x1440 and the corresponding retail capture.
+Lower is better; 0 would be identical (impossible with a different map state).
 
-| # | Referencia | Nuestra pantalla | mean\|diff\| |
+| # | Reference | Our screen | mean\|diff\| |
 |---:|---|---|---:|
 | 1 | Screenshot_20261027_130637.png | menu | 4.34 |
 | 2 | Screenshot_20261027_130704.png | menu | 4.88 |
@@ -51,4 +51,4 @@ Menor es mejor; 0 sería idéntico (imposible con distinto estado de mapa).
 | 43 | Screenshot_20261027_135114.png | ingame-protoss | 17.85 |
 | 44 | Screenshot_20261027_135121.png | ingame-protoss | 17.94 |
 
-Cubiertas: **44/44**. Media global **11.19**, mejor **2.86**, peor **20.95**.
+Covered: **44/44**. Global mean **11.19**, best **2.86**, worst **20.95**.

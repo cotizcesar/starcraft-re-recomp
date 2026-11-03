@@ -1,39 +1,39 @@
-# Save/Load + Replays — diseño (P0, comparte infra con LAN)
+# Save/Load + Replays — design (P0, shares infra with LAN)
 
-Decisión: **command-log + fast-forward**, no snapshot de `World`.
-Motivo: `World` contiene `Arc<GameData>`, cachés (`index`, `obstacles`),
-scratch y RNG; el sim es determinista (LCG) y `World::issue` es el único
-punto de entrada de órdenes (jugador en `sc_view.rs`, IA en `ai.rs`).
-Guardar = estado inicial + comandos; cargar = reconstruir y reejecutar.
+Decision: **command-log + fast-forward**, not a `World` snapshot.
+Reason: `World` contains `Arc<GameData>`, caches (`index`, `obstacles`),
+scratch and RNG; the sim is deterministic (LCG) and `World::issue` is the only
+entry point for orders (player in `sc_view.rs`, AI in `ai.rs`).
+Save = initial state + commands; load = rebuild and re-execute.
 
-## Formato `.gcsave` / `.gcrep` (binario, magic + versión)
+## `.gcsave` / `.gcrep` format (binary, magic + version)
 
 - `GCS1` magic u32 + version u16.
-- seed u64, map_hash (sha256 CHK) 32 B, setup (razas, slots, tick base).
-- cmds: `[(tick u64, unit u32, order Order)]`, `Order` con discriminante u8
-  + campos manuales (sin serde: estable entre versiones).
-- checksum final (detección de corrupción/desync).
+- seed u64, map_hash (sha256 CHK) 32 B, setup (races, slots, base tick).
+- cmds: `[(tick u64, unit u32, order Order)]`, `Order` with a u8 discriminant
+  + manual fields (no serde: stable across versions).
+- final checksum (corruption/desync detection).
 
-## Restaurar
+## Restore
 
-`World::from_scenario` + aplicar cmds por tick hasta T. Medido:
-5 000 ticks en ~12 s wall (release) → partida 20 min (~28 800 ticks)
-carga en ~70 s. Aceptable con aviso; el snapshot total queda descartado
-por invasivo (cachés/`Arc`/scratch).
+`World::from_scenario` + apply cmds per tick up to T. Measured:
+5 000 ticks in ~12 s wall (release) → a 20 min game (~28 800 ticks)
+loads in ~70 s. Acceptable with a notice; the full snapshot is discarded
+as too invasive (caches/`Arc`/scratch).
 
-## Reutilización
+## Reuse
 
-- Replays: el mismo log (+ cabecera de resultado). Reproductor = mismo
-  fast-forward con pausa/velocidad.
-- LAN: solo comandos humanos por turno + checksum periódico de estado
-  (`sc_state_hash` existe en `sc-c`; portar idea a Rust). Ver
+- Replays: the same log (+ result header). Player = same
+  fast-forward with pause/speed.
+- LAN: only human commands per turn + periodic state checksum
+  (`sc_state_hash` exists in `sc-c`; port the idea to Rust). See
   `research/docs/lan-protocol.md`.
-- Hook: `World::issue` con grabador opcional (`Option<Recorder>`, coste
-  cero si ausente). La IA también pasa por `issue`: sus comandos se
-  graban igual (deterministas, sin daño).
+- Hook: `World::issue` with an optional recorder (`Option<Recorder>`, zero
+  cost if absent). The AI also goes through `issue`: its commands are
+  recorded the same way (deterministic, harmless).
 
-## Aceptación P0
+## P0 acceptance
 
-Guardar a mitad de misión, salir, cargar, continuar idéntico (hash de
-estado igual al de la sesión original en el mismo tick); replay que
-reproduce el mismo resultado; perfil/campaña persistidos en disco.
+Save mid-mission, quit, load, continue identically (state hash
+equal to the original session's at the same tick); a replay that
+reproduces the same result; profile/campaign persisted to disk.

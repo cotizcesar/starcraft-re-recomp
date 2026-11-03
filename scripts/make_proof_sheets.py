@@ -66,7 +66,7 @@ def sheet(ref: Image.Image, ours: Image.Image, title: str, out: Path) -> tuple[f
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--install", required=True)
-    ap.add_argument("--out", default=str(ROOT / "engine-rust/docs/new_screenshots"))
+    ap.add_argument("--out", default=str(ROOT / "engine-rust/docs/proof-sheets"))
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

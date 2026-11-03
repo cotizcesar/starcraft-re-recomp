@@ -1,53 +1,53 @@
-# Identificación del motor — evidencias
+# Engine identification — evidence
 
-Estado: **motor propietario Blizzard (StarCraft 1.23 “classic”)** — hipótesis
-principal con evidencia convergente; no se descarta que el ejecutable de 64 bits
-sea una variante del mismo engine recompilada.
+Status: **proprietary Blizzard engine (StarCraft 1.23 “classic”)** — main
+hypothesis with converging evidence; it is not ruled out that the 64-bit executable
+is a recompiled variant of the same engine.
 
-## Evidencia observada
+## Observed evidence
 
-| # | Observación | Comando / fuente | Interpretación |
+| # | Observation | Command / source | Interpretation |
 |---|---|---|---|
-| E1 | `x86/StarCraft.exe` es `PE32 i386`, 12 820 096 B, 7 secciones | `file`, `objdump -h` | Binario nativo Win32 x86, sin runtime administrado |
-| E2 | `x86_64/StarCraft.exe` es `PE32+ x86-64`, 15 734 912 B, 8 secciones (con `.pdata`) | `file`, `objdump -h` | Segunda variante nativa de 64 bits |
-| E3 | `.text` con **entropía 8.000** en ambos binarios; `.rdata` en texto plano | cálculo propio sobre offsets de sección | El código está **cifrado/comprimido en disco**; los datos no |
-| E4 | Cadenas en claro: `scripts\iscript.bin`, `scripts\aiscript.bin`, `glue\battle.net\`, `font\BLIZZARD-REGULAR.ttf`, `us.actual.battle.net` | extracción de strings | Nombres de recursos y del propio motor clásico (iscript/aiscript son formatos de StarCraft) |
-| E5 | `Data/data/data.000…005` (~5,4 GB) + `*.idx` + `Data/indices` + `Data/config` | `find`, `du`, `.build.info` | Almacenamiento **CASC** de Blizzard, no MPQ en disco |
-| E6 | `Data/config/44/...` contiene `# Patch Configuration` con `patch-entry = download <hash> <size> …` | lectura del archivo | Metadatos de CDN/parcheo de Blizzard |
-| E7 | `.build.info`: `Version = 1.23.10.13515`, `Product = …`, CDN `level3.blizzard.com` | lectura | Build exacto identificado |
-| E8 | `Maps/*.scm` (163) y `Maps/*.scx` (160) | inventario | Mapas en formato MPQ clásico con `staredit\scenario.chk` |
-| E9 | `StarCraft Launcher.exe` + `x86*/cef/` + `SceneCefBrowser.exe` | inventario | La **UI de lanzamiento** es Chromium Embedded Framework; el juego no |
-| E10 | Sin rastros de `UnityEngine`, `il2cpp`, `UnrealEngine`, `GodotEngine`, `mscorlib`/`BSJB` en los ejecutables del juego | búsqueda de marcadores | Descarta Unity (Mono/IL2CPP), Unreal, Godot y .NET para el juego |
+| E1 | `x86/StarCraft.exe` is `PE32 i386`, 12 820 096 B, 7 sections | `file`, `objdump -h` | Native Win32 x86 binary, no managed runtime |
+| E2 | `x86_64/StarCraft.exe` is `PE32+ x86-64`, 15 734 912 B, 8 sections (with `.pdata`) | `file`, `objdump -h` | Second native 64-bit variant |
+| E3 | `.text` with **entropy 8.000** in both binaries; `.rdata` in plain text | own computation over section offsets | The code is **encrypted/compressed on disk**; the data is not |
+| E4 | Cleartext strings: `scripts\iscript.bin`, `scripts\aiscript.bin`, `glue\battle.net\`, `font\BLIZZARD-REGULAR.ttf`, `us.actual.battle.net` | string extraction | Resource names and names of the classic engine itself (iscript/aiscript are StarCraft formats) |
+| E5 | `Data/data/data.000…005` (~5.4 GB) + `*.idx` + `Data/indices` + `Data/config` | `find`, `du`, `.build.info` | Blizzard **CASC** storage, not MPQ on disk |
+| E6 | `Data/config/44/...` contains `# Patch Configuration` with `patch-entry = download <hash> <size> …` | reading the file | Blizzard CDN/patching metadata |
+| E7 | `.build.info`: `Version = 1.23.10.13515`, `Product = …`, CDN `level3.blizzard.com` | reading | Exact build identified |
+| E8 | `Maps/*.scm` (163) and `Maps/*.scx` (160) | inventory | Maps in classic MPQ format with `staredit\scenario.chk` |
+| E9 | `StarCraft Launcher.exe` + `x86*/cef/` + `SceneCefBrowser.exe` | inventory | The **launcher UI** is Chromium Embedded Framework; the game is not |
+| E10 | No traces of `UnityEngine`, `il2cpp`, `UnrealEngine`, `GodotEngine`, `mscorlib`/`BSJB` in the game executables | marker search | Rules out Unity (Mono/IL2CPP), Unreal, Godot and .NET for the game |
 
-## Hipótesis y contraste
+## Hypotheses and testing
 
-- **H1 (principal): motor propietario de StarCraft, C/C++ nativo x86 + x86-64, recursos vía CASC.**
-  Evidencia: E1–E9. Explica los formatos (iscript/aiscript/CHK), el lanzador CEF y la
-  ausencia total de marcadores de motores comerciales.
-- **H2: build “Remastered-adjacent” con doble binario (32 y 64 bits) y código protegido.**
-  Evidencia a favor: dos ejecutables, ambos con `.text` de entropía máxima. A favor del
-  mismo engine: las cadenas de recursos son idénticas en ambos.
-- **H3 (descartada): Unity/Unreal/Godot.** Sin marcadores; además los formatos de datos
-  son los de StarCraft clásico.
-- **H4 (parcial, no del juego): Electron/CEF en el lanzador.** Solo `SceneCefBrowser.exe`
-  y `*.pak` de CEF; es la capa de UI/menú, no el motor del juego.
+- **H1 (main): proprietary StarCraft engine, native C/C++ x86 + x86-64, resources via CASC.**
+  Evidence: E1–E9. Explains the formats (iscript/aiscript/CHK), the CEF launcher and the
+  complete absence of commercial-engine markers.
+- **H2: “Remastered-adjacent” build with dual binaries (32 and 64 bits) and protected code.**
+  Evidence for: two executables, both with maximum-entropy `.text`. In favor of the
+  same engine: the resource strings are identical in both.
+- **H3 (rejected): Unity/Unreal/Godot.** No markers; furthermore the data formats
+  are those of classic StarCraft.
+- **H4 (partial, not the game): Electron/CEF in the launcher.** Only `SceneCefBrowser.exe`
+  and CEF `*.pak` files; it is the UI/menu layer, not the game engine.
 
-## Consecuencia técnica crítica
+## Critical technical consequence
 
-El código está cifrado en reposo (E3). Por tanto:
+The code is encrypted at rest (E3). Therefore:
 
-1. Desensamblar `on-disk` con Ghidra produce basura (entropía 8.0 no es código).
-2. El camino válido es una **instantánea de solo lectura de la imagen en memoria**
-   del proceso en ejecución (`/proc/<pid>/mem` vía Proton), o localizar la rutina de
-   descifrado. El trabajo previo en `~/Documents/galaxycraft` ya hizo esto: el proceso
-   de 32 bits se mapea en `0x79fa0000` y se obtuvo una imagen de 17 620 992 B con
-   `.text` descifrado y analizable.
-3. No se ha intentado eludir ninguna protección: solo se lee memoria del propio
-   proceso legítimo del usuario, en su máquina, para análisis.
+1. Disassembling `on-disk` with Ghidra produces garbage (entropy 8.0 is not code).
+2. The valid path is a **read-only snapshot of the in-memory image**
+   of the running process (`/proc/<pid>/mem` via Proton), or locating the
+   decryption routine. Earlier work (in the former `~/Documents/galaxycraft` path, now this repo) already did this: the
+   32-bit process is mapped at `0x79fa0000` and a 17 620 992 B image was obtained with
+   decrypted, analyzable `.text`.
+3. No attempt was made to bypass any protection: only the memory of the user's own
+   legitimate process is read, on their machine, for analysis.
 
-## Siguiente experimento que discrimina
+## Next discriminating experiment
 
-Con la imagen volcada, `mcp__rea__binary_overview` sobre el dump debe devolver
-funciones con nombres de unwind/PDB y no basura. Si el dump también sale con entropía
-8.0, la copia se tomó antes del descifrado (o desde una región equivocada) y hay que
-repetir la captura tras la inicialización del motor.
+With the dumped image, `mcp__rea__binary_overview` on the dump should return
+functions with unwind/PDB names and not garbage. If the dump also comes out with entropy
+8.0, the copy was taken before decryption (or from a wrong region) and the
+capture must be repeated after engine initialization.

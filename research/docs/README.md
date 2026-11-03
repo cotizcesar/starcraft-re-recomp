@@ -1,38 +1,39 @@
-# research/docs — índice
+# research/docs — index
 
-Orden de lectura para una sesión nueva. Canónicos vigentes; `archive/`
-es histórico (citado por el session-log, no usar como referencia).
+Reading order for a new session. Current canonical docs. Docs under
+`../analysis/investigations/` and `rea-evidence-c.md` are local-only (gitignored).
 
-## Entrada (leer primero)
+## Entry (read first)
 
-| Doc | Qué es |
+| Doc | What it is |
 |---|---|
-| `PROJECT-STATUS.md` | Estado vivo del proyecto (objetivo, fase, pendientes) |
-| `architecture.md` | Mapa verificado del binario (puerta, WndProc, sim, nuke) |
-| `../../AGENTS.md` §5 | Reglas REA/Ghidra |
-| `blockers.md` | Bloqueos activos y vías alternativas |
+| [`../../PROGRESS.md`](../../PROGRESS.md) | Community-facing progress with percentages (single source of truth for %) |
+| `PROJECT-STATUS.md` | Live project status (goal, phase, pending items) |
+| `architecture.md` | Verified map of the binary (gate, WndProc, sim, nuke) |
+| `../../AGENTS.md` §5 | REA/Ghidra rules |
+| `blockers.md` | Active blockers and alternative paths |
 
-## Por tema
+## By topic
 
-| Tema | Doc |
+| Topic | Doc |
 |---|---|
-| Toolchain + reglas de uso REA | `toolchain.md` |
-| Integración REA↔OpenCode (E2E PASS) | `rea-opencode-integration.md` |
-| Capacidades observadas por proveedor | `rea-capabilities.md`, `tool-capability-matrix.md` |
-| Errores de herramientas (timeouts, JDK) | `tool-errors.md` |
-| Plataforma/ejecutables/CASC | `runtime-and-platform.md` |
-| Inventario del juego (724 archivos) | `file-inventory.md` |
-| Formatos y sus lectores | `format-coverage.md` |
-| Estrategia de análisis | `analysis-strategy.md` |
-| Protocolo LAN | `lan-protocol.md` |
-| Paridad visual vs retail | `gap-audit.md`, `parity-report.md`, `graphics-remastered.md` |
-| Datos completos de Hotkeys (220 acciones, 88 unidades) | `hotkeys-data.md` |
-| Hallazgos de heap en partida | `heap-ingame-findings.md` |
-| RE de episodios + modal de misión (1:1, 43/43) | `../analysis/investigations/episode-screen-re.md` |
-| RE de las pantallas CEF (Registry/Collections/Saved/Replays/Lobby, 43/43) | `../analysis/investigations/cef-screens-re.md` |
-| Decisiones con fecha | `decision-log.md` |
-| Preguntas abiertas | `unresolved-questions.md` |
-| Motor C eliminado (histórico) | `rea-evidence-c.md`, `salvage-sc-cpp.md`, `../SALVAGED.md`, `../re-c.bundle` |
-| Bitácora append-only | `session-log.md` |
-| Entorno Fase 0 (histórico) | `environment.md` |
-| Identificación del motor (histórico) | `engine-identification.md` |
+| Toolchain + REA usage rules | `toolchain.md` |
+| REA↔OpenCode integration (E2E PASS) | `rea-opencode-integration.md` |
+| Observed capabilities per provider (+ tool × capability matrix) | `rea-capabilities.md` |
+| Tool errors (timeouts, JDK) | `tool-errors.md` |
+| Platform/executables/CASC | `runtime-and-platform.md` |
+| Game inventory (724 files) | `file-inventory.md`, `../manifests/` |
+| Formats and their readers | `format-coverage.md` |
+| Analysis strategy | `analysis-strategy.md` |
+| LAN protocol | `lan-protocol.md` |
+| Visual parity vs retail | `gap-audit.md`, `parity-report.md`, `graphics-remastered.md` |
+| Complete Hotkeys data (220 actions, 88 units) | `hotkeys-data.md` |
+| In-game heap findings | `heap-ingame-findings.md` |
+| Episode RE + mission modal (1:1, 43/43) | `../analysis/investigations/episode-screen-re.md` (local-only) |
+| RE of the CEF screens (Registry/Collections/Saved/Replays/Lobby, 43/43) | `../analysis/investigations/cef-screens-re.md` (local-only) |
+| Dated decisions | `decision-log.md` |
+| Open questions | `unresolved-questions.md` |
+| Removed C engine (historical) | `c-engine-provenance.md`, `rea-evidence-c.md` (local-only), `../re-c.bundle` |
+| Append-only log | `session-log.md` |
+| Phase 0 environment (historical) | `environment.md` |
+| Engine identification (historical) | `engine-identification.md` |

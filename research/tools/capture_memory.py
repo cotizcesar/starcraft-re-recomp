@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Captura de solo lectura de la imagen en memoria de un proceso PE (Wine/Proton).
+"""Read-only capture of the in-memory image of a PE process (Wine/Proton).
 
-No adjunta depurador, no escribe en el proceso, no modifica el ejecutable original.
-Lee /proc/<pid>/mem con pread y reconstruye un PE analizable con
-PointerToRawData == VirtualAddress (lo que Ghidra necesita para tratar la imagen
-como si estuviera cargada).
+Does not attach a debugger, does not write to the process, does not modify the original executable.
+Reads /proc/<pid>/mem with pread and rebuilds an analyzable PE with
+PointerToRawData == VirtualAddress (what Ghidra needs to treat the image
+as if it were loaded).
 
-Uso:
+Usage:
   python3 tools/capture_memory.py --find StarCraft.exe --out work/sc_mem_<base>.bin
   python3 tools/capture_memory.py --pid 12345 --out work/sc_mem.bin
 """
@@ -31,7 +31,7 @@ def entropy(b: bytes) -> float:
 
 
 def find_pid(name: str) -> tuple[int, str]:
-    """Busca un proceso cuyo ejecutable coincida con `name` y devuelve (pid, base)."""
+    """Find a process whose executable matches `name` and return (pid, base)."""
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
@@ -51,7 +51,7 @@ def find_pid(name: str) -> tuple[int, str]:
                     return int(entry.name), hex(base)
         except OSError:
             continue
-    raise SystemExit(f"ERROR: no encuentro proceso con exe ~ {name!r}")
+    raise SystemExit(f"ERROR: no process found with exe ~ {name!r}")
 
 
 def base_from_maps(pid: int, name: str) -> int:
@@ -63,7 +63,7 @@ def base_from_maps(pid: int, name: str) -> int:
         if name.lower() in parts[5].lower() and parts[2] == "00000000":
             cands.append(int(parts[0].split("-")[0], 16))
     if not cands:
-        raise SystemExit(f"ERROR: sin mapeo base para {name} en pid {pid}")
+        raise SystemExit(f"ERROR: no base mapping for {name} in pid {pid}")
     return min(cands)
 
 
@@ -74,7 +74,7 @@ def read_image(pid: int, base: int) -> bytes:
         mem.seek(base + e_lfanew + 0x18)
         magic = struct.unpack("<H", mem.read(2))[0]
         if magic != 0x10B:
-            raise SystemExit(f"ERROR: se esperaba PE32 (0x10b), encontrado {magic:#x}")
+            raise SystemExit(f"ERROR: expected PE32 (0x10b), found {magic:#x}")
         mem.seek(base + e_lfanew + 0x18 + 0x38)
         size_of_image = struct.unpack("<I", mem.read(4))[0]
         chunk = 1 << 20
@@ -83,7 +83,7 @@ def read_image(pid: int, base: int) -> bytes:
             mem.seek(base + off)
             data = mem.read(min(chunk, size_of_image - off))
             if len(data) < min(chunk, size_of_image - off):
-                print(f"  aviso: lectura corta en +{off:#x} ({len(data)} B)")
+                print(f"  warning: short read at +{off:#x} ({len(data)} B)")
             out += data
         return bytes(out), size_of_image, e_lfanew
 
@@ -106,7 +106,7 @@ def sections(img: bytes, e_lfanew: int) -> list[dict]:
 
 
 def rebuild_pe(img: bytes, e_lfanew: int, secs: list[dict], out_path: Path) -> None:
-    """PE con FILE_ALIGNMENT == SECTION_ALIGNMENT y PointerToRawData == VirtualAddress."""
+    """PE with FILE_ALIGNMENT == SECTION_ALIGNMENT and PointerToRawData == VirtualAddress."""
     size_of_image = struct.unpack_from("<I", img, e_lfanew + 0x50)[0]
     size_of_headers = struct.unpack_from("<I", img, e_lfanew + 0x54)[0]
     buf = bytearray(img)
@@ -114,15 +114,15 @@ def rebuild_pe(img: bytes, e_lfanew: int, secs: list[dict], out_path: Path) -> N
     opt = e_lfanew + 24
     sec_align = struct.unpack_from("<I", img, opt + 0x20)[0]
     struct.pack_into("<I", buf, opt + 0x24, sec_align)
-    # SizeOfHeaders := SectionAlignment (una sola "página" de cabeceras)
+    # SizeOfHeaders := SectionAlignment (a single "page" of headers)
     struct.pack_into("<I", buf, e_lfanew + 0x54, sec_align)
     for s in secs:
-        # PointerToRawData := VirtualAddress ; SizeOfRawData := SizeOfImage de sección
+        # PointerToRawData := VirtualAddress ; SizeOfRawData := section SizeOfImage
         struct.pack_into("<I", buf, s["hdr"] + 20, s["va"])
         struct.pack_into("<I", buf, s["hdr"] + 16, s["vsize"] or s["rsize"])
-    # El propio fichero debe empezar en la alineación: los datos ya están en offset==VA
+    # The file itself must start at the alignment: data is already at offset==VA
     out_path.write_bytes(bytes(buf[:size_of_image]))
-    print(f"  PE reconstruido: {out_path} ({size_of_image} B, base alineada {sec_align:#x})")
+    print(f"  rebuilt PE: {out_path} ({size_of_image} B, aligned base {sec_align:#x})")
 
 
 def main() -> int:
@@ -131,7 +131,7 @@ def main() -> int:
     ap.add_argument("--find", default="StarCraft.exe")
     ap.add_argument("--out", required=True)
     ap.add_argument("--name", default="StarCraft.exe")
-    ap.add_argument("--base", default=None, help="base de carga en hex (p.ej. 0x400000)")
+    ap.add_argument("--base", default=None, help="load base in hex (e.g. 0x400000)")
     args = ap.parse_args()
 
     pid = args.pid
@@ -142,11 +142,11 @@ def main() -> int:
         base = int(args.base, 16)
     else:
         base = base_from_maps(pid, args.name)
-    print(f"base de imagen: {base:#x}")
+    print(f"image base: {base:#x}")
 
     img, size_of_image, e_lfanew = read_image(pid, base)
-    print(f"imagen leída: {len(img)} B (SizeOfImage {size_of_image:#x})")
-    print(f"sha256 imagen: {hashlib.sha256(img).hexdigest()}")
+    print(f"image read: {len(img)} B (SizeOfImage {size_of_image:#x})")
+    print(f"image sha256: {hashlib.sha256(img).hexdigest()}")
 
     secs = sections(img, e_lfanew)
     for s in secs:
@@ -154,13 +154,13 @@ def main() -> int:
         data = img[start : start + (s["vsize"] or s["rsize"])]
         print(
             f"  {s['name']:<8} va={s['va']:#08x} vsize={s['vsize']:#08x} "
-            f"entropía={entropy(data):.3f}"
+            f"entropy={entropy(data):.3f}"
         )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(img)
-    print(f"  imagen cruda: {out}")
+    print(f"  raw image: {out}")
 
     rebuild_pe(img, e_lfanew, secs, out.with_name(out.stem + "_pe.exe"))
     return 0

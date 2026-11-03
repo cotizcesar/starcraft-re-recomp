@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "A Rust reconstruction of StarCraft 1.23 core gameplay logic, driven by data recovered from the shipped executable."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/cotizcesar/starcraft-re-recomp"
+readme = "README.md"
+keywords = ["starcraft", "reverse-engineering", "rts", "game-engine", "deterministic"]
+categories = ["games", "game-engines"]
+# Reads retail data at runtime; never published to crates.io.
+publish = false
 
 [lib]
 name = "galaxycraft"

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Inventario reproducible de los archivos originales del juego.
+"""Reproducible inventory of the original game files.
 
-Solo lectura sobre GAME_ROOT. No copia ni modifica el original.
-Salidas:
-  analysis/file-inventory.csv   (inventario completo)
+Read-only on GAME_ROOT. Does not copy or modify the original.
+Outputs (under research/ by default, override with RE_OUT):
+  manifests/inventory.csv         (full inventory)
   manifests/inventory-summary.txt
-  manifests/sha256.txt          (formato sha256sum, verificable)
+  manifests/sha256.txt            (sha256sum format, verifiable)
 """
 from __future__ import annotations
 
@@ -23,25 +23,25 @@ GAME_ROOT = Path(
         str(Path.home() / "Games/battlenet/drive_c/Program Files (x86)/StarCraft"),
     )
 ).resolve()
-OUT_DIR = Path(os.environ.get("RE_OUT", str(Path.home() / "ReverseEngineering"))).resolve()
+OUT_DIR = Path(os.environ.get("RE_OUT", str(Path(__file__).resolve().parent.parent))).resolve()
 
-# Clasificación provisional por extensión (se refina en fase 1/2 con `file`)
+# Provisional classification by extension (refined in phase 1/2 with `file`)
 CLASSIFY = {
-    ".exe": "ejecutable PE",
-    ".dll": "biblioteca PE",
-    ".scm": "mapa StarCraft (SCM)",
-    ".scx": "mapa StarCraft BroodWar (SCX)",
+    ".exe": "PE executable",
+    ".dll": "PE library",
+    ".scm": "StarCraft map (SCM)",
+    ".scx": "StarCraft Brood War map (SCX)",
     ".chk": "scenario chunk data",
-    ".mpq": "archivo MPQ",
-    ".smk": "video Smacker",
-    ".wav": "audio WAV",
-    ".dat": "datos del motor",
-    ".txt": "texto/config",
-    ".info": "metadato Blizzard product",
-    ".db": "base de datos local",
+    ".mpq": "MPQ archive",
+    ".smk": "Smacker video",
+    ".wav": "WAV audio",
+    ".dat": "engine data",
+    ".txt": "text/config",
+    ".info": "Blizzard product metadata",
+    ".db": "local database",
     ".json": "JSON config",
     ".log": "log",
-    ".pak": "paquete",
+    ".pak": "package",
 }
 
 
@@ -65,7 +65,7 @@ def file_type(path: Path) -> str:
 
 def main() -> int:
     if not GAME_ROOT.is_dir():
-        print(f"ERROR: GAME_ROOT no existe: {GAME_ROOT}", file=sys.stderr)
+        print(f"ERROR: GAME_ROOT does not exist: {GAME_ROOT}", file=sys.stderr)
         return 2
     rows = []
     for path in sorted(GAME_ROOT.rglob("*")):
@@ -74,25 +74,24 @@ def main() -> int:
         rel = path.relative_to(GAME_ROOT)
         st = path.stat()
         ext = path.suffix.lower()
-        # CASC: los nombres de archivo son hashes hexadecimales sin extensión
+        # CASC: file names are hex hashes without extension
         is_casc = rel.parts[0] == "Data" and ext == ""
         rows.append(
             {
-                "ruta_relativa": str(rel),
-                "tamano_bytes": st.st_size,
-                "extension": ext or "(ninguna)",
-                "tipo_detectado": file_type(path),
+                "relative_path": str(rel),
+                "size_bytes": st.st_size,
+                "extension": ext or "(none)",
+                "detected_type": file_type(path),
                 "sha256": sha256(path),
-                "clasificacion_provisional": "CASC store (Blizzard)"
+                "provisional_classification": "CASC store (Blizzard)"
                 if is_casc
-                else CLASSIFY.get(ext, "desconocido"),
-                "observaciones": "",
+                else CLASSIFY.get(ext, "unknown"),
+                "notes": "",
             }
         )
-    (OUT_DIR / "analysis").mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "manifests").mkdir(parents=True, exist_ok=True)
 
-    csv_path = OUT_DIR / "analysis/file-inventory.csv"
+    csv_path = OUT_DIR / "manifests/inventory.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
         w.writeheader()
@@ -100,20 +99,20 @@ def main() -> int:
 
     with (OUT_DIR / "manifests/sha256.txt").open("w", encoding="utf-8") as fh:
         for r in rows:
-            fh.write(f"{r['sha256']}  {r['ruta_relativa']}\n")
+            fh.write(f"{r['sha256']}  {r['relative_path']}\n")
 
     by_ext: Counter[str] = Counter()
     bytes_by_ext: defaultdict[str, int] = defaultdict(int)
     for r in rows:
         by_ext[r["extension"]] += 1
-        bytes_by_ext[r["extension"]] += r["tamano_bytes"]
+        bytes_by_ext[r["extension"]] += r["size_bytes"]
 
     lines = [
         f"GAME_ROOT: {GAME_ROOT}",
-        f"archivos: {len(rows)}",
-        f"bytes totales: {sum(r['tamano_bytes'] for r in rows)}",
+        f"files: {len(rows)}",
+        f"total bytes: {sum(r['size_bytes'] for r in rows)}",
         "",
-        "extension  archivos  MB",
+        "extension  files  MB",
     ]
     for ext, n in by_ext.most_common():
         lines.append(f"{ext:<12}{n:>8}  {bytes_by_ext[ext]/1e6:>10.1f}")

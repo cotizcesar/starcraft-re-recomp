@@ -9,10 +9,10 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 
 /**
- * Lista todas las referencias hacia direcciones dadas y su funcion contenedora.
- * Uso (headless, sin re-analisis):
+ * Lists all references to the given addresses and their containing function.
+ * Usage (headless, no re-analysis):
  *   analyzeHeadless <projdir> <proj> -process <exe> -noanalysis
- *     -scriptPath .../tools -postScript RefsToAddr.java <salida.csv> <addr1> ...
+ *     -scriptPath .../tools -postScript RefsToAddr.java <output.csv> <addr1> ...
  */
 public class RefsToAddr extends GhidraScript {
 
@@ -20,7 +20,7 @@ public class RefsToAddr extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            printerr("Uso: RefsToAddr.java <salida.csv> <addr1> ...");
+            printerr("Usage: RefsToAddr.java <output.csv> <addr1> ...");
             return;
         }
         ReferenceManager rm = currentProgram.getReferenceManager();

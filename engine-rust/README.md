@@ -11,6 +11,10 @@ CV5/VX4EX/VR4/WPE terrain chain and GRP sprites and presents a mouse/keyboard
 RTS client.  It is still not a byte-for-byte replacement for
 `StarCraft.exe`.
 
+> Completion status, with percentages per area, is tracked in
+> [`../PROGRESS.md`](../PROGRESS.md). Planned work and non-goals are in
+> [`features.md`](features.md).
+
 ## What is reconstructed
 
 * **All gameplay tables**: `units.dat` (228), `weapons.dat` (130),

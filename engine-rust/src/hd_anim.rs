@@ -247,8 +247,12 @@ mod tests {
     use super::*;
 
     fn container() -> Option<Vec<u8>> {
-        let root = std::env::var("GC_RETAIL_CACHE")
-            .unwrap_or_else(|_| "/home/cotizcesar/.cache/galaxycraft/retail-864772b9".to_string());
+        let root = std::env::var("GC_RETAIL_CACHE").unwrap_or_else(|_| {
+            let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
+                format!("{}/.cache", std::env::var("HOME").unwrap_or_default())
+            });
+            format!("{base}/galaxycraft/retail-864772b9")
+        });
         std::fs::read(format!("{root}/hd2/anim/main_000.anim")).ok()
     }
 
@@ -317,8 +321,12 @@ mod tests {
 
     #[test]
     fn frame_count_comes_from_the_tail_for_every_class() {
-        let root = std::env::var("GC_RETAIL_CACHE")
-            .unwrap_or_else(|_| "/home/cotizcesar/.cache/galaxycraft/retail-864772b9".to_string());
+        let root = std::env::var("GC_RETAIL_CACHE").unwrap_or_else(|_| {
+            let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
+                format!("{}/.cache", std::env::var("HOME").unwrap_or_default())
+            });
+            format!("{base}/galaxycraft/retail-864772b9")
+        });
         let mut checked = 0;
         for name in ["main_000", "main_002", "main_004", "main_005", "main_011"] {
             let Ok(bytes) = std::fs::read(format!("{root}/hd2/anim/{name}.anim")) else {
@@ -337,7 +345,7 @@ mod tests {
             assert_eq!(
                 (bytes.len() - last_end) / 16,
                 anim.frames.len(),
-                "{name}: la cola debe dar el mismo número de frames"
+                "{name}: the tail must give the same frame count"
             );
             let (max_w, max_h) = anim
                 .atlases
@@ -364,7 +372,7 @@ mod tests {
             };
             assert!(
                 inside >= needed,
-                "{name}: sólo {inside}/{} rectángulos dentro del atlas",
+                "{name}: only {inside}/{} rectangles inside the atlas",
                 anim.frames.len()
             );
             println!(

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SC_NO_AUDIO: "1"
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, build, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine-rust
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build all binaries
+        run: cargo build --bins --locked
+      - name: Compile every test target
+        run: cargo test --no-run --locked
+      # The Blizzard-derived developer fixtures are gitignored, so CI runs the
+      # integration tests that are self-contained or skip without an install.
+      # The full suite runs locally (see CONTRIBUTING.md).
+      - name: Fixture-free tests
+        run: >
+          cargo test --locked
+          --test menus --test menu_layers --test hd_tileset
+          --test portraits --test retail_replay
+
+  python:
+    name: Scripts and progress
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile every Python script
+        run: python -m compileall -q scripts research/tools engine-rust/tools
+      - name: Shell syntax
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+      - name: progress.py unit tests
+        run: python -m unittest scripts/test_progress.py -v
+      - name: PROGRESS.md summary is current
+        run: python scripts/progress.py --check

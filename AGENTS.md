@@ -1,131 +1,157 @@
-# AGENTS.md — Reglas del proyecto starcraft-re-recomp
+# AGENTS.md — project rules for starcraft-re-recomp
 
-> Hay un solo motor: `engine-rust` (fidelidad total: 228 unidades,
-> 189 órdenes, 137 handlers transcritos; el número de tests crece cada
-> fase — no citarlo aquí, ver `cargo test`). El experimento en C se
-> eliminó el 2026-10-28 tras migrar todo lo útil (save/load, replay-hashes,
-> red-`socketpair` → diseño y tests en Rust); su historial vive en
-> `research/re-c.bundle` y sus evidencias en
-> `research/docs/rea-evidence-c.md`. Un motor, una verdad (DRY).
-> Reglas de crate (comandos, gotchas retail/headless): `engine-rust/AGENTS.md`.
+> There is a single engine: `engine-rust` (full fidelity: 228 units,
+> 189 orders, 137 transcribed handlers; the test count grows every phase —
+> do not quote it here, run `cargo test`). The C experiment was removed on
+> 2026-10-28 after everything useful was migrated (save/load, replay hashes,
+> `socketpair` networking → design and tests in Rust); its history lives in
+> `research/re-c.bundle` and its provenance in
+> `research/docs/c-engine-provenance.md`. One engine, one truth (DRY).
+> Crate rules (commands, retail/headless gotchas): `engine-rust/AGENTS.md`.
 
-## 1. Estructura (una sola carpeta, sin duplicados)
+## 1. Layout (one tree, no duplicates)
 
 ```text
 starcraft-re-recomp/
-  README.md / AGENTS.md          # este archivo: contrato del proyecto
-  engine-rust/ (+ AGENTS.md)     # ÚNICO motor (Rust, jugable) + sus reglas de crate
-  scripts/                       # arneses: lan_two_machines.sh, render_screens.sh, compare_*.py
-  research/                      # ingeniería inversa: evidencias, dumps, Ghidra, docs, planes
-    docs/                        # PROJECT-STATUS.md = estado vivo; session-log.md = bitácora
-    analysis/                    # inventarios, funciones, xrefs, decompilados
-    tools/                       # scripts Ghidra (Java) + captura de memoria
-    build/                       # proyectos Ghidra (grandes, no tocar a mano)
-    work/                        # dumps de memoria (solo lectura)
-    re-c.bundle                  # historial del motor C eliminado
-    docs/rea-evidence-c.md       # evidencias REA del motor C
+  README.md                      # project overview (product + process)
+  PROGRESS.md                    # what we have / what is missing, with % (generated table)
+  AGENTS.md                      # this file: the project contract
+  CONTRIBUTING.md                # how to build, test and send changes
+  CHANGELOG.md                   # notable changes per date
+  engine-rust/ (+ AGENTS.md)     # THE engine (Rust, playable) + crate rules
+    docs/                        # product docs; docs/gates/ = committed gate outputs
+  scripts/                       # harnesses: LAN, headless renders, visual gates, progress.py
+  research/                      # reverse engineering: evidence, manifests, Ghidra tools, docs
+    docs/                        # PROJECT-STATUS.md = detailed live state; session-log.md = log
+    manifests/                   # inventory + SHA-256 of the reference install
+    tools/                       # Ghidra scripts (Java) + memory capture
+    re-c.bundle                  # git history of the removed C engine
+  .github/                       # CI, issue/PR templates
 ```
 
-- El original (`~/Games/.../StarCraft`) es **solo lectura**. Nada escribe ahí.
-- `~/ReverseEngineering` → `research/`. El enlace legacy
-  `~/Documents/galaxycraft` se eliminó el 2026-10-29: la única ruta es
-  `~/Documents/starcraft-re-recomp/`. No crear rutas paralelas nuevas.
-- `session-log.md` es **append-only**: la historia no se reescribe (los
-  errores y falsaciones quedan registrados con fecha).
+Local-only (gitignored, never commit): `research/analysis/`,
+`research/build/` (Ghidra projects), `research/work/` (memory dumps),
+`research/logs/`, `engine-rust/assets/`, `engine-rust/fixtures/*` data,
+`engine-rust/docs/evidence/`, screenshots and every other retail-derived file.
 
-## 2. Principios (SOLID / DRY / YAGNI / KISS aplicados a RE)
+- The original install (`$SC_INSTALL`) is **read-only**. Nothing writes there.
+- No parallel paths: the only checkout path is the repository itself. Never
+  hard-code a personal absolute path (`/home/<user>/…`); use `SC_INSTALL`,
+  `XDG_CACHE_HOME`, `HOME` or a CLI flag.
+- `research/docs/session-log.md` is **append-only**: history is not
+  rewritten (errors and falsifications stay recorded with their date).
 
-- **Evidencia antes que suposición.** HECHO (observado) vs INFERENCIA
-  (con hipótesis y falsador). Nada de nombres inferidos como confirmados.
-- **DRY real:** una sola implementación por comportamiento. La lógica
-  compartida vive en un sitio (`replay_to` ↔ `apply_act` es el ejemplo a
-  seguir: el reproductor de `sc_view` reutiliza `apply_act`, no la duplica).
-  El motor C se eliminó en vez de mantener dos implementaciones.
-- **YAGNI:** sin sistemas especulativos. LAN lockstep (TCP+UDP,
-  descubrimiento, lobby, resync) está **dentro** del alcance y ya existe
-  (`src/net.rs`, `sc_lan`, `tests/lan.rs`); falta solo la prueba física
-  en 2 PCs (`scripts/lan_two_machines.sh`). **Battle.net/online: fuera
-  de alcance.** Nada de skins/features sin test que los pida. Cada
-  fichero nuevo debe responder a una tarea del plan.
-- **KISS + SOLID en el código:** funciones pequeñas con una sola razón para
-  cambiar; `World` no conoce sockets: la red solo entrega comandos
-  (`RecAct`) y compara hashes (`state_hash`); la UI no toca estado
-  interno salvo por la API pública (`issue`, `train`, `replay_to`...).
-- **Determinismo como invariante:** el sim es LCG con semilla fija; toda
-  mutación externa entra por `World::issue` o por los mutadores directos
-  auditados (`train`, `morph`, `morph_unit`, `morph_building`). Cualquier vía nueva que
-  mute estado **debe** registrarse en el command log o romperá
-  save/load, replays y LAN. Hay test que lo demuestra (`replay.rs`).
+## 2. Principles (SOLID / DRY / YAGNI / KISS applied to RE)
+
+- **Evidence before assumption.** FACT (observed) vs INFERENCE (with a
+  hypothesis and a falsifier). Inferred names are never presented as
+  confirmed.
+- **Real DRY:** one implementation per behaviour. Shared logic lives in one
+  place (`replay_to` ↔ `apply_act` is the model: the `sc_view` replay player
+  reuses `apply_act` instead of duplicating it). The C engine was removed
+  rather than maintaining two implementations. One fact, one document: other
+  docs link to it instead of restating it.
+- **YAGNI:** no speculative systems. LAN lockstep (TCP+UDP, discovery,
+  lobby, resync) is **in scope** and already exists (`src/net.rs`, `sc_lan`,
+  `tests/lan.rs`); only the physical two-PC test is missing
+  (`scripts/lan_two_machines.sh`). **Battle.net/online: out of scope.** No
+  skins/features without a test that requires them. Every new file must
+  answer a planned task.
+- **KISS + SOLID in code:** small functions with a single reason to change;
+  `World` knows nothing about sockets: the network only delivers commands
+  (`RecAct`) and compares hashes (`state_hash`); the UI only touches internal
+  state through the public API (`issue`, `train`, `replay_to`, …).
+- **Determinism is an invariant:** the sim is an LCG with a fixed seed; every
+  external mutation enters through `World::issue` or the audited direct
+  mutators (`train`, `morph`, `morph_unit`, `morph_building`). Any new path
+  that mutates state **must** be recorded in the command log or it will break
+  save/load, replays and LAN. A test proves it (`tests/replay.rs`).
 
 ## 3. Rust (`engine-rust`)
 
-- `cargo fmt` antes de cada cambio; `cargo clippy --all-targets` debe dar
-  **0 avisos** (el proyecto compila con `-D warnings` en CI local).
-- Todo comportamiento nuevo o corregido lleva **test que falla sin el fix**
-  (unit en `src/` o integración en `tests/`). Los tests usan rutas
-  relativas a assets/fixtures; nunca dependen de la instalación retail
-  salvo los marcados `retail` (con `SC_INSTALL`).
-- Formatos de fichero propios: magic + versión + checksum SHA-256, límites
-  de tamaño explícitos antes de reservar (`n > 10_000_000 → None`), y test
-  de fichero corrupto.
-- Sin `unwrap` en rutas de carga de datos de usuario (devolver `Option` /
-  `Result` con mensaje); `expect` solo en tests.
-- `World` no gana campos "por si acaso": cada campo nuevo necesita lector
-  (tests) y escritor (save/hash) o no entra.
+- `cargo fmt` before every change; `cargo clippy --all-targets -- -D warnings`
+  must report **0 warnings** (CI enforces both).
+- Every new or fixed behaviour ships a **test that fails without the fix**
+  (unit in `src/` or integration in `tests/`). Tests use paths relative to the
+  crate's assets/fixtures; they never depend on the retail install except the
+  ones gated on `SC_INSTALL`, which skip cleanly when it is unset.
+- Own file formats: magic + version + SHA-256 checksum, explicit size limits
+  before allocating (`n > 10_000_000 → None`), and a corrupt-file test.
+- No `unwrap` on user-data load paths (return `Option` / `Result` with a
+  message); `expect` only in tests.
+- `World` gets no "just in case" fields: every new field needs a reader
+  (tests) and a writer (save/hash) or it does not go in.
 
-## 4. Validación diferencial (sin segundo motor)
+## 4. Differential validation (no second engine)
 
-- El motor C se eliminó; su rol de oracle lo cubren: el test Boxer+IA
-  (replay idéntico), `tools/oracle.py` (diferencial de tablas), los 73/73
-  arrays contra el juego vivo y `re-c.bundle` como referencia histórica.
-  No resucitar un segundo motor salvo decisión explícita con justificación.
+- The C engine was removed; its oracle role is covered by the Boxer+AI test
+  (identical replay), `tools/oracle.py` (table differential), the 73/73
+  arrays checked against the live game, and `re-c.bundle` as a historical
+  reference. Do not resurrect a second engine without an explicit, justified
+  decision in `research/docs/decision-log.md`.
 
-## 5. Ingeniería inversa (`research/`)
+## 5. Reverse engineering (`research/`)
 
-- Solo lectura sobre el original y los dumps (`pread` de `/proc/<pid>/mem`,
-  sin depurador, sin escritura en el proceso). Las copias de trabajo van
-  a `/tmp`, nunca se toca el original.
-- Conexión REA: herramientas `tools.rea.*` vía MCP en la sesión OpenCode.
-  Requiere bloque `environment` en la entrada `mcp.rea` de `opencode.json`
-  (`GHIDRA_INSTALL_DIR`, `JAVA_HOME`→JDK 21, `REA_GHIDRA_STARTUP_TIMEOUT_MS`);
-  pin Ghidra **12.1.4** (12.2 instalado pero REA pide 12.1.x).
-  Detalle verificado: `research/docs/rea-opencode-integration.md`.
-- Flujo por objetivo: `open_binary` → consultas acotadas
-  (`list_procedures`, `search_strings`, `read_bytes`) antes de escalar →
-  `binary_session` para trabajo profundo → `close_binary`. Ghidra solo
-  aparece como candidato tras `open_binary`; `raw-binary` exige
-  `architecture` + `entry_point`.
-- Límite duro: `binary_overview` vía MCP en imágenes >10 MB da
-  `provider_timeout` determinista — prohibido repetirlo. Alternativa:
-  `analyzeHeadless` por ruta absoluta, con `JAVA_HOME` al JDK 21, en fondo,
-  y scripts `research/tools/*.java` pequeños y nombrados por propósito.
-  Registro del fallo: `research/docs/tool-errors.md`.
-- Las anotaciones (`annotate_native_function`, `set_address_name`) mutan
-  solo la base efímera de Ghidra, nunca el ejecutable.
-- Pseudocódigo ≠ fuente original. Direcciones de mapeos viejos no valen en
-  dumps nuevos (rebase explícito o nada).
-- Cada hallazgo: archivo + dirección + confianza + experimento que lo
-  confirmaría o refutaría. Las falsaciones también se publican.
-- Índice de docs: `research/docs/README.md`. `research/docs/archive/` es
-  histórico superado (no usar como referencia).
+- Read-only on the original and the dumps (`pread` of `/proc/<pid>/mem`, no
+  debugger, no writes to the process). Working copies go to `/tmp`; the
+  original is never touched.
+- REA connection: `tools.rea.*` via MCP in the OpenCode session. Requires an
+  `environment` block in the `mcp.rea` entry of `opencode.json`
+  (`GHIDRA_INSTALL_DIR`, `JAVA_HOME` → JDK 21, `REA_GHIDRA_STARTUP_TIMEOUT_MS`);
+  Ghidra pinned to **12.1.4** (12.2 is installed but REA requires 12.1.x).
+  Verified details: `research/docs/rea-opencode-integration.md`.
+- Per-target flow: `open_binary` → bounded queries (`list_procedures`,
+  `search_strings`, `read_bytes`) before escalating → `binary_session` for
+  deep work → `close_binary`. Ghidra only appears as a candidate after
+  `open_binary`; `raw-binary` requires `architecture` + `entry_point`.
+- Hard limit: `binary_overview` over MCP on images >10 MB gives a
+  deterministic `provider_timeout` — do not repeat it. Alternative:
+  `analyzeHeadless` by absolute path, with `JAVA_HOME` set to JDK 21, in the
+  background, with small purpose-named scripts in `research/tools/*.java`.
+  Failure record: `research/docs/tool-errors.md`.
+- Annotations (`annotate_native_function`, `set_address_name`) only mutate
+  Ghidra's ephemeral database, never the executable.
+- Pseudocode ≠ original source. Addresses from old mappings are not valid in
+  new dumps (explicit rebase or nothing).
+- Every finding: file + address + confidence + the experiment that would
+  confirm or refute it. Falsifications are published too.
+- Doc index: `research/docs/README.md`.
 
-## 6. Documentación
+## 6. Documentation
 
-- `research/docs/PROJECT-STATUS.md` se actualiza al cerrar cada
-  fase, no al final.
-- `research/docs/architecture.md` es el mapa; los informes de pista viven
-  en `research/analysis/investigations/` y no se reeditan tras la síntesis
-  (solo se referencian).
-- `engine-rust/README.md` + `features.md` describen producto; este repo
-  describe proceso. No duplicar contenido entre ambos: enlazar.
+- **Language: English** for every committed document, comment, docstring,
+  commit message and CLI message. Literal in-game strings are quoted as-is.
+- **Progress directive.** `PROGRESS.md` is the single, community-facing
+  record of what exists and what is missing, with percentages:
+  1. When a phase or task closes, tick (`[x]`) or add (`[ ]`) the matching
+     checklist item in `PROGRESS.md` **in the same commit**, with an
+     evidence pointer (test, gate output or dated session-log entry).
+  2. A box is ticked only with observable evidence; otherwise it stays open.
+  3. Percentages are never typed by hand: run
+     `python3 scripts/progress.py --write`. CI runs `--check` and fails on a
+     stale table. New scope becomes a new unchecked item, which lowers the
+     percentage honestly.
+  4. Other docs (README, PROJECT-STATUS) link to `PROGRESS.md` instead of
+     restating percentages.
+- `research/docs/PROJECT-STATUS.md` (detailed internal state) is updated when
+  each phase closes, not at the end.
+- `research/docs/architecture.md` is the map; track reports live in
+  `research/analysis/investigations/` (local) and are not re-edited after the
+  synthesis (only referenced).
+- `engine-rust/README.md` + `features.md` describe the product; this file
+  describes the process. Do not duplicate content between them: link.
+- Notable changes get a line in `CHANGELOG.md`.
 
-## 7. Definition of Done (verificable, sin excepciones)
+## 7. Definition of Done (verifiable, no exceptions)
 
-Nada se declara terminado sin pegar la prueba observable:
+Nothing is declared done without pasting the observable proof:
 
-- `cargo test` (desde `engine-rust/`) → 0 failed, incluyendo los tests nuevos.
-- `cargo clippy --all-targets` → 0 avisos.
-- `cargo build --bin sc_view` OK + shots headless si toca UI
+- `cargo test` (from `engine-rust/`, with local fixtures) → 0 failed,
+  including the new tests.
+- `cargo clippy --all-targets -- -D warnings` → 0 warnings; `cargo fmt --check` clean.
+- `cargo build --bin sc_view` OK + headless shots if the change touches UI
   (`--shot-screen saved|replays|pause`).
-- Docs tocadas + `session-log.md` con fecha. Sin "funciona en mi máquina"
-  sin comando pegado.
+- `python3 scripts/progress.py --check` → OK, with `PROGRESS.md` updated if
+  the change moves a checklist item.
+- Docs touched + a dated `session-log.md` entry. No "works on my machine"
+  without the pasted command.

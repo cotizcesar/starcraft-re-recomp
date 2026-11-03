@@ -1,51 +1,51 @@
-# Heap en partida — hallazgos verificados (2026-10-28)
+# In-game heap — verified findings (2026-10-28)
 
-Captura: `work/heap_ingame_20261028_1237/` (483 regiones RW, 897 MB).
-Proceso: `x86_64\StarCraft.exe -launch -uid s1`, PID 80639, misión
-**Terran 8 "The Big Push"** (Episodio I) en curso.
-Método: `tools/heap_capture.py` (pread de `/proc/<pid>/mem`, sin depurador,
-sin escritura en el proceso).
+Capture: `work/heap_ingame_20261028_1237/` (483 RW regions, 897 MB).
+Process: `x86_64\StarCraft.exe -launch -uid s1`, PID 80639, mission
+**Terran 8 "The Big Push"** (Episode I) in progress.
+Method: `tools/heap_capture.py` (pread of `/proc/<pid>/mem`, no debugger,
+no writes to the process).
 
-## 1. El mapa SÍ está cargado en heap (HECHO)
+## 1. The map IS loaded in the heap (FACT)
 
-| Texto | Región | Offset |
+| Text | Region | Offset |
 |---|---|---|
 | `Eliminate the Confederate forces.` | `0xad22000` (126 MB) | `0x432fbf1` |
 | `Duke must survive.` | `0xad22000` | +0x2e |
 | `THE BIG PUSH` | `0xa942000` | — |
 
-Los objetivos del briefing viven en `.data` del módulo, y el bloque STR del
-mapa se parseó a heap. Antes (dumps solo-imagen) esto daba 0 hits: **el
-re-volcado de RW era el experimento correcto**.
+The briefing objectives live in the module's `.data`, and the map's STR
+block was parsed into the heap. Before (image-only dumps) this gave 0 hits: **the
+RW re-dump was the right experiment**.
 
-## 2. DESCARTA: TRIG-2400 crudo y columnas DAT (HECHO)
+## 2. RULED OUT: raw TRIG-2400 and DAT columns (FACT)
 
-0 candidatos válidos en 483 regiones. Los positivos del scoring laxo eran
-ceros de BSS y basura (verificado a mano: condiciones y acciones todas 0).
+0 valid candidates across 483 regions. The positives from the lax scoring were
+BSS zeros and garbage (verified by hand: conditions and actions all 0).
 
-## 3. HALLAZGO PRINCIPAL: tablas de punteros construidas en runtime
+## 3. MAIN FINDING: pointer tables built at runtime
 
-Tres tablas de punteros a `.text` que están **a CERO en la imagen en disco**
-y **pobladas en memoria**:
+Three tables of pointers into `.text` that are **ZERO in the on-disk image**
+and **populated in memory**:
 
-| Tabla (módulo +) | Entradas | Disco | Memoria |
+| Table (module +) | Entries | Disk | Memory |
 |---|---|---|---|
 | `0x11b9b78` | 97 | `0x0` | `0x6ffffb343eb0` |
 | `0x118f970` | 84 (57 deltas < 0x400) | `0x0` | `0x6ffffb343eb0` |
 | `0x11afef0` | 63 | `0x0` | `0x6ffffb7e9180` |
 
-Las dos primeras empiezan por el **mismo** puntero (`0x6ffffb343eb0`),
-compatible con un handler por defecto compartido.
+The first two start with the **same** pointer (`0x6ffffb343eb0`),
+consistent with a shared default handler.
 
-**Por qué esto importa:** el barrido estático de 13 tablas de salto y de
-todas las referencias en `.rdata`/`.data` no podía encontrarlas — en el
-fichero no existe la tabla, solo el espacio reservado. Esto cierra la
-pregunta de por qué el despachador "no aparece" en estático.
+**Why this matters:** the static sweep of 13 jump tables and of
+all references in `.rdata`/`.data` could not find them — in the
+file the table does not exist, only the reserved space. This closes the
+question of why the dispatcher "does not show up" statically.
 
-## 4. Tabla de despacho de secciones CHK en 64 bits (HECHO, nueva)
+## 4. CHK section dispatch table in 64-bit (FACT, new)
 
-`C6` en `f=0xae1940`, layout 64b `nombre(4) | ptr64 | flags(4)`, 30
-entradas. Handlers recuperados (VA absoluta, base `0x6ffffade0000`):
+`C6` at `f=0xae1940`, 64-bit layout `name(4) | ptr64 | flags(4)`, 30
+entries. Recovered handlers (absolute VA, base `0x6ffffade0000`):
 
 ```
 ERA  0x6ffffb138520   OWNR 0x6ffffb138440   SIDE 0x6ffffb138360
@@ -55,48 +55,47 @@ MBRF 0x6ffffb138c60   MTXM 0x6ffffb139410   THG2 0x6ffffb1386a0
 UNIT 0x6ffffb138d50   MASK 0x6ffffb139590   UNIS 0x6ffffb1399d0
 UPGS 0x6ffffb139cc0   TECS 0x6ffffb13a200   PUNI 0x6ffffb13a5b0
 UPGR 0x6ffffb13a810   PTEC 0x6ffffb13aae0
-(+ UNIx/UPGx/TECx/PUPx/PTEx opcionales)
+(+ optional UNIx/UPGx/TECx/PUPx/PTEx)
 ```
 
-## 5. FALSADO: los handlers de sección no están en tablas runtime
+## 5. FALSIFIED: the section handlers are not in runtime tables
 
-Barrido de los 20 handlers en las 483 regiones: **1 hit** (el propio TRIG,
-en su tabla C6 estática). Conclusión: el despacho de secciones es la tabla
-C6 de `.rdata` (estática), no una tabla runtime.
+Sweep of the 20 handlers across the 483 regions: **1 hit** (TRIG itself,
+in its static C6 table). Conclusion: section dispatch is the static
+`.rdata` C6 table, not a runtime table.
 
-## 6. Experimento diferencial con pausa (HECHO, 2026-10-28)
+## 6. Differential experiment with pause (FACT, 2026-10-28)
 
-Objetivo: aislar qué se escribe al emitir una orden, con la simulación
-congelada.
+Goal: isolate what is written when issuing an order, with the simulation
+frozen.
 
-| Paso | Captura | Notas |
+| Step | Capture | Notes |
 |---|---|---|
-| A | `work/heap_pauseA` | pausa (Esc) |
-| A2 | `work/heap_pauseA2` | pausa, sin acción → **suelo de ruido** |
-| B | `work/heap_pauseB` | pausa tras 1 orden de movimiento |
+| A | `work/heap_pauseA` | paused (Esc) |
+| A2 | `work/heap_pauseA2` | paused, no action → **noise floor** |
+| B | `work/heap_pauseB` | paused after 1 move order |
 
-Resultados medidos (`tools/heap_diff.py`):
+Measured results (`tools/heap_diff.py`):
 
-| Comparación | Bytes cambiados | Punteros nuevos a `.text` |
+| Comparison | Bytes changed | New pointers into `.text` |
 |---|---:|---:|
-| A → A2 (ruido) | 11 462 468 | **13** |
-| A → B (1 orden) | 16 019 944 | **69** |
+| A → A2 (noise) | 11 462 468 | **13** |
+| A → B (1 order) | 16 019 944 | **69** |
 
-**Lectura:** el diferencial funciona (5× sobre el ruido con una sola orden),
-pero el heap sigue muy dinámico incluso en pausa (11 MB): hay buffering de
-render/streaming activo. Los 69 punteros nuevos se reparten por regiones
-`0x59exxxx`/`0x5aexxxx` (pares a 0x100000 de distancia con **valores
-idénticos**, compatible con doble buffer, no con objetos de unidad).
+**Reading:** the differential works (5× over noise with a single order),
+but the heap remains very dynamic even when paused (11 MB): there is active
+render/streaming buffering. The 69 new pointers are spread across regions
+`0x59exxxx`/`0x5aexxxx` (pairs 0x100000 apart with **identical
+values**, consistent with double buffering, not with unit objects).
 
-**Negativo verificado:** las tres tablas runtime de §3 **no cambian** al
-emitir una orden (0 bytes en T97/T84/T63/T32). Se inicializan al cargar
-(vtables de clase), no son el despacho de órdenes.
+**Verified negative:** the three runtime tables of §3 **do not change** when
+issuing an order (0 bytes in T97/T84/T63/T32). They are initialized at load
+(class vtables), they are not the order dispatch.
 
-**Conclusión:** el método está validado pero el experimento necesita menos
-ruido (aislar el proceso del render, o instrumentar con Frida en vez de
-diff de heap) para localizar el handler de orden. Coste/beneficio actual
-bajo: la reconstrucción no depende de ello (las 189 órdenes ya están
-implementadas y testadas en `engine-rust`).
+**Conclusion:** the method is validated but the experiment needs less
+noise (isolate the process from rendering, or instrument with Frida instead of
+heap diffing) to locate the order handler. Current cost/benefit
+low: the reconstruction does not depend on it (all 189 orders are already
+implemented and tested in `engine-rust`).
 
 Scripts: `tools/heap_capture.py`, `tools/heap_diff.py`.
-

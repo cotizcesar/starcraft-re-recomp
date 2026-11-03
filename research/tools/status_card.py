@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Genera tarjetas de estado PNG para reportar cada paso completado.
+"""Generate PNG status cards to report each completed step.
 
-Uso:
-  python3 tools/status_card.py <salida.png> "<titulo>" "<subtitulo>" "clave=valor" ... [--note texto]
+Usage:
+  python3 tools/status_card.py <output.png> "<title>" "<subtitle>" "key=value" ... [--note text]
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def make(out: Path, title: str, subtitle: str, pairs: list[tuple[str, str]], not
     f_small = font(FONT_REG, 22)
 
     d.rectangle([0, 0, W, 8], fill=ACCENT)
-    d.text((60, 54), "STARCRAFT 1.23.10 · RECONSTRUCCIÓN", font=font(FONT_BOLD, 24), fill=ACCENT)
+    d.text((60, 54), "STARCRAFT 1.23.10 · RECONSTRUCTION", font=font(FONT_BOLD, 24), fill=ACCENT)
     d.text((60, 96), title, font=f_title, fill=FG)
     d.text((60, 164), subtitle, font=f_sub, fill=DIM)
 

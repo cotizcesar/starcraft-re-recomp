@@ -1,60 +1,60 @@
-# Entorno de trabajo — GalaxyCraft / StarCraft 1.23.10.13515
+# Working environment — GalaxyCraft / StarCraft 1.23.10.13515
 
-Registro de Fase 0 (descubrimiento). Comandos de solo lectura; detalle crudo en
-`logs/environment-check.log` (generado 2026-10-28T12:25:55Z).
+Phase 0 (discovery) record. Read-only commands; raw detail in
+`logs/environment-check.log` (generated 2026-10-28T12:25:55Z).
 
-## Sistema
+## System
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Distribución | Bazzite 44.20261026.0 (Kinoite, base Fedora 44, imagen inmutable) |
+| Distribution | Bazzite 44.20261026.0 (Kinoite, Fedora 44 base, immutable image) |
 | Kernel | Linux 7.2.11-ogc4.1.fc44.x86_64 |
-| Arquitectura | x86_64 |
-| CPU | AMD Ryzen 7 9800X3D (8 núcleos / 16 hilos) |
-| RAM | 30 GiB (20 GiB disponibles en la comprobación) |
+| Architecture | x86_64 |
+| CPU | AMD Ryzen 7 9800X3D (8 cores / 16 threads) |
+| RAM | 30 GiB (20 GiB available at check time) |
 | Swap | 15 GiB |
-| Disco `/var/home` | 929 G, 559 G libres (40 % usado) |
+| Disk `/var/home` | 929 G, 559 G free (40 % used) |
 | GPU | NVIDIA GeForce RTX 5070 Ti 16 GB (driver 615.78.08) + AMD Radeon 610M iGPU |
 
-## Runtime de herramientas
+## Tool runtime
 
-| Herramienta | Versión / ruta |
+| Tool | Version / path |
 |---|---|
 | git | 2.56.0 |
 | Node.js | v26.12.1 (linuxbrew) |
 | npm | 11.20.0 |
-| Python | 3.14.8 (`file`, `objdump`, `xxd`, `sha256sum` presentes) |
+| Python | 3.14.8 (`file`, `objdump`, `xxd`, `sha256sum` present) |
 | Rust / Cargo | 1.99.1 |
 | gcc | 16.2.1 |
-| Ghidra | 12.1.4 y 12.2_PUBLIC en `~/.local/share/ghidra/` + JDK Temurin 21.0.13+9 |
-| OpenCode | v2.2.0 (`~/.opencode/bin/opencode`). Cadena oficial de análisis |
-| Hermes Agent | **no se usa** (decisión 2026-10-28: fuera de la cadena de trabajo) |
-| CLI `rea` | no existe en PATH (se usa vía MCP `rea-agents@6.8.0`) |
-| Contenedores | `podman`, `distrobox` disponibles; `docker` ausente |
-| Wine | sin binario `wine` en PATH (el juego se ejecuta vía Lutris/Proton) |
+| Ghidra | 12.1.4 and 12.2_PUBLIC in `~/.local/share/ghidra/` + JDK Temurin 21.0.13+9 |
+| OpenCode | v2.2.0 (`~/.opencode/bin/opencode`). Official analysis chain |
+| Hermes Agent | **not used** (decision 2026-10-28: out of the work chain) |
+| `rea` CLI | not on PATH (used via MCP `rea-agents@6.8.0`) |
+| Containers | `podman`, `distrobox` available; `docker` absent |
+| Wine | no `wine` binary on PATH (the game runs via Lutris/Proton) |
 
-Notas Bazzite: todo vive en el directorio personal, sin `sudo`. La imagen
-inmutable queda intacta.
+Bazzite notes: everything lives in the home directory, without `sudo`. The immutable
+image stays intact.
 
-## Rutas del proyecto
+## Project paths
 
-- Instalación original (intacta, solo lectura):
-  `~/Games/battlenet/drive_c/Program Files (x86)/StarCraft` (~5.5 GB,
-  build 1.23.10.13515 en `.build.info`).
-- Espacio de trabajo RE (canónico, no duplicar):
-  `~/ReverseEngineering/` (`original/ work/ analysis/ extracted/
+- Original install (intact, read-only):
+  `$SC_INSTALL` (`.../Program Files (x86)/StarCraft`, ~5.5 GB,
+  build 1.23.10.13515 in `.build.info`).
+- RE workspace (canonical, do not duplicate):
+  `research/` (`original/ work/ analysis/ extracted/
   reconstructed/ tests/ build/ docs/ logs/ manifests/ tools/`).
-  Inventario canónico: `~/ReverseEngineering/analysis/file-inventory.csv`
-  (724 archivos, 5 879 150 935 B con SHA-256).
-- Reconstrucción Rust (este repo): `~/Documents/galaxycraft`
-  (`src/`, `tests/`, `tools/`, `fixtures/`, `assets/` de conveniencia).
-  `original/` nunca se copia ni se modifica; `src/retail.rs` lee la
-  instalación del usuario con `--install` y materializa un caché derivado
-  borrable en `$XDG_CACHE_HOME/galaxycraft/`.
+  Canonical inventory: `research/manifests/inventory.csv`
+  (724 files, 5 879 150 935 B with SHA-256).
+- Rust reconstruction (this repo): `engine-rust/`
+  (`src/`, `tests/`, `tools/`, `fixtures/`, convenience `assets/`).
+  `original/` is never copied or modified; `src/retail.rs` reads the
+  user's install with `--install` and materializes a deletable derived cache
+  in `$XDG_CACHE_HOME/galaxycraft/`.
 
-## Diferencias con el registro previo (2026-10-28T06:50)
+## Differences from the previous record (2026-10-28T06:50)
 
-- Bazzite pasó de `44.20261012.0` / kernel `7.2.9` a `44.20261026.0` /
-  kernel `7.2.11`. Herramientas y versiones de runtime sin cambios.
-- Decisión 2026-10-28: Hermes queda fuera de la cadena de trabajo. Cadena
-  oficial: OpenCode + MCP `rea` (ver `docs/rea-opencode-integration.md`).
+- Bazzite went from `44.20261012.0` / kernel `7.2.9` to `44.20261026.0` /
+  kernel `7.2.11`. Tools and runtime versions unchanged.
+- Decision 2026-10-28: Hermes is out of the work chain. Official
+  chain: OpenCode + MCP `rea` (see `docs/rea-opencode-integration.md`).

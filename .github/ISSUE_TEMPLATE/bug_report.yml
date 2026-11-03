@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in the engine, the client or a tool behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach retail game files, screenshots of the original game or decompiled code.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and Rust version
+      placeholder: Fedora 44, rustc 1.99.1
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+      description: Compared with the original game where relevant (describe it in words, no screenshots).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      render: text

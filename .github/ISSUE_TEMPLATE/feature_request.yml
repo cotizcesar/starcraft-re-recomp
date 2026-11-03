@@ -1,0 +1,28 @@
+name: Feature or reconstruction task
+description: Propose missing behaviour (check PROGRESS.md first)
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Battle.net/online, the map editor and other game patches are out of scope.
+        Open items are listed in PROGRESS.md.
+  - type: input
+    id: progress
+    attributes:
+      label: PROGRESS.md item
+      description: The checklist item this addresses, or "new" if it should be added
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Behaviour in the original game
+      description: What the original does, and how you observed it
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance test
+      description: The observable check that proves it is done (test, gate, hash)
+    validations:
+      required: true

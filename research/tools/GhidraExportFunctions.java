@@ -7,10 +7,10 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 
 /**
- * Exporta el inventario de funciones del programa actual a CSV.
- * Uso (headless):
+ * Exports the current program's function inventory to CSV.
+ * Usage (headless):
  *   analyzeHeadless &lt;projdir&gt; &lt;proj&gt; -process &lt;exe&gt; -noanalysis
- *     -scriptPath ~/ReverseEngineering/tools -postScript GhidraExportFunctions.java &lt;salida.csv&gt;
+ *     -scriptPath research/tools -postScript GhidraExportFunctions.java &lt;output.csv&gt;
  */
 public class GhidraExportFunctions extends GhidraScript {
 
@@ -18,7 +18,7 @@ public class GhidraExportFunctions extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 1) {
-            printerr("Uso: GhidraExportFunctions.java <salida.csv>");
+            printerr("Usage: GhidraExportFunctions.java <output.csv>");
             return;
         }
         FunctionManager fm = currentProgram.getFunctionManager();
@@ -36,7 +36,7 @@ public class GhidraExportFunctions extends GhidraScript {
                     n++;
                 }
                 catch (Exception e) {
-                    // continua con la siguiente funcion
+                    // continue with the next function
                 }
             }
         }

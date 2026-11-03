@@ -1,98 +1,98 @@
-# Repeticiones (`gcrep` / `gcsave`): cómo grabar, verificar y reproducir partidas
+# Replays (`gcrep` / `gcsave`): how to record, verify and play back games
 
-Una repetición de GalaxyCraft es **el mapa + el registro de comandos** de la
-partida. No es un vídeo ni una copia del estado: al abrirla se reconstruye el
-mundo desde el `.chk` embebido y se reaplican los comandos tick a tick. Como la
-simulación es determinista (LCG con semilla fija y `World::issue` como única
-puerta de entrada de órdenes), el resultado es idéntico al de la partida
-original, y eso se comprueba con un hash de estado.
+A GalaxyCraft replay is **the map + the command log** of the
+game. It is not a video nor a copy of the state: opening it rebuilds the
+world from the embedded `.chk` and reapplies the commands tick by tick. Since the
+simulation is deterministic (LCG with a fixed seed and `World::issue` as the only
+entry point for orders), the result is identical to the original
+game, and this is checked with a state hash.
 
 ---
 
-## 1. Grabar desde el juego
+## 1. Recording from the game
 
-| Acción | Tecla | Qué escribe |
+| Action | Key | What it writes |
 |---|---|---|
-| Guardar partida | `F5` | `save-NNN.gcsave` en `<dir>/saves/` |
-| Guardar repetición | `F6` | `replay-NNN.gcrep` en `<dir>/replays/` |
+| Save game | `F5` | `save-NNN.gcsave` in `<dir>/saves/` |
+| Save replay | `F6` | `replay-NNN.gcrep` in `<dir>/replays/` |
 
-`<dir>` es, por orden:
+`<dir>` is, in order:
 
-1. `$GALAXYCRAFT_SAVES`, si está definido,
-2. `$XDG_CACHE_HOME/galaxycraft`, si está definido,
+1. `$GALAXYCRAFT_SAVES`, if defined,
+2. `$XDG_CACHE_HOME/galaxycraft`, if defined,
 3. `~/.cache/galaxycraft`.
 
-Ejemplo real en esta máquina:
+Real example on this machine:
 
 ```bash
 $ ls ~/.cache/galaxycraft/replays ~/.cache/galaxycraft/saves
 ```
 
-Para llevarte una repetición a otro equipo basta copiar el `.gcrep`: lleva el
-`.chk` dentro, así que no depende de que el mapa siga estando instalado.
+To take a replay to another computer, just copy the `.gcrep`: it carries the
+`.chk` inside, so it does not depend on the map still being installed.
 
 ```bash
-cp ~/.cache/galaxycraft/replays/replay-001.gcrep /tmp/mi-partida.gcrep
+cp ~/.cache/galaxycraft/replays/replay-001.gcrep /tmp/my-game.gcrep
 ```
 
-El mensaje en pantalla al guardar confirma la ruta y el tick:
+The on-screen message when saving confirms the path and the tick:
 
 ```
-Replay saved /home/<usuario>/.cache/galaxycraft/replays/replay-001.gcrep
+Replay saved /home/<user>/.cache/galaxycraft/replays/replay-001.gcrep
 ```
 
-## 2. Reproducir
+## 2. Playing back
 
-### Desde el menú
+### From the menu
 
-`Multiplayer → Replays` (o `Single Player → Load Replay`) lista los `.gcrep`
-encontrados; `↑`/`↓` selecciona, `Enter` reproduce y `Supr` borra.
+`Multiplayer → Replays` (or `Single Player → Load Replay`) lists the `.gcrep`
+files found; `↑`/`↓` selects, `Enter` plays and `Del` deletes.
 
-Durante la reproducción:
+During playback:
 
-| Tecla | Acción |
+| Key | Action |
 |---|---|
-| `Espacio` | pausa / reanuda |
-| `+` / `-` | velocidad arriba / abajo |
-| `Esc` | detener y volver al menú |
+| `Space` | pause / resume |
+| `+` / `-` | speed up / down |
+| `Esc` | stop and return to the menu |
 
-### Desde la línea de comandos
+### From the command line
 
 ```bash
 cargo run --release --bin sc_view -- \
-  --install "/ruta/a/StarCraft" \
-  --replay /tmp/mi-partida.gcrep
+  --install "$SC_INSTALL" \
+  --replay /tmp/my-game.gcrep
 ```
 
-`--replay` acepta un `.gcrep` **o** un `.gcsave` (en ambos casos se abre como
-repetición, sin IA). Si el fichero no es un guardado válido el cliente sale con
-código 1 y un mensaje claro, en vez de abrir el menú.
+`--replay` accepts a `.gcrep` **or** a `.gcsave` (in both cases it opens as a
+replay, without AI). If the file is not a valid save the client exits with
+code 1 and a clear message, instead of opening the menu.
 
-Para una captura sin ventana (CI, comparación de pantallas):
+For a windowless capture (CI, screen comparison):
 
 ```bash
-cargo run --release --bin sc_view -- --replay /tmp/mi-partida.gcrep \
+cargo run --release --bin sc_view -- --replay /tmp/my-game.gcrep \
   --width 3440 --height 1440 --shot /tmp/replay.bmp --shot-screen replay
 ```
 
-## 3. Crear, inspeccionar y verificar sin jugar
+## 3. Create, inspect and verify without playing
 
-`sc_replaytool` graba una partida IA-vs-IA determinista, imprime lo que contiene
-un fichero y comprueba que dos reproducciones del mismo log coinciden.
+`sc_replaytool` records a deterministic AI-vs-AI game, prints what a
+file contains and checks that two playbacks of the same log match.
 
 ```bash
-# 1) grabar una demo (25 s de juego, mapa incluido)
+# 1) record a demo (25 s of gameplay, map included)
 cargo run --release --bin sc_replaytool -- \
   make --chk assets/maps/Boxer.chk --ticks 600 --out /tmp/demo.gcrep
 
-# 2) ver qué contiene
+# 2) see what it contains
 cargo run --release --bin sc_replaytool -- info /tmp/demo.gcrep
 
-# 3) verificar determinismo (dos pasadas, mismo hash)
+# 3) verify determinism (two passes, same hash)
 cargo run --release --bin sc_replaytool -- verify /tmp/demo.gcrep
 ```
 
-Salida comprobada en esta máquina:
+Output checked on this machine:
 
 ```
 $ ./target/release/sc_replaytool make --chk assets/maps/Boxer.chk --ticks 600 --out /tmp/opencode/demo.gcrep
@@ -106,39 +106,39 @@ run #2   f1127320cf799060
 OK: the command log replays identically
 ```
 
-`run #1` puede compararse además con el hash que imprimió `make`: si coincide,
-la partida grabada y la reproducida son el mismo estado.
+`run #1` can additionally be compared with the hash printed by `make`: if it matches,
+the recorded game and the played-back one are the same state.
 
-## 4. Formato (para copiarlo o reimplementarlo)
+## 4. Format (to copy or reimplement it)
 
-Todo entero es little-endian. Dos contenedores: `gcsave` (envoltorio) y `gcrep`
-(registro puro).
+All integers are little-endian. Two containers: `gcsave` (wrapper) and `gcrep`
+(pure log).
 
-### `.gcrep` — `GCS1`, versión 2
+### `.gcrep` — `GCS1`, version 2
 
 ```
 u32  magic  0x47435331 ("GCS1")
 u16  version 2
-u64  seed                 semilla del RNG del mundo
-u8[32] map_hash           SHA-256 del CHK (0 si se creó a mano)
+u64  seed                 world RNG seed
+u8[32] map_hash           SHA-256 of the CHK (0 if created by hand)
 u32  cmd_count
-cmd* comando:
-     u64 tick             tick en el que se aplica (antes de step)
+cmd* command:
+     u64 tick             tick at which it is applied (before step)
      u8  kind             0 = Issue, 1 = Train, 2 = Morph, 3 = MorphBuilding
-     ... payload según kind
-u8[32] sha256(payload)    checksum de todo lo anterior
+     ... payload depending on kind
+u8[32] sha256(payload)    checksum of everything above
 ```
 
-Payload de cada comando:
+Payload of each command:
 
 | kind | payload |
 |---|---|
-| 0 `Issue` | `u32 unit` + orden (tag `u8` + campos) |
+| 0 `Issue` | `u32 unit` + order (`u8` tag + fields) |
 | 1 `Train` | `u32 building` + `u16 unit_type` |
 | 2 `Morph` | `u32 larva` + `u16 unit_type` |
 | 3 `MorphBuilding` | `u32 source` + `u16 unit_type` |
 
-Órdenes (`Order`, tag = orden de declaración): `0 Idle`, `1 Stop`,
+Orders (`Order`, tag = declaration order): `0 Idle`, `1 Stop`,
 `2 Move{pos}`, `3 AttackMove{pos}`, `4 AttackUnit{target}`, `5 HoldPosition`,
 `6 Patrol{a,b,forward}`, `7 Gather{resource}`, `8 ReturnCargo{depot}`,
 `9 Build{type,pos}`, `10 Repair{target}`, `11 Train{type}`, `12 Research{tech}`,
@@ -146,51 +146,51 @@ Payload de cada comando:
 `16 Unload`, `17 Burrow`, `18 Unburrow`, `19 Siege`, `20 Unsiege`, `21 Lift`,
 `22 Land{pos}`, `23 Die`.
 
-### `.gcsave` — `GCSF`, versión 1
+### `.gcsave` — `GCSF`, version 1
 
 ```
 u32  magic  0x47435356 ("GCSF")
 u16  version 1
-str  map_name             u32 len + bytes (máx. 1024)
+str  map_name             u32 len + bytes (max. 1024)
 u32  chk_len
-u8[] map_chk              CHK embebido (máx. 8 MiB)
+u8[] map_chk              embedded CHK (max. 8 MiB)
 u32  race_count
 u8[] races                0 Zerg, 1 Terran, 2 Protoss, 3 Neutral
 u32  local_player
-u64  tick                 tick del guardado
+u64  tick                 tick of the save
 u32  rec_len
-u8[] rec                  un `.gcrep` completo
+u8[] rec                  a complete `.gcrep`
 u8[32] sha256(payload)
 ```
 
-Límites que el lector aplica antes de reservar memoria: `chk_len ≤ 8 MiB`,
-`cmd_count ≤ 10 000 000`, `race_count ≤ 12`. Un fichero que no cumpla el magic,
-la versión, el checksum o el tamaño se rechaza con `None` (nunca entra en
-pánico): ver `tests/replay.rs::corrupt_file_is_rejected`.
+Limits the reader enforces before allocating memory: `chk_len ≤ 8 MiB`,
+`cmd_count ≤ 10 000 000`, `race_count ≤ 12`. A file that fails the magic,
+version, checksum or size check is rejected with `None` (it never
+panics): see `tests/replay.rs::corrupt_file_is_rejected`.
 
-## 5. Restaurar: cómo se reaplica
+## 5. Restoring: how it is reapplied
 
-`replay_to(world, rec, upto_tick)` (en `src/replay.rs`) es la única
-implementación de la reproducción, compartida por guardado, repetición y LAN:
+`replay_to(world, rec, upto_tick)` (in `src/replay.rs`) is the only
+implementation of playback, shared by save, replay and LAN:
 
 ```text
-mientras world.tick < upto_tick:
-    aplicar los comandos estampados en world.tick (en orden)
+while world.tick < upto_tick:
+    apply the commands stamped at world.tick (in order)
     world.step()
-aplicar los comandos estampados exactamente en upto_tick (sin step)
+apply the commands stamped exactly at upto_tick (no step)
 ```
 
-Por eso un guardado cargado y una repetición vista usan exactamente el mismo
-camino que la partida en vivo, y `state_hash(&world)` debe coincidir con el de
-la sesión original en el mismo tick (`tests/replay.rs`:
+That is why a loaded save and a watched replay use exactly the same
+path as the live game, and `state_hash(&world)` must match the one from
+the original session at the same tick (`tests/replay.rs`:
 
 - `savefile_roundtrip_with_embedded_map`
 - `boxer_with_ai_save_reload_replays_identically`).
 
-## 6. Problemas típicos
+## 6. Common problems
 
-| Síntoma | Causa | Solución |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `cannot replay X: not a GalaxyCraft save/replay` | fichero `.rep` retail o corrupto | usa `sc_replay` para inspeccionar `.rep` de StarCraft; GalaxyCraft solo lee `gcrep`/`gcsave` |
-| la reproducción se detiene antes | el `.gcrep` se grabó a mitad de partida | es normal: `tick` es el último tick grabado |
-| el hash final no coincide | se editó el `.gcrep` | recalcula el checksum grabando de nuevo; `sc_replaytool verify` lo detecta |
+| `cannot replay X: not a GalaxyCraft save/replay` | retail `.rep` file or corrupt file | use `sc_replay` to inspect StarCraft `.rep` files; GalaxyCraft only reads `gcrep`/`gcsave` |
+| playback stops early | the `.gcrep` was recorded mid-game | this is normal: `tick` is the last recorded tick |
+| the final hash does not match | the `.gcrep` was edited | recompute the checksum by recording again; `sc_replaytool verify` detects it |

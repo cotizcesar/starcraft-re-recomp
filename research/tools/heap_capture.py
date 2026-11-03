@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Captura de solo lectura de regiones RW (heap) de un proceso Wine/Proton.
+"""Read-only capture of RW (heap) regions of a Wine/Proton process.
 
-No adjunta depurador, no escribe en el proceso. Lee /proc/<pid>/mem con
-pread y vuelca cada region RW anonima o memfd a work/heap_<ts>/<base>.bin,
-con manifiesto (base, tamano, perms, origen). Por defecto omite
-librerias del sistema (file-backed con ruta .so/.dll) y limita cada
-region a --cap-miB (las recorta y lo anota).
+Does not attach a debugger, does not write to the process. Reads /proc/<pid>/mem with
+pread and dumps each anonymous or memfd RW region to work/heap_<ts>/<base>.bin,
+with a manifest (base, size, perms, origin). By default it skips
+system libraries (file-backed with a .so/.dll path) and caps each
+region at --cap-miB (truncating it and noting so).
 
-Uso:
+Usage:
   python3 tools/heap_capture.py --pid 12345 --out work/heap_ingame
   python3 tools/heap_capture.py --find StarCraft.exe --cap-miB 256
 """
@@ -30,7 +30,7 @@ def find_pid(name: str) -> int:
             continue
         if name.lower() in cmd.lower() and "heap_capture" not in cmd:
             return int(entry.name)
-    raise SystemExit(f"ERROR: no encuentro proceso con ~ {name!r}")
+    raise SystemExit(f"ERROR: no process found with ~ {name!r}")
 
 
 def regions(pid: int, cap: int) -> list[dict]:
@@ -46,8 +46,8 @@ def regions(pid: int, cap: int) -> list[dict]:
         start_s, end_s = addr.split("-")
         start, end = int(start_s, 16), int(end_s, 16)
         size = end - start
-        # Solo heap potencial: anonimo o memfd (Wine mapea el juego ahi).
-        # Las file-backed con ruta de sistema se omiten salvo --all.
+        # Potential heap only: anonymous or memfd (Wine maps the game there).
+        # File-backed regions with a system path are skipped unless --all.
         if path and not path.startswith(("/memfd:", "[stack", "[heap")):
             kind = "file"
         elif path.startswith("/memfd:"):
@@ -67,14 +67,14 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--cap-miB", type=int, default=512)
     ap.add_argument("--kinds", default="anon,memfd",
-                    help="clases a capturar, separadas por coma")
+                    help="kinds to capture, comma-separated")
     args = ap.parse_args()
     pid = args.pid or find_pid(args.find)
     cap = args.cap_miB * 1024 * 1024
     kinds = set(args.kinds.split(","))
     regs = [r for r in regions(pid, cap) if r["kind"] in kinds]
     total = sum(r["take"] for r in regs)
-    print(f"pid={pid} regiones={len(regs)} bytes~{total} ({total/1048576:.0f} MB)")
+    print(f"pid={pid} regions={len(regs)} bytes~{total} ({total/1048576:.0f} MB)")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     man = out / "manifest.txt"
@@ -95,7 +95,7 @@ def main() -> int:
                     off += len(blk)
                     left -= len(blk)
             except OSError as ex:
-                print(f"  aviso {name}: {ex} (parcial)")
+                print(f"  warning {name}: {ex} (partial)")
             p = out / name
             p.write_bytes(bytes(data))
             h = hashlib.sha256(bytes(data)).hexdigest()
@@ -103,7 +103,7 @@ def main() -> int:
                      f"full={r['size']} capped={int(r['capped'])} kind={r['kind']} "
                      f"sha256={h} path={r['path']}\n")
             print(f"  {name} {len(data)} B sha={h[:12]}")
-    print(f"manifiesto: {man}")
+    print(f"manifest: {man}")
     return 0
 
 

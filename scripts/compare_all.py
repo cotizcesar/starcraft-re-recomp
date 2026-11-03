@@ -97,30 +97,30 @@ def main() -> int:
         rows.append((i, os.path.basename(ref), screen, diff(ours, Path(ref))))
 
     measured = [r for r in rows if r[3] is not None]
-    out = ["# Informe de paridad visual (44 referencias)", ""]
-    out.append("Métrica: diferencia absoluta media por canal (0..255) entre nuestro")
-    out.append("render headless a 3440x1440 y la captura retail correspondiente.")
-    out.append("Menor es mejor; 0 sería idéntico (imposible con distinto estado de mapa).")
+    out = ["# Visual parity report (44 references)", ""]
+    out.append("Metric: mean absolute per-channel difference (0..255) between our")
+    out.append("headless render at 3440x1440 and the matching retail capture.")
+    out.append("Lower is better; 0 would be identical (impossible with a different map state).")
     out.append("")
-    out.append("| # | Referencia | Nuestra pantalla | mean\\|diff\\| |")
+    out.append("| # | Reference | Our screen | mean\\|diff\\| |")
     out.append("|---:|---|---|---:|")
     for i, name, screen, d in rows:
         out.append(f"| {i} | {name} | {screen} | {d:.2f} |" if d is not None
-                   else f"| {i} | {name} | {screen} | (sin render) |")
+                   else f"| {i} | {name} | {screen} | (no render) |")
     out.append("")
     if measured:
         vals = [d for *_, d in measured]
-        out.append(f"Cubiertas: **{len(measured)}/{len(rows)}**. "
-                   f"Media global **{sum(vals)/len(vals):.2f}**, "
-                   f"mejor **{min(vals):.2f}**, peor **{max(vals):.2f}**.")
+        out.append(f"Covered: **{len(measured)}/{len(rows)}**. "
+                   f"Global mean **{sum(vals)/len(vals):.2f}**, "
+                   f"best **{min(vals):.2f}**, worst **{max(vals):.2f}**.")
     (ROOT / "research/docs/parity-report.md").write_text("\n".join(out) + "\n")
 
     for i, name, screen, d in rows:
         print(f"{i:2d} {screen:<12} {'--' if d is None else f'{d:6.2f}'}  {name}")
     if measured:
         vals = [d for *_, d in measured]
-        print(f"\nCUBIERTAS {len(measured)}/{len(rows)}  media {sum(vals)/len(vals):.2f}  "
-              f"peor {max(vals):.2f}")
+        print(f"\nCOVERED {len(measured)}/{len(rows)}  mean {sum(vals)/len(vals):.2f}  "
+              f"worst {max(vals):.2f}")
     return 0
 
 

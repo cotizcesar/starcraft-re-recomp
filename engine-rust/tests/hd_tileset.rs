@@ -7,8 +7,11 @@ use std::path::Path;
 use galaxycraft::render::load_hd_megatiles;
 
 fn hd_path() -> Option<std::path::PathBuf> {
-    let root = std::env::var("GC_RETAIL_CACHE")
-        .unwrap_or_else(|_| "/home/cotizcesar/.cache/galaxycraft/retail-864772b9".to_string());
+    let root = std::env::var("GC_RETAIL_CACHE").unwrap_or_else(|_| {
+        let base = std::env::var("XDG_CACHE_HOME")
+            .unwrap_or_else(|_| format!("{}/.cache", std::env::var("HOME").unwrap_or_default()));
+        format!("{base}/galaxycraft/retail-864772b9")
+    });
     let p = Path::new(&root).join("hd2/tileset/badlands.dds.vr4");
     p.exists().then_some(p)
 }

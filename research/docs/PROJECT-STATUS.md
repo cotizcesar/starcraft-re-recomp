@@ -1,237 +1,245 @@
-# PROJECT STATUS — Reconstrucción de StarCraft 1.23.10.13515
+# PROJECT STATUS — Reconstruction of StarCraft 1.23.10.13515
 
-Última actualización: 2026-11-03 (en partida: las 8 capturas de
-(8)The Hunters reconstruidas desde reglas melee, 4.35–5.99 de media cruda
-frente a 20–28 al empezar; creep, visión, barras y círculos portados de la
-referencia OpenBW; `sprites.dat` y vf4 corregidos; puerta visual 51/51;
-victoria→progreso verificada de extremo a extremo y arrastre del pulgar del
-scrollbar implementado; pruebas en `engine-rust/docs/new_screenshots/`).
+> Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
-1. Objetivo general: reconstrucción verificable del comportamiento (código,
-   datos, contenido) hasta donde sea técnica y legalmente posible.
-2. Ubicación del juego: `/home/cotizcesar/Games/battlenet/drive_c/Program
-   Files (x86)/StarCraft` (~5.5 GB, confirmada por el usuario, solo lectura).
-3. Motor identificado: propietario Blizzard 1.23.10.13515, C/C++ nativo
-   Win32 x86 (+ x86-64), CASC + MPQ por mapa, CEF solo en lanzador.
-4. Versión aproximada: 1.23.10.13515 exacta por `.build.info`.
-5. Estado de REA: registrado, servidor iniciado, E2E PASS con Ghidra 12.1.4
-   (20 862 proc / 13 326 strings, Launcher PE). Sin Hermes.
-6. Herramientas comprobadas: OpenCode v2.2.0 + `rea-agents@6.8.0` con env;
+Last update: 2026-11-03 (in-game: the 8 screenshots of
+(8)The Hunters rebuilt from melee rules, 4.35–5.99 raw mean
+vs 20–28 at the start; creep, vision, bars and circles ported from the
+OpenBW reference; `sprites.dat` and vf4 fixed; visual gate 51/51;
+victory→progress verified end to end and scrollbar thumb dragging
+implemented; proofs in `engine-rust/docs/proof-sheets/`).
+
+1. General goal: verifiable reconstruction of the behavior (code,
+   data, content) as far as technically and legally possible.
+2. Game location: `$SC_INSTALL` (a Wine/Battle.net prefix, `drive_c/Program
+   Files (x86)/StarCraft`; ~5.5 GB, confirmed by the user, read-only).
+3. Engine identified: proprietary Blizzard 1.23.10.13515, native C/C++
+   Win32 x86 (+ x86-64), CASC + MPQ per map, CEF only in the launcher.
+4. Approximate version: exactly 1.23.10.13515 per `.build.info`.
+5. REA status: registered, server started, E2E PASS with Ghidra 12.1.4
+   (20 862 procs / 13 326 strings, Launcher PE). No Hermes.
+6. Tools verified: OpenCode v2.2.0 + `rea-agents@6.8.0` with env;
    Ghidra 12.1.4 + JDK 21; `file/objdump/sha256sum`; Python 3.14; Rust 1.99;
-   gcc 16; `podman`/`distrobox`. Hopper ausente (no bloquea).
-7. Arquitectura actual: dos dumps válidos — menú 32 bits
-   (`work/sc_mem_menu_pe.exe`, `.text` 6.8950) e **in-game 64 bits**
+   gcc 16; `podman`/`distrobox`. Hopper absent (not blocking).
+7. Current architecture: two valid dumps — 32-bit menu
+   (`work/sc_mem_menu_pe.exe`, `.text` 6.8950) and **64-bit in-game**
    (`work/sc_mem_ingame64_20261028_0814_pe.exe`, `.text` 6.7975, `.text`
-   estable en 3 lecturas). Mapa pendiente de análisis de los dumps.
-8. Fase en curso: Fase 5 cerrada con veredictos (`docs/architecture.md`);
-   siguiente: validación/instrumentación pendiente (heap en juego,
-   `0x8aee30`, manifiesto extraído→origen, matriz A–F).
-9. Tareas terminadas: entorno, REA E2E, inventario (724, hashes OK),
-   `original-manifest/`, motor, estrategia, capabilities, rawness docs
-   (ver `docs/session-log.md`).
-10. Fase 5 cerrada con veredictos (`docs/architecture.md`): puerta `0x70e810`,
-    WndProc `0x945050` + thunk OO `0x9468e0`, paso-simulación `0x969f0d`,
-    nuke `0x5d3823` confirmado, 4 handlers CHK + TRIG decompilados,
-    TARGET_ORDER falsado en imagen, size-transfer debilitado, H2 (base 32b),
-    mapa cargado ausente (heap pendiente).
-11. Tareas pendientes: bomba `GetMessage` (baja prioridad); `0x8aee30`
-    aparcado; heap re-dump (requiere juego+usuario); manifiesto
-    extraído→origen; matriz A–F; P0+LAN (diseño listo).
-12. Bloqueos: REA MCP `binary_overview` en imágenes grandes →
-    `provider_timeout` (ver `docs/blockers.md`); mitigado con Ghidra directo
-    (EXIT:0 en ambos dumps: 32 bits 209 MB + 64 bits 242 MB).
-13. Últimas pruebas: E2E PASS (Launcher 4.8 MB); dumps `.text` descifrados
-    (32 bits 6.8950, 64 bits en juego 6.7975, `.text` estable en 3 lecturas);
-    `binary_overview` del dump 32 bits → `provider_timeout` ×2; `.build.info`
-    hash OK; original intacto.
-14. Diferencias conocidas: `galaxycraft/docs` registra paridad y límites
-    (sin guardar/cargar, sin replays, sin red; cosmética Carbot/WebM parcial).
-15. Última modificación: hallazgo dump válido + timeout REA documentados
-    (`docs/blockers.md`, `docs/tool-errors.md`); `analyzeHeadless` en fondo.
-16. Próxima acción: prueba física LAN en 2 PCs
-    (`scripts/lan_two_machines.sh`); después, completar `analyzeHeadless`
-    del dump. Recaptura en juego solo con tu autorización.
-    Menú principal + `Select Game Type` + las 13 vistas ampliadas
-    (Options×5, Collections, Hotkeys×4, Credits, GameType) reconstruidos
+   stable across 3 reads). Dump map pending analysis.
+8. Current phase: Phase 5 closed with verdicts (`docs/architecture.md`);
+   next: pending validation/instrumentation (in-game heap,
+   `0x8aee30`, extracted→origin manifest, A–F matrix).
+9. Finished tasks: environment, REA E2E, inventory (724, hashes OK),
+   `manifests/`, engine, strategy, capabilities, rawness docs
+   (see `docs/session-log.md`).
+10. Phase 5 closed with verdicts (`docs/architecture.md`): gate `0x70e810`,
+    WndProc `0x945050` + OO thunk `0x9468e0`, simulation step `0x969f0d`,
+    nuke `0x5d3823` confirmed, 4 CHK + TRIG handlers decompiled,
+    TARGET_ORDER falsified in the image, size-transfer weakened, H2 (32-bit base),
+    loaded map absent (heap pending).
+11. Pending tasks: `GetMessage` pump (low priority); `0x8aee30`
+    parked; heap re-dump (requires game+user); extracted→origin
+    manifest; A–F matrix; P0+LAN (design ready).
+12. Blockers: REA MCP `binary_overview` on large images →
+    `provider_timeout` (see `docs/blockers.md`); mitigated with direct Ghidra
+    (EXIT:0 on both dumps: 32-bit 209 MB + 64-bit 242 MB).
+13. Latest tests: E2E PASS (Launcher 4.8 MB); `.text` dumps decrypted
+    (32-bit 6.8950, 64-bit in-game 6.7975, `.text` stable across 3 reads);
+    `binary_overview` of the 32-bit dump → `provider_timeout` ×2; `.build.info`
+    hash OK; original untouched.
+14. Known differences: `galaxycraft/docs` records parity and limits
+    (no save/load, no replays, no network; partial Carbot/WebM cosmetics).
+15. Last modification: valid dump finding + REA timeout documented
+    (`docs/blockers.md`, `docs/tool-errors.md`); `analyzeHeadless` in background.
+16. Next action: physical LAN test on 2 PCs
+    (`scripts/lan_two_machines.sh`); then, complete `analyzeHeadless`
+    of the dump. In-game recapture only with your authorization.
+    Main menu + `Select Game Type` + the 13 extended views
+    (Options×5, Collections, Hotkeys×4, Credits, GameType) rebuilt
     (2026-10-30): RTTI/
-    vftable/constructor/command-handler decompilados
-    (`analysis/investigations/main-menu-re.md`), placa del diálogo a
-    360x200, Eurostile measure, ratón/hover, Original→I-III y
-    Expansión→IV-VI. Gate determinista de las 4 capturas del objetivo
-    (`--menu-at`, `scripts/menu_time_diff.py`): ruta real por defecto
-    1.62/1.86/1.70/1.83; ruta calibrada opcional (`--calibrated`)
-    0.01/0.01/0.01/0.03.  Interactivo validado a 1920x1080 sin capas
-    (hover, Single/Multi/Exit, Original/Expansión, Cancel, vuelta);
-    `ui_diff.py` 39/39. Oráculo retail ejecutado bajo Wine/Lutris directo
-    (`starcraft-direct`, `x86/StarCraft.exe -launch`) a 1920x1080: confirma
-    Multiplayer→`Select Game Type`→`Select Connection` (corregido) y
-    etiquetas a 1 px; capturas `real-*.png`.  En vivo a 3440x1440 el
-    content box es 2560x1440 en x=440..3000 y las etiquetas retail dan 0.10
-    contra #130637; corregido el rastro del cursor en el pillarbox
-    (`clear_menu_frame`, test).  Framerate del menú a 3440x1440:
-    11 fps → **58-60 fps** (draw 10-11 ms, present ~6 ms) con bilineal
-    entero, caché estática del chrome y clips sin bloqueo; evidencia en
-    `engine-rust/docs/evidence/menu-fps-3440.txt`. Oráculo 64-bit nativo
-    (umu-run + `x86_64/StarCraft.exe -launch`) a 3440x1440: etiquetas 0.38,
-    diálogo de #130727 0.32 contra las referencias; el residuo real (4.6 /
-    2.8) es solo AA de texto, no geometría.  Goal ampliado a **19 vistas**
-    (las 13 de Options/Collections/Hotkeys/Credits/GameType más Registry,
-    Saved Games, Replays, dos Create/lobby y la segunda de GameType):
-    capas `gcal` v2 (i16) por referencia y
-    `ui_visual_diff.py --calibrated --goal-only` **19/19 a 0.00**; la
-    puerta completa sube a 23/31 en las 31 originales (solo Episode/Mission
-    quedan fuera); con las 12 capturas nuevas el conjunto es 35/43 y las
-    Hotkeys nuevas pasan todas sin capas.
-    Hotkeys 131015/131026/131037/131049 reconstruido con el bundle CEF
-    real (`hotkeypanel.js`) y geometría 1:1 medida (placa 354..2202 x
-    117..1256, pestañas 261x75, celdas 96/105, tarjetas en x
-    1164/1504/1843, rebind de Larva).  El render determinista queda en
-    0.76/0.95/1.02/0.91 de media sin calibración (131015/131026/131037/
-    131049); con capas regeneradas siguen a 0.00 y el goal de 19 vistas a
-    19/19.  Rasterizado CEF igualado con escala vertical de
-    glifos, cmdicons a 128 con bilineal premultiplicado y 272/273 en
+    vftable/constructor/command-handler decompiled
+    (`analysis/investigations/main-menu-re.md`), dialog plate at
+    360x200, Eurostile measure, mouse/hover, Original→I-III and
+    Expansion→IV-VI. Deterministic gate for the 4 goal screenshots
+    (`--menu-at`, `scripts/menu_time_diff.py`): real path by default
+    1.62/1.86/1.70/1.83; optional calibrated path (`--calibrated`)
+    0.01/0.01/0.01/0.03.  Interactive validated at 1920x1080 without layers
+    (hover, Single/Multi/Exit, Original/Expansion, Cancel, back);
+    `ui_diff.py` 39/39. Retail oracle run under Wine/Lutris directly
+    (`starcraft-direct`, `x86/StarCraft.exe -launch`) at 1920x1080: confirms
+    Multiplayer→`Select Game Type`→`Select Connection` (fixed) and
+    labels within 1 px; screenshots `real-*.png`.  Live at 3440x1440 the
+    content box is 2560x1440 at x=440..3000 and the retail labels give 0.10
+    against #130637; fixed the cursor trail in the pillarbox
+    (`clear_menu_frame`, test).  Menu framerate at 3440x1440:
+    11 fps → **58-60 fps** (draw 10-11 ms, present ~6 ms) with integer
+    bilinear, static chrome cache and non-blocking clips; evidence in
+    `engine-rust/docs/evidence/menu-fps-3440.txt`. Native 64-bit oracle
+    (umu-run + `x86_64/StarCraft.exe -launch`) at 3440x1440: labels 0.38,
+    dialog of #130727 0.32 against the references; the real residue (4.6 /
+    2.8) is only text AA, not geometry.  Goal extended to **19 views**
+    (the 13 of Options/Collections/Hotkeys/Credits/GameType plus Registry,
+    Saved Games, Replays, two Create/lobby and the second GameType one):
+    `gcal` v2 (i16) layers per reference and
+    `ui_visual_diff.py --calibrated --goal-only` **19/19 at 0.00**; the
+    full gate rises to 23/31 on the 31 originals (only Episode/Mission
+    remain out); with the 12 new screenshots the set is 35/43 and the
+    new Hotkeys all pass without layers.
+    Hotkeys 131015/131026/131037/131049 rebuilt with the real CEF bundle
+    (`hotkeypanel.js`) and measured 1:1 geometry (plate 354..2202 x
+    117..1256, tabs 261x75, cells 96/105, cards at x
+    1164/1504/1843, Larva rebind).  The deterministic render stays at
+    0.76/0.95/1.02/0.91 mean without calibration (131015/131026/131037/
+    131049); with regenerated layers they stay at 0.00 and the 19-view goal at
+    19/19.  CEF rasterization matched with vertical glyph
+    scaling, cmdicons at 128 with premultiplied bilinear and 272/273 on
     Probe.
-    Ampliado el 2026-10-31 con las 12 capturas nuevas: Marine y Command
-    Center (general + lifted), rebind de Move con 48 unidades, estado de
-    comandos desasignados de 115959 (aviso rojo y badge `unbound.png` en
-    las 12 unidades con Hold Position) y modal Restore defaults de
-    120018 (dim al 40 %, placas de radio 16).  El panel pasó a datos
-    completos (`fixtures/hotkeys.json`): 220 acciones y 88 unidades/
-    edificios (Terran 29, Protoss 28, Zerg 31) con las teclas `$default`
-    del cliente nativo; 88/88 renderizan tarjetas y el rebind aplica la
-    colisión CEF por unidad.  Save escribe un perfil `GCHK` v1 con
-    SHA-256 y el arranque lo carga.  Sin calibrar quedan 0.76–1.12 (el
-    modal 1.08 es solo AA de textos de 36/27 px).  El remate final de la
-    sesión 58 deja la portada con relleno/exterior hasta la fila 128 e
-    interior en 125, la pestaña seleccionada en 122/125, las no
-    seleccionadas en 113/116 y los botones inferiores con radios 15/9 px;
-    el hover de unidad es solo el marco verde de 3 px, sin tooltip.
-    `ui_visual_diff.py` cubre 43
-    referencias; las Hotkeys pasan 16/16, el goal sigue 19/19 (las cinco
-    Options quedan en 0.59-1.40 con las capas `.gcal` previas al rework;
-    el resto a 0.00), `ui_diff.py` 39/39, `cargo test` 318/318 y clippy 0.
-    Cursor y loops de menú (sesión 59): GRP de 5 frames 80x84 a 6 fps con
-    escala alto/1920 (56x58 px a 1440p vs 56x57 retail) y loops Single/
-    Multi/Exit a 10.5 fps (151 frames = 14.381 s; 105 = 10.0 s, sin
-    corte).  Options rehecho contra 130933/130938/130942/130949/130954:
-    pestañas, sliders de 7 topes, checkboxes con discos, dropdowns,
-    radios, input `60` y botones a 0-2 px.  Sesión 70 (2026-11-02): placa
-    en L con cajas sub-píxel, controles antialiasados medidos, menú vivo
-    bajo el modal (clips, marco dx 0, etiquetas idle) y texto con el
-    rasterizador de contorno CEF (`UiFont::draw_cef`): crudo 0.71-1.08 de
-    media (antes 1.89-2.95); prueba `engine-rust/docs/options-1to1-proof.png`.
-    Evidencia:
-    `engine-rust/docs/hotkeys-live-proof-{units,states}.png` y
+    Extended on 2026-10-31 with the 12 new screenshots: Marine and Command
+    Center (general + lifted), Move rebind with 48 units, unassigned
+    commands state of 115959 (red warning and `unbound.png` badge on
+    the 12 units with Hold Position) and Restore defaults modal of
+    120018 (dim at 40 %, radius 16 plates).  The panel moved to complete
+    data (`fixtures/hotkeys.json`): 220 actions and 88 units/
+    buildings (Terran 29, Protoss 28, Zerg 31) with the `$default` keys
+    of the native client; 88/88 render cards and the rebind applies the
+    per-unit CEF collision.  Save writes a `GCHK` v1 profile with
+    SHA-256 and startup loads it.  Uncalibrated they remain at 0.76–1.12 (the
+    modal 1.08 is only AA of 36/27 px text).  The final touch of
+    session 58 leaves the cover with fill/exterior up to row 128 and
+    interior at 125, the selected tab at 122/125, the unselected
+    ones at 113/116 and the bottom buttons with 15/9 px radii;
+    unit hover is only the 3 px green frame, no tooltip.
+    `ui_visual_diff.py` covers 43
+    references; the Hotkeys pass 16/16, the goal stays 19/19 (the five
+    Options remain at 0.59-1.40 with the `.gcal` layers from before the rework;
+    the rest at 0.00), `ui_diff.py` 39/39, `cargo test` 318/318 and clippy 0.
+    Cursor and menu loops (session 59): 5-frame 80x84 GRP at 6 fps with
+    height/1920 scaling (56x58 px at 1440p vs 56x57 retail) and Single/
+    Multi/Exit loops at 10.5 fps (151 frames = 14.381 s; 105 = 10.0 s, no
+    cut).  Options redone against 130933/130938/130942/130949/130954:
+    tabs, 7-stop sliders, checkboxes with discs, dropdowns,
+    radios, input `60` and buttons within 0-2 px.  Session 70 (2026-11-02): L-shaped
+    plate with sub-pixel boxes, measured antialiased controls, live menu
+    under the modal (clips, frame dx 0, idle labels) and text with the
+    CEF outline rasterizer (`UiFont::draw_cef`): raw 0.71-1.08
+    mean (before 1.89-2.95); proof `engine-rust/docs/options-1to1-proof.png`.
+    Evidence:
+    `engine-rust/docs/hotkeys-live-proof-{units,states}.png` and
     `research/docs/hotkeys-data.md`.
-    Registry se alcanza por Single → GameType → Original y su Ok lleva a
-    Episode; los botones Load Saved/Load Replay de Episode abren Saved y
-    Replays con ratón. Falsado el overlay Multi de
-    #130704 (era el casco del battlecruiser; 9 071 vs 55 280 píxeles
-    verdes).
-17. Intros: tabla del ejecutable 64 bits en `0x140ae7ae0` con 28 rutas
-    (`smk/blizzard.webm`, `smk/starintr.webm`, 25 filmes de acto,
-    `smk/starxintr.webm` y los `x<Race>`); implementada como playlist con
-    audio y test retail 28/28. Evidencia en `docs/session-log.md` 2026-10-29 (7).
-18. Pantalla de episodios y modal de misión (2026-11-02): reconstruidos
-    desde los diálogos retail `glucmpgn`/`gluexpcmpgn` y `rez/flc.json`
-    (campaña original: Zerg II izq., Terran I centro, Protoss III der.;
-    Brood War: Terran V izq., Protoss IV centro, Zerg VI der.), con los
-    webm reales (`disk*`, retratos, `*On`) a 10,5 fps, fondo `palcs` a 0,75
-    anclado a los bordes, placas `pBotL/pBotR` ancladas a su rect SD y el
-    modal `phist.dds` (1140x753 en 708,342) con título, 8 filas a paso 57 y
-    Ok/Cancel. Las 7 capturas tienen una ranura en hover cada una (ganancia
-    del clip `On` 0,96-0,99) y las 3 últimas son la pantalla de expansión
-    (anillo central 60 px más bajo). Puerta visual **43/43** con calibración
-    (campaña 2,27-4,11; antes 13,3-15,6) y `ui_diff` **39/39**.
-    Evidencia: `analysis/investigations/episode-screen-re.md`.
-19. Pantallas CEF (2026-11-02): Registry, Collections, Saved/Replays y
-    Lobby/Create reconstruidas desde el arte y los datos retail, sin depender
-    de capas: Registry usa `toonregistry/toonlistbg` (recorte 0..1300) +
-    `palnl/pok|pcancel`; Collections sigue el bundle
-    `collectionspanel.js` (placa única, celdas 353x224 con miniaturas
-    width-fit, 6 anunciadores, scrollbar y columna derecha); Create/Replays
-    usan el shell `glucreat` (`plistmap2`, `pinfo`, `pslots`, `pok`+`pcancel`
-    — `twobtnholder` y `pchat` descartados por SIFT/residuo). Se corrigió el
-    bug de `rounded_band` (rellenaba el rect cuando grosor > radio) y se
-    añadió blit DDS con recorte y alfa. Puerta cruda **43/43** (las 6
-    pantallas a 3,19/6,81/6,99/2,41/5,29/5,77/5,95; antes 9,28-15,09),
-    calibrada **43/43 a 0.00** con capas regeneradas (magnitud = residuo
-    nativo) y `ui_diff` **39/39**. Evidencia:
+    Registry is reached via Single → GameType → Original and its Ok leads to
+    Episode; Episode's Load Saved/Load Replay buttons open Saved and
+    Replays with the mouse. Falsified the Multi overlay of
+    #130704 (it was the battlecruiser hull; 9 071 vs 55 280 green
+    pixels).
+17. Intros: 64-bit executable table at `0x140ae7ae0` with 28 paths
+    (`smk/blizzard.webm`, `smk/starintr.webm`, 25 act films,
+    `smk/starxintr.webm` and the `x<Race>` ones); implemented as a playlist with
+    audio and retail test 28/28. Evidence in `docs/session-log.md` 2026-10-29 (7).
+18. Episode screen and mission modal (2026-11-02): rebuilt
+    from the retail dialogs `glucmpgn`/`gluexpcmpgn` and `rez/flc.json`
+    (original campaign: Zerg II left, Terran I center, Protoss III right;
+    Brood War: Terran V left, Protoss IV center, Zerg VI right), with the
+    real webm files (`disk*`, portraits, `*On`) at 10.5 fps, `palcs` background at 0.75
+    anchored to the edges, `pBotL/pBotR` plates anchored to their SD rect and the
+    `phist.dds` modal (1140x753 at 708,342) with title, 8 rows at step 57 and
+    Ok/Cancel. The 7 screenshots each have one slot in hover (gain
+    of the `On` clip 0.96-0.99) and the last 3 are the expansion screen
+    (center ring 60 px lower). Visual gate **43/43** with calibration
+    (campaign 2.27-4.11; before 13.3-15.6) and `ui_diff` **39/39**.
+    Evidence: `analysis/investigations/episode-screen-re.md`.
+19. CEF screens (2026-11-02): Registry, Collections, Saved/Replays and
+    Lobby/Create rebuilt from the retail art and data, without depending
+    on layers: Registry uses `toonregistry/toonlistbg` (crop 0..1300) +
+    `palnl/pok|pcancel`; Collections follows the
+    `collectionspanel.js` bundle (single plate, 353x224 cells with
+    width-fit thumbnails, 6 announcers, scrollbar and right column); Create/Replays
+    use the `glucreat` shell (`plistmap2`, `pinfo`, `pslots`, `pok`+`pcancel`
+    — `twobtnholder` and `pchat` discarded by SIFT/residue). Fixed the
+    `rounded_band` bug (it filled the rect when thickness > radius) and
+    added DDS blit with crop and alpha. Raw gate **43/43** (the 6
+    screens at 3.19/6.81/6.99/2.41/5.29/5.77/5.95; before 9.28-15.09),
+    calibrated **43/43 at 0.00** with regenerated layers (magnitude = native
+    residue) and `ui_diff` **39/39**. Evidence:
     `analysis/investigations/cef-screens-re.md`.
-20. Menú completo (2026-11-02): ratón en todas las pantallas (Mission,
-    Saved/Replays, Lobby, Options con pestañas/Restore/Ok, Collections con
-    celdas y preview, Credits/Intro), tabla única de vuelta
-    `menu::back_destination` usada por cada rama de Escape, política de
-    sonidos hover/click/transición (`ui_move`/`ui_click`/`ui_swish`) y test
-    de timeline de los clips de campaña al reloj retail de 10,5 fps. Tests
-    326/326; puertas 43/43 crudo y calibrado y `ui_diff` 39/39. Evidencia:
+20. Complete menu (2026-11-02): mouse on all screens (Mission,
+    Saved/Replays, Lobby, Options with tabs/Restore/Ok, Collections with
+    cells and preview, Credits/Intro), single back table
+    `menu::back_destination` used by every Escape branch, hover/click/transition
+    sound policy (`ui_move`/`ui_click`/`ui_swish`) and timeline test
+    of the campaign clips against the retail 10.5 fps clock. Tests
+    326/326; gates 43/43 raw and calibrated and `ui_diff` 39/39. Evidence:
     `docs/session-log.md` 2026-11-02 (62).
-21. Options y Lobby interactivos + puerta de walkthrough (2026-11-02):
-    sliders de 7 topes, checks/radios y pestañas de Options con estado real
-    en `GameOptions`; dropdown de raza del Lobby (misma caja/orden que
-    134831, popup byte-idéntico a la región verificada) y filas de LAN
-    clicables. `scripts/menu_walkthrough.py` recorre 105 pasos y comprueba
-    23 transiciones (`ui_swish`), 28 pulsaciones (`ui_click`), 43 hovers
-    (`ui_move`), los valores de Options/Restore y 10 frames idénticos a los
-    renders headless de la puerta 43/43. Tests 332/332; `ui_visual_diff`
-    43/43 crudo y calibrado; `ui_diff` 39/39; hashes de los WAV de UI
-    verificados contra el install. Evidencia: `docs/session-log.md`
-    2026-11-02 (63) y `engine-rust/docs/menu-walkthrough.txt`.
-22. Hotkeys/LAN + retail en vivo (2026-11-02): sonidos de Hotkeys corregidos
-    (hover `ui_move`, selección `ui_click`), estados de Hotkeys y filas de LAN
-    en el walkthrough (129 pasos; SCV/Move/H/Restore/Protoss/Probe y
-    selección+join de un peer), con los 6 frames de Hotkeys idénticos a las
-    capturas de la puerta. El cliente retail se lanzó con Lutris/Proton y se
-    condujo con ratón uinput: Options/Collections/Select Game Type reales
-    (`docs/retail-live/`). La captura loopback no contiene los cues de UI: el
-    host CEF de este Proton no emite audio (RMS sin transitorio en clics y
-    correlación ≤0.4), así que el A/B de waveform queda pendiente de un
-    entorno con audio CEF; el mapeo de eventos sí está verificado en el JS
-    retail (`GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`/`GLUSND_SWISH_IN`).
-    Evidencia: `docs/session-log.md` 2026-11-02 (64),
-    `engine-rust/docs/retail-sound-mapping.txt`.
-23. CEF 64-bit + todos los monitores (2026-11-02): el cliente 64-bit lanza
-    `SceneCefBrowser.exe` y tampoco emite audio de UI; el sondeo de
-    sink-inputs solo ve el stream de StarCraft y el proceso CEF no abre
-    descriptores de audio. Persisten las cadenas GLUSND_* en ambos
-    ejecutables (SWISH_IN 0x140ade580, MOUSE_OVER 0x140ade5a8, MOUSE_DOWN
-    0x140ade5c0) y el enum CEF (165/166/172) con los WAV hasheados; la
-    resolución ID→fichero no está como string/CKey plana. A/B de waveform
-    pendiente de un entorno con audio CEF (login Battle.net y/o Wine/CEF con
-    salida de audio). Evidencia: `docs/session-log.md` 2026-11-02 (65) y
-    `engine-rust/docs/retail-sound-mapping.txt`.
-24. Sonidos retail capturados (2026-11-02): con el audio del juego activo y
-    el monitor del sink por defecto (JLB Go; nunca `gc_retail`, que silencia
-    el juego) se verificaron por correlación local `mouseover.wav`
-    (hover, |r| 0,54–0,65) y `mousedown2.wav` (clic, |r| 0,72–0,86, fase
-    invertida, latencia ~0,22 s). Los cambios de pantalla CEF no reproducen
-    `swishin.wav` (|r| ≤0,11) ni `swishout.wav` (≤0,26); el pico aparente de
-    `countdown.wav` es un falso positivo (correlaciona 0,72 con
-    `mousedown2.wav` a 0,09 s). El bundle CEF solo manda
-    `GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`. Queda decidir si se retira
-    `ui_swish` de las transiciones (1:1 estricto, recomendado) o se mantiene
-    como sabor clásico. Evidencia: `docs/session-log.md` 2026-11-02 (66) y
-    `engine-rust/docs/retail-sound-mapping.txt`.
-25. Política de sonido del menú corregida (2026-11-02): el retail CEF no
-    reproduce `swishin`/`swishout` al cambiar de panel; solo hover
-    (`mouseover`) y pulsación (`mousedown2`). Se retiró `ui_swish` de las 23
-    transiciones del menú (ahora `ui_click`), se eliminó
-    `menu::TRANSITION_SOUND` y el walkthrough exige `ui_click` en cada
-    transición y ningún swish. Tests 332/332, puertas 43/43 crudo y
-    calibrado, `ui_diff` 39/39. Evidencia: `docs/session-log.md`
+21. Interactive Options and Lobby + walkthrough gate (2026-11-02):
+    7-stop sliders, checks/radios and Options tabs with real state
+    in `GameOptions`; Lobby race dropdown (same box/order as
+    134831, popup byte-identical to the verified region) and clickable LAN
+    rows. `scripts/menu_walkthrough.py` walks 105 steps and checks
+    23 transitions (`ui_swish`), 28 presses (`ui_click`), 43 hovers
+    (`ui_move`), the Options/Restore values and 10 frames identical to the
+    headless renders of the 43/43 gate. Tests 332/332; `ui_visual_diff`
+    43/43 raw and calibrated; `ui_diff` 39/39; UI WAV hashes
+    verified against the install. Evidence: `docs/session-log.md`
+    2026-11-02 (63) and `engine-rust/docs/gates/menu-walkthrough.txt`.
+22. Hotkeys/LAN + live retail (2026-11-02): Hotkeys sounds fixed
+    (hover `ui_move`, selection `ui_click`), Hotkeys states and LAN rows
+    in the walkthrough (129 steps; SCV/Move/H/Restore/Protoss/Probe and
+    selection+join of a peer), with the 6 Hotkeys frames identical to the
+    gate screenshots. The retail client was launched with Lutris/Proton and
+    driven with a uinput mouse: real Options/Collections/Select Game Type
+    (`docs/retail-live/`). The loopback capture does not contain the UI cues: the
+    CEF host of this Proton emits no audio (RMS without transient on clicks and
+    correlation ≤0.4), so the waveform A/B remains pending an
+    environment with CEF audio; the event mapping is verified in the retail
+    JS (`GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`/`GLUSND_SWISH_IN`).
+    Evidence: `docs/session-log.md` 2026-11-02 (64),
+    `engine-rust/docs/gates/retail-sound-mapping.txt`.
+23. 64-bit CEF + all monitors (2026-11-02): the 64-bit client launches
+    `SceneCefBrowser.exe` and also emits no UI audio; probing
+    sink-inputs only sees the StarCraft stream and the CEF process opens no
+    audio descriptors. The GLUSND_* strings persist in both
+    executables (SWISH_IN 0x140ade580, MOUSE_OVER 0x140ade5a8, MOUSE_DOWN
+    0x140ade5c0) and the CEF enum (165/166/172) with the hashed WAVs; the
+    ID→file resolution is not a plain string/CKey. Waveform A/B
+    pending an environment with CEF audio (Battle.net login and/or Wine/CEF with
+    audio output). Evidence: `docs/session-log.md` 2026-11-02 (65) and
+    `engine-rust/docs/gates/retail-sound-mapping.txt`.
+24. Retail sounds captured (2026-11-02): with the game audio active and
+    the default sink monitor (JLB Go; never `gc_retail`, which mutes
+    the game), local correlation verified `mouseover.wav`
+    (hover, |r| 0.54–0.65) and `mousedown2.wav` (click, |r| 0.72–0.86, inverted
+    phase, latency ~0.22 s). CEF screen changes do not play
+    `swishin.wav` (|r| ≤0.11) nor `swishout.wav` (≤0.26); the apparent peak of
+    `countdown.wav` is a false positive (it correlates 0.72 with
+    `mousedown2.wav` at 0.09 s). The CEF bundle only sends
+    `GLUSND_MOUSE_OVER`/`GLUSND_MOUSE_DOWN`. It remains to decide whether
+    `ui_swish` is removed from transitions (strict 1:1, recommended) or kept
+    as classic flavor. Evidence: `docs/session-log.md` 2026-11-02 (66) and
+    `engine-rust/docs/gates/retail-sound-mapping.txt`.
+25. Menu sound policy fixed (2026-11-02): the CEF retail does not
+    play `swishin`/`swishout` when changing panel; only hover
+    (`mouseover`) and press (`mousedown2`). `ui_swish` was removed from the 23
+    menu transitions (now `ui_click`), `menu::TRANSITION_SOUND` was deleted
+    and the walkthrough requires `ui_click` on every
+    transition and no swish. Tests 332/332, gates 43/43 raw and
+    calibrated, `ui_diff` 39/39. Evidence: `docs/session-log.md`
     2026-11-02 (67).
-26. Regresión Options en ventanas anchas (2026-11-02): los tamaños de
-    columna/checkbox/radio/input usaban `dx()` (suma `cx`) en vez de `dxw()`;
-    en 16:9 no se veía, pero al maximizar (3440x1362, `cx=509`) la columna
-    derecha se salía del panel y los checkboxes se hacían gigantes.
-    Corregido a `dxw` y añadida una comprobación al walkthrough que renderiza
-    las cinco pestañas a 3440x1362 y exige todos los controles dentro del
-    panel. Las cinco pestañas quedan 1:1 (calibrado 0,00; crudo 5,20–6,26),
-    puerta 43/43, `ui_diff` 39/39, tests 332/332, clippy 0.
-    Evidencia: `docs/session-log.md` 2026-11-02 (68).
-27. Options 1:1 en vivo (2026-11-02): app fullscreen 3440x1440 (content
-    2560x1440 en x=440), Options/Speed abierto en vivo; el content box contra
-    `130933` da media 5,53 (panel 4,88), igual que la puerta headless (5,49).
-    Las cinco pestañas siguen a 0,00 calibrado y el guard de ventana ancha
-    pasa. Objetivo de Options cerrado. Evidencia: `docs/session-log.md`
+26. Options regression on wide windows (2026-11-02): the
+    column/checkbox/radio/input sizes used `dx()` (adds `cx`) instead of `dxw()`;
+    in 16:9 it was not visible, but when maximizing (3440x1362, `cx=509`) the right
+    column overflowed the panel and the checkboxes became gigantic.
+    Fixed to `dxw` and added a check to the walkthrough that renders
+    the five tabs at 3440x1362 and requires all controls inside the
+    panel. The five tabs stay 1:1 (calibrated 0.00; raw 5.20–6.26),
+    gate 43/43, `ui_diff` 39/39, tests 332/332, clippy 0.
+    Evidence: `docs/session-log.md` 2026-11-02 (68).
+27. Options 1:1 live (2026-11-02): fullscreen app 3440x1440 (content
+    2560x1440 at x=440), Options/Speed open live; the content box against
+    `130933` gives mean 5.53 (panel 4.88), same as the headless gate (5.49).
+    The five tabs remain at 0.00 calibrated and the wide-window guard
+    passes. Options goal closed. Evidence: `docs/session-log.md`
     2026-11-02 (69).
+28. Repository cleanup (2026-11-03): all docs in English; duplicates merged
+    (`research/manifests/`, `c-engine-provenance.md`, `rea-capabilities.md`,
+    `archive/` removed); gate outputs in `engine-rust/docs/gates/`; CI,
+    community files and the progress directive (`PROGRESS.md` generated by
+    `scripts/progress.py`, checked in CI). Evidence: `docs/session-log.md`
+    2026-11-03 (73).

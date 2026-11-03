@@ -4,9 +4,9 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 
 /**
- * Crea una funcion (body minimo) en cada direccion dada, solo si no hay ya
- * una que la contenga. Es progreso de analisis sobre NUESTRA base de datos;
- * no toca el original. Uso:
+ * Creates a function (minimal body) at each given address, only if there is not
+ * already one containing it. This is analysis progress on OUR database;
+ * it does not touch the original. Usage:
  *   ... -postScript CreateFunctionAt.java <addr1> ...
  */
 public class CreateFunctionAt extends GhidraScript {

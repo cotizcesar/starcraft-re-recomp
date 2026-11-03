@@ -1,61 +1,61 @@
-# Hotkeys: datos completos (1.23.10.13515)
+# Hotkeys: complete data (1.23.10.13515)
 
-## Por qué hacía falta extraerlos
+## Why they had to be extracted
 
-`webui/dist/hotkeypanel/hotkeypanel.js` contiene las 220 acciones
-(`id`, `x`, `y`, `icon`) y las 88 unidades/edificios con sus tarjetas, pero
-**no las teclas**: el cliente nativo las envía al CEF como
-`OnBindingsChanged`.  Reconstruir el panel con datos inventados o solo con
-las capturas de SCV/Marine/CC/Probe/Larva dejaba fuera al resto de unidades.
+`webui/dist/hotkeypanel/hotkeypanel.js` contains the 220 actions
+(`id`, `x`, `y`, `icon`) and the 88 units/buildings with their cards, but
+**not the keys**: the native client sends them to CEF as
+`OnBindingsChanged`.  Rebuilding the panel with invented data or only with
+the SCV/Marine/CC/Probe/Larva captures left out the rest of the units.
 
-## Cómo se extrajeron (solo lectura)
+## How they were extracted (read-only)
 
-1. El juego retail (64 bits) se ejecutó bajo `umu-run`/Wine y se abrió
-   `Hotkeys`.  El CEF carga la página desde un servidor local:
+1. The retail game (64-bit) was run under `umu-run`/Wine and
+   `Hotkeys` was opened.  CEF loads the page from a local server:
    `http://127.0.0.1:<port>/gamedata/webui/dist/HotkeyPanel/HotkeyPanel.html?locale=enUS&port=<port>&guid=<guid>`.
-   La URL viva queda en
+   The live URL is left in
    `drive_c/users/steamuser/AppData/Local/Temp/blizzard_browser_cache/data_*`.
-2. El panel abre un WebSocket en
-   `ws://127.0.0.1:<port>/panel/HotkeyPanel/<guid>` (la ruta sale del
-   `<route path="panel/HotkeyPanel">` del HTML).
-3. Al conectar, el nativo envía:
-   - `OnActionsDiscovered`: 230 textos de acción.
-   - `OnBindingsChanged`: 690 entradas por perfil, 230 acciones únicas,
-     `$default` = Brood War y `$device` = Custom.  Cada acción aparece 3
-     veces con el mismo valor (deduplicado).
-   - `OnProfilesDiscovered` y `ColorTable`.
-4. La herramienta reproducible es
-   `research/tools/extract_hotkeys_ws.py`; el volcado crudo está en
-   `research/analysis/hotkeys-bindings-retail-1.23.10.13515.json` y los
-   datos del JS en `research/analysis/hotkeys-actions-retail-1.23.10.13515.json`.
+2. The panel opens a WebSocket at
+   `ws://127.0.0.1:<port>/panel/HotkeyPanel/<guid>` (the path comes from the
+   HTML's `<route path="panel/HotkeyPanel">`).
+3. On connect, the native side sends:
+   - `OnActionsDiscovered`: 230 action texts.
+   - `OnBindingsChanged`: 690 entries per profile, 230 unique actions,
+     `$default` = Brood War and `$device` = Custom.  Each action appears 3
+     times with the same value (deduplicated).
+   - `OnProfilesDiscovered` and `ColorTable`.
+4. The reproducible tool is
+   `research/tools/extract_hotkeys_ws.py`; the raw dump is in
+   `research/analysis/hotkeys-bindings-retail-1.23.10.13515.json` and the
+   JS data in `research/analysis/hotkeys-actions-retail-1.23.10.13515.json`.
 
-## Fixture del cliente
+## Client fixture
 
-`engine-rust/fixtures/hotkeys.json` (105 KB) mezcla ambas fuentes:
+`engine-rust/fixtures/hotkeys.json` (105 KB) merges both sources:
 
-- `actions`: 220 acciones usadas por alguna tarjeta, con `label` (texto
-  localizado del nativo), `icon`, `x`, `y`, `default_text` y
-  `default_code` del perfil `$default`.
+- `actions`: 220 actions used by some card, with `label` (localized
+  text from the native side), `icon`, `x`, `y`, `default_text` and
+  `default_code` from the `$default` profile.
 - `units`: `terran` 29, `protoss` 28, `zerg` 31; `kind` =
-  `ground`/`air`/`basic-building`/`advanced-building`; `cards` con las
-  mismas etiquetas (`general`, `basicStructure`, `advancedStructure`,
+  `ground`/`air`/`basic-building`/`advanced-building`; `cards` with the
+  same labels (`general`, `basicStructure`, `advancedStructure`,
   `generalLifted`, `generalTankMode`, `generalSiegeMode`,
   `generalUncloaked`, `generalCloaked`, `generalBurrowed`).
-- Los iconos se resuelven por `cmdicons.N.png`; Probe 678/679 usan
-  272/273, como el JS original.
+- Icons are resolved via `cmdicons.N.png`; Probe 678/679 use
+  272/273, like the original JS.
 
-Las teclas compartidas cuadran con las capturas: Move 48 unidades, Stop 52,
-Attack 35, Patrol 38, Hold Position 38.  El perfil por defecto tiene 230
-acciones con tecla; las 10 acciones sin tarjeta visible no se incluyen.
+The shared keys match the captures: Move 48 units, Stop 52,
+Attack 35, Patrol 38, Hold Position 38.  The default profile has 230
+actions with a key; the 10 actions without a visible card are not included.
 
-## Verificación
+## Verification
 
-- `cargo test` incluye 8 tests del fixture: cobertura de todas las
-  acciones, 88 unidades únicas, teclas por defecto completas, conteos
-  compartidos, colisiones CEF (`Move=H` desasigna Hold Position y Build
-  Hatchery del Drone; `Move=M` colisiona con Train Marine en Barracks
-  Lifted) y round-trip/checksum del fichero de perfil.
-- Auditoría headless: 88/88 unidades y edificios renderizan sus tarjetas
-  (`--shot-screen hotkeys-any-<race>-<id>`, región de tarjetas con >8 000
-  píxeles brillantes).
-- Capturas: `docs/ui-hotkeys-16.txt` (16/16) y `docs/hotkeys-live-diff.txt`.
+- `cargo test` includes 8 fixture tests: coverage of all
+  actions, 88 unique units, complete default keys, shared
+  counts, CEF collisions (`Move=H` unbinds Hold Position and Build
+  Hatchery on the Drone; `Move=M` collides with Train Marine on Barracks
+  Lifted) and profile file round-trip/checksum.
+- Headless audit: 88/88 units and buildings render their cards
+  (`--shot-screen hotkeys-any-<race>-<id>`, card region with >8 000
+  bright pixels).
+- Captures: `docs/gates/ui-hotkeys-16.txt` (16/16) and `docs/gates/hotkeys-live-diff.txt`.

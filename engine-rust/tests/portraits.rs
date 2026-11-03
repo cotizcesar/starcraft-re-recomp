@@ -10,8 +10,8 @@ fn install_root() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let default =
-        PathBuf::from("/home/cotizcesar/Games/battlenet/drive_c/Program Files (x86)/StarCraft");
+    let default = PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join("Games/battlenet/drive_c/Program Files (x86)/StarCraft");
     default.is_dir().then_some(default)
 }
 

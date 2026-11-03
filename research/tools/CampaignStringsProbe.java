@@ -7,14 +7,14 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 
 /**
- * Sonda de cadenas para la pantalla de seleccion de campania (glucmpgn).
- * Vuelca toda cadena ASCII imprimible que contenga alguno de los patrones,
- * con direccion y contenido, para identificar clases RTTI (Screen/Campaign),
- * tablas de recursos y nombres FLC presentes en el dump de menu.
+ * String probe for the campaign selection screen (glucmpgn).
+ * Dumps every printable ASCII string containing any of the patterns,
+ * with address and content, to identify RTTI classes (Screen/Campaign),
+ * resource tables and FLC names present in the menu dump.
  *
- * Uso (headless, sin re-analisis):
+ * Usage (headless, no re-analysis):
  *   analyzeHeadless <projdir> <proj> -process sc_mem_menu_pe.exe -noanalysis
- *     -scriptPath research/tools -postScript CampaignStringsProbe.java <salida.txt> <patron>...
+ *     -scriptPath research/tools -postScript CampaignStringsProbe.java <output.txt> <pattern>...
  */
 public class CampaignStringsProbe extends GhidraScript {
 
@@ -22,7 +22,7 @@ public class CampaignStringsProbe extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            printerr("Uso: CampaignStringsProbe.java <salida.txt> <patron>...");
+            printerr("Usage: CampaignStringsProbe.java <output.txt> <pattern>...");
             return;
         }
         Memory mem = currentProgram.getMemory();

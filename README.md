@@ -1,120 +1,148 @@
-# starcraft-re-recomp — Reconstrucción jugable de StarCraft 1.23.10.13515
+# starcraft-re-recomp
 
-Reconstrucción **verificable y reproducible** del StarCraft 1.23.10.13515
-comercial (build del `.build.info`), a partir del ejecutable y sus datos
-CASC/MPQ. El original (`~/Games/battlenet/.../StarCraft`, 5.5 GB) **no**
-está aquí y nunca se modifica: solo se lee.
+[![CI](https://github.com/cotizcesar/starcraft-re-recomp/actions/workflows/ci.yml/badge.svg)](https://github.com/cotizcesar/starcraft-re-recomp/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Progress](https://img.shields.io/badge/progress-see%20PROGRESS.md-orange.svg)](PROGRESS.md)
 
-## Estructura (una carpeta, un motor activo)
+A **verifiable, reproducible reconstruction** of StarCraft 1.23.10.13515
+(Remastered client build), written in Rust and driven by evidence recovered
+from the shipped executable and its CASC/MPQ data.
 
-| Ruta | Qué es | Estado |
-|---|---|---|
-| `engine-rust/` | Reconstrucción en Rust: reglas de fidelidad total + cliente jugable `sc_view` | **Activo** — 246 tests verdes |
-| `research/` | Ingeniería inversa: inventario, dumps descifrados, proyectos Ghidra, 116k funciones, evidencias, planes (incluye `re-c.bundle`: historial del motor C eliminado, clona limpio) | Fase 5 cerrada en mapa |
-| `AGENTS.md` | Contrato del proyecto (principios, reglas, Definition of Done) | — |
-| `research/docs/PROJECT-STATUS.md` | Estado vivo del proyecto (16 campos) | — |
+The repository contains **no game assets**. The playable client reads the
+player's own legal StarCraft installation at runtime and never modifies it
+(see [NOTICE.md](NOTICE.md)).
 
-Rutas antiguas resueltas por enlaces: `~/ReverseEngineering` → `research/`
-(el enlace legacy `~/Documents/galaxycraft` se eliminó el 2026-10-29).
+> **Where are we?** See **[PROGRESS.md](PROGRESS.md)** for what already
+> works, what is missing and the completion percentage of each area. The
+> table there is generated from checklists and checked by CI.
 
-## Lo que hay (con prueba)
+## Highlights
 
-**Motor Rust (`engine-rust/`):**
-- **Reglas completas**: daño (matriz, escudos, armadura, tamaños), 10 balas /
-  25 hit types de proyectiles, movimiento A* octil + regiones + ciclo
-  iscript, colisiones, economía (8 minerales/viaje, gas, supply 200),
-  tech tree cableado, 25+ hechizos, transportes, bunkers, Nydus, visión /
-  niebla / detectores, triggers clásicos (cond. 0–23, acciones 1–59), IA de
-  campaña (`aiscript`/`bwscript`) e IA de escaramuza, iscript 0x00–0x44.
-- **Datos verificados**: 73/73 tablas idénticas al juego vivo; 323 mapas MPQ
-  + 68 de campaña simulan (0 fallos); tilesets, GRP, WAV/Ogg/voces vía
-  `--install` (nada retail en el repo salvo 9 WAV + tiles de conveniencia).
-- **Guardado y replays (P0 parcial)**: formato `.gcsave`/`.gcrep` con
-  magic+versión+SHA-256 (command log + fast-forward determinista); **F5**
-  guardar, **F6** guardar replay; pantallas Saved Games/Replays con
-  lista/carga/borrado; reproductor con **SPACE** pausa, **+/-** velocidad,
-  **R** reinicio, **ESC** salir. Test de ida y vuelta: guardar en tick T,
-  recargar, **hash idéntico** (incluido Boxer+IA, 300 ticks).
-- **Cliente jugable** `sc_view`: menú Remastered, briefing, misión, pausa,
-  victoria / derrota, HUD por raza, minimapa, hotkeys, niebla, leaderboard.
-  **Resolución**: 16:9 hasta 4K y ultrawide (la escala sale de la altura y
-  el mundo ocupa todo el ancho). Detalle y límites en
-  `research/docs/graphics-remastered.md`.
-- **LAN (lockstep, TCP + UDP)**: `src/net.rs` + binario `sc_lan` + lobby
-  dentro de `sc_view` (tecla **L**). Solo se intercambian comandos;
-  checksum de estado cada turno (4 ticks). Verificado con dos procesos y
-  mapa retail: TCP 2400 ticks (600 turnos) → hash idéntico
-  `76dfe3105027fa8a`; UDP 600 ticks → hash idéntico `bdf9377e0487c36f`.
-- **Descubrimiento LAN** por UDP broadcast (`:7778`) y **reconexión** por
-  resync del log de comandos (el peer se reconstruye con fast-forward, sin
-  transferir estado).
-- **Cobertura**: `cargo test` → 0 failed;
-  `cargo clippy --all-targets` → 0 avisos.
+- **Full-fidelity rules engine**: 228 units, 130 weapons, 189 orders and 137
+  order handlers transcribed from the binary. Damage, projectiles, A*
+  movement, economy, tech tree, spells, triggers, `iscript` and campaign AI
+  are all deterministic.
+- **Data verified against the live game**: 73/73 runtime tables identical.
+  All 323 shipped melee maps and 68 campaign missions load and simulate
+  (391/391, 0 failures).
+- **Playable client `sc_view`**: Remastered menus, campaign, briefings, HUD
+  per race, minimap, hotkeys, fog of war, saves, replays, 16:9 to 4K and
+  ultrawide.
+- **LAN multiplayer**: command-only lockstep over TCP or UDP, with discovery,
+  a lobby and resync. Two processes stay hash-identical over 2400 ticks.
+- **Reverse-engineering notes** with FACT vs INFERENCE discipline: memory
+  dumps, Ghidra projects, an architecture map and a dated log
+  ([research/docs](research/docs/README.md)).
 
-**Ingeniería inversa (`research/`):**
-- Inventario: 724 archivos, 5.88 GB, SHA-256 (`original-manifest/`).
-- Motor identificado: nativo Blizzard C/C++ x86+x86-64, CASC+MPQ, CEF solo
-  en lanzador; `.text` cifrado en disco → análisis sobre imagen descifrada.
-- Dos dumps descifrados verificados (menú 32b `.text` 6.8950, partida 64b
-  6.7975), proyectos Ghidra (209+242 MB), 56 948 + 59 706 funciones.
-- Mapa en `docs/architecture.md`: puerta `0x70e810`, WndProc `0x945050`,
-  paso de simulación `0x969f0d`, handler nuke `0x5d3823` confirmado,
-  4 handlers del parser CHK + TRIG decompilados, TARGET_ORDER falsado en
-  imagen. H2 (mismo engine, doble binario) confirmada.
-- E2E REA→Ghidra verificado; `binary_overview` MCP limitado en imágenes
-  grandes (vía directa `analyzeHeadless` documentada).
+## Repository layout
 
-**Motor C (eliminado 2026-10-28 tras migrar lo útil):** su save/load,
-replay-hashes y red-`socketpair` ya están portados como diseño y tests en
-`engine-rust`; evidencias en `research/docs/rea-evidence-c.md`, historial
-en `research/re-c.bundle`. DB simplificada: nunca se usó.
+| Path | Contents |
+|---|---|
+| [`engine-rust/`](engine-rust/README.md) | The engine and every binary (`sc_view`, `sc_lan`, `sc_assets`, …). Crate rules are in [`engine-rust/AGENTS.md`](engine-rust/AGENTS.md) |
+| [`scripts/`](scripts/README.md) | Harnesses: visual gates, headless renders, LAN acceptance, `progress.py` |
+| [`research/`](research/docs/README.md) | Reverse engineering: docs, install manifests, Ghidra/capture tools, history of the removed C engine |
+| [`PROGRESS.md`](PROGRESS.md) | What we have and what is missing, with percentages |
+| [`AGENTS.md`](AGENTS.md) | The project contract: principles, rules, Definition of Done |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, test and submit changes |
+| [`CHANGELOG.md`](CHANGELOG.md) | Notable changes |
 
-## Lo que falta
+## Quick start
 
-- **P0**: persistencia de perfil y progreso de campaña en disco (guardado /
-  replays / reproductor: hecho).
-- **LAN**: núcleo, UDP, descubrimiento, lobby en `sc_view` y reconexión
-  hechos y probados. Falta **la prueba física en 2 máquinas** (no
-  ejecutable desde esta sesión; arnés en `scripts/lan_two_machines.sh`),
-  lobby >2 jugadores en la UI y reconexión automática con backoff.
-  **Battle.net/online: fuera de alcance.**
-- **RE**: heap del mapa en memoria no capturado (requiere re-volcado con el
-  juego en marcha); `0x8aee30` aparcado (2 timeouts); bomba `GetMessage`
-  sin localizar (baja prioridad); manifiesto extraído→origen; matriz A–F.
-- **Cosmético**: skins Carbot/20.º aniversario, creep píxel-exacto, WebM
-  completo fuera de título/briefing.
-
-## Uso rápido
+Requirements: Rust (stable, 2021 edition), a C compiler (for the vendored
+PKWARE DCL decoder) and, to play, your own StarCraft: Remastered
+installation. On Linux the client uses X11 and ALSA; both are loaded at
+runtime.
 
 ```bash
-cd engine-rust             # todo lo de cargo/make se ejecuta aquí
-cargo test                # suite completa, sin instalación retail
-cargo clippy --all-targets
-cargo run --release --bin sc_view -- --install "/path/to/StarCraft"
-SC_NO_AUDIO=1 cargo run --release --bin sc_view -- --shot /tmp/x.bmp --shot-screen pause
+git clone https://github.com/cotizcesar/starcraft-re-recomp.git
+cd starcraft-re-recomp/engine-rust
 
-# LAN: PC 1 (host) y PC 2 (cliente), mismo mapa en ambas
+# Build, lint and run the client from your own install
+cargo build --release
+cargo clippy --all-targets -- -D warnings
+cargo run --release --bin sc_view -- --install "/path/to/StarCraft"
+
+# Headless screenshot (no window, no audio)
+SC_NO_AUDIO=1 cargo run --release --bin sc_view -- \
+  --install "/path/to/StarCraft" --shot /tmp/pause.bmp --shot-screen pause
+```
+
+The full test suite needs developer fixtures, which are Blizzard data. They
+are not in the repository, so you generate them once from your own install
+([`engine-rust/fixtures/README.md`](engine-rust/fixtures/README.md)):
+
+```bash
+export SC_INSTALL="/path/to/StarCraft"
+cargo run --release --bin sc_assets -- --install "$SC_INSTALL" fixtures --out fixtures
+python3 tools/extract_damage_table.py "$SC_INSTALL/x86/StarCraft.exe" fixtures
+python3 tools/oracle.py fixtures
+cargo test
+```
+
+### LAN
+
+```bash
+# PC 1 (host) and PC 2 (client), same map on both
 cargo run --release --bin sc_lan -- --host --chk map.chk --vf4 platform.vf4 \
   --races terran,protoss --ticks 28800
 cargo run --release --bin sc_lan -- --join 192.168.1.20:7777 \
   --chk map.chk --vf4 platform.vf4 --race protoss
-# (--udp en ambos lados para usar el transporte UDP)
+# add --udp on both sides for the UDP transport
 
-# Prueba de aceptación en dos máquinas (compara los LAN_RESULT):
-scripts/lan_two_machines.sh host  192.168.1.20 terran  map.chk platform.vf4 tcp
-scripts/lan_two_machines.sh join  192.168.1.20 protoss map.chk platform.vf4 tcp
+# Two-machine acceptance test (compares the printed LAN_RESULT lines)
+scripts/lan_two_machines.sh host 192.168.1.20 terran  map.chk platform.vf4 tcp
+scripts/lan_two_machines.sh join 192.168.1.20 protoss map.chk platform.vf4 tcp
 ```
 
-En el juego: menú → tipo de partida → **L** abre el lobby LAN
-(**S** escanear, **H** hospedar, **ENTER** unirse).
+In the client: main menu → game type → **L** opens the LAN lobby (**S** scan,
+**H** host, **Enter** join).
 
-Teclas: F5 guardar · F6 guardar replay · SPACE pausa/replay · +/- velocidad ·
-R reiniciar/reintentar · ESC menú · Enter cargar/reproducir · DEL borrar.
+### Keys
 
-## Porcentajes honestos (denominador explícito)
+| Key | Action |
+|---|---|
+| F5 / F6 | Save game / save replay |
+| Space | Pause / play replay |
+| `+` / `-` | Replay speed |
+| R | Restart / retry |
+| Esc | Menu / back |
+| Enter / Del | Load or play / delete (Saved Games, Replays) |
 
-- **Juego offline 1P**: reglas 40/40 + datos 20/20 + cliente 22/25 +
-  meta-funciones ~5/15 (falta perfil) ≈ **85 %**.
-- **Con LAN**: TCP y UDP, descubrimiento, lobby en cliente y reconexión
-  hechos y verificados; falta la prueba física en 2 PCs → **≈ 90 % de LAN**.
-- **Proceso RE (fases 0–16)**: Fases 0–5 cerradas con evidencia ≈ **30 %**.
+## How the project works
+
+- **Evidence before assumption.** Every finding records the file, address,
+  confidence and the experiment that would refute it. Falsifications are
+  published too ([session log](research/docs/session-log.md)).
+- **Determinism.** The simulation is a fixed-seed LCG. Saves, replays and
+  LAN are all a command log plus deterministic fast-forward, and tests
+  prove hash equality.
+- **Definition of Done.** `cargo test` 0 failed, clippy 0 warnings,
+  `cargo fmt --check` clean, `scripts/progress.py --check` OK, and the docs
+  updated. Details are in [AGENTS.md §7](AGENTS.md#7-definition-of-done-verifiable-no-exceptions).
+
+## Scope
+
+In scope: offline single player, the full campaign, skirmish against the AI,
+saves and replays, and LAN multiplayer. **Out of scope:** Battle.net and
+online services, the map/campaign editor, and other game patches.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Never attach retail game
+files, screenshots or decompiled Blizzard code to an issue or PR. Security
+reports: [SECURITY.md](SECURITY.md).
+
+## License
+
+Code is dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. The vendored PKWARE DCL decoder keeps its own license
+([`engine-rust/third_party/pklib/LICENSE`](engine-rust/third_party/pklib/LICENSE)).
+
+StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
+trademarks of Blizzard Entertainment, Inc. This project is not affiliated
+with or endorsed by Blizzard. See [NOTICE.md](NOTICE.md).

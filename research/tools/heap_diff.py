@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Diff de dos capturas de heap (mismo proceso, momentos distintos).
+"""Diff of two heap captures (same process, different moments).
 
-Para cada region comun (misma base) compara byte a byte, agrupa los cambios
-en rachas y, para cada dword cambiado, marca si parece puntero a codigo
-(dentro del rango del modulo), a datos o un valor escalar. Tambien detecta
-punteros nuevos que apunten a codigo: esos son los candidatos a tablas de
-handlers construidas en runtime (el despachador que no aparece estatico).
+For each common region (same base) it compares byte by byte, groups the changes
+into runs and, for each changed dword, marks whether it looks like a pointer to code
+(within the module range), to data, or a scalar value. It also detects
+new pointers into code: those are the candidates for handler tables
+built at runtime (the dispatcher that does not appear statically).
 
-Uso:
+Usage:
   python3 tools/heap_diff.py --a work/heap_A --b work/heap_B \
       --code-lo 0x6ffffade1000 --code-hi 0x6ffffb88d000
 """
@@ -50,7 +50,7 @@ def main() -> int:
 
     a, b = load_manifest(Path(args.a)), load_manifest(Path(args.b))
     common = sorted(set(a) & set(b))
-    print(f"regiones A={len(a)} B={len(b)} comunes={len(common)}")
+    print(f"regions A={len(a)} B={len(b)} common={len(common)}")
     total_changed = 0
     code_ptr_hits: list[tuple[int, int, int]] = []
     for base in common:
@@ -75,20 +75,20 @@ def main() -> int:
         if not changed:
             continue
         total_changed += changed
-        print(f"\nregion {base:#x} size={n} bytes_cambiados={changed} rachas={len(runs)}")
+        print(f"\nregion {base:#x} size={n} bytes_changed={changed} runs={len(runs)}")
         for (s, e) in runs[: args.max_runs]:
-            print(f"   racha {base + s:#x} len={e - s}")
-        # punteros a codigo en la region B (tablas construidas en runtime)
+            print(f"   run {base + s:#x} len={e - s}")
+        # pointers to code in region B (tables built at runtime)
         for off in range(0, n - 7, 8):
             va = struct.unpack_from("<Q", db, off)[0]
             if is_code(va, args.code_lo, args.code_hi):
                 old = struct.unpack_from("<Q", da, off)[0] if off + 8 <= len(da) else 0
                 if old != va:
                     code_ptr_hits.append((base + off, va, old))
-    print(f"\nTOTAL bytes cambiados: {total_changed}")
-    print(f"punteros nuevos a codigo: {len(code_ptr_hits)}")
+    print(f"\nTOTAL bytes changed: {total_changed}")
+    print(f"new pointers to code: {len(code_ptr_hits)}")
     for (where, new, old) in code_ptr_hits[:40]:
-        print(f"   @{where:#x} -> {new:#x} (antes {old:#x})")
+        print(f"   @{where:#x} -> {new:#x} (before {old:#x})")
     return 0
 
 

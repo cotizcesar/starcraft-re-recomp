@@ -1,32 +1,32 @@
-# Estrategia de análisis (Fase Cuatro)
+# Analysis strategy (Phase Four)
 
-Motor: código nativo (C/C++ propietario) + datos CASC/MPQ. Ruta: **nativa con
-REA+Ghidra para código; lectores dedicados para datos**. Sin Unity/Unreal/
-Godot/.NET/Java/web que justifiquen otros proveedores.
+Engine: native code (proprietary C/C++) + CASC/MPQ data. Path: **native with
+REA+Ghidra for code; dedicated readers for data**. No Unity/Unreal/
+Godot/.NET/Java/web that would justify other providers.
 
-## Verificación por formato (representantes)
+## Verification by format (representatives)
 
-| Formato | Representante | Herramienta | Resultado |
+| Format | Representative | Tool | Result |
 |---|---|---|---|
-| PE x86 | `StarCraft Launcher.exe` (copia `/tmp`) | REA+Ghidra 12.1.4 | PASS: 20 862 proc, 13 326 strings, base `0x400000` |
-| PE x86 juego | `x86/StarCraft.exe` (en disco, cifrado) | `file`/`objdump`/strings | PE válido, `.text` entropía ~8.0 → requiere dump |
-| CASC | `Data/data/data.000` + índices | `src/retail.rs` / casc_extract | tablas/tiles/GRP/WAV leídos |
-| MPQ mapas | `Maps/*.scm` (323) | `src/retail.rs` / mpq_extract | 323/323 descomprimidos y parseados |
-| iscript/aiscript | `scripts/*.bin` vía CASC | `src/iscript.rs`, `src/aiscript.rs` | opcodes 0x00..0x44 + AI completa |
-| CHK triggers | `staredit\scenario.chk` | `src/trigger.rs`, `src/map.rs` | condiciones 0..23, acciones 1..59 |
+| PE x86 | `StarCraft Launcher.exe` (copy in `/tmp`) | REA+Ghidra 12.1.4 | PASS: 20 862 proc, 13 326 strings, base `0x400000` |
+| PE x86 game | `x86/StarCraft.exe` (on disk, encrypted) | `file`/`objdump`/strings | valid PE, `.text` entropy ~8.0 → requires dump |
+| CASC | `Data/data/data.000` + indices | `src/retail.rs` / casc_extract | tables/tiles/GRP/WAV read |
+| MPQ maps | `Maps/*.scm` (323) | `src/retail.rs` / mpq_extract | 323/323 decompressed and parsed |
+| iscript/aiscript | `scripts/*.bin` via CASC | `src/iscript.rs`, `src/aiscript.rs` | opcodes 0x00..0x44 + full AI |
+| CHK triggers | `staredit\scenario.chk` | `src/trigger.rs`, `src/map.rs` | conditions 0..23, actions 1..59 |
 
-## Alcance
+## Scope
 
-- Nativo: funciones, xrefs, llamadas, símbolos, cadenas, tipos, estructuras,
-  pseudocódigo (Ghidra). Punto de partida: imagen descifrada (pendiente
-  recaptura; el dump 2026-10-27 ya no está en disco).
-- Datos: tablas DAT, TBL, GRP, tilesets, WAV/Ogg, CHK (ya decodificados en
-  `~/Documents/galaxycraft/`; reutilizar, no reinventar).
-- No instalar: IDA, Hopper (ausente y no necesario), ILSpy/dotNet (sin
-  objetivo), proveedores web/Java.
+- Native: functions, xrefs, calls, symbols, strings, types, structures,
+  pseudocode (Ghidra). Starting point: decrypted image (recapture
+  pending; the 2026-10-27 dump is no longer on disk).
+- Data: DAT, TBL, GRP tables, tilesets, WAV/Ogg, CHK (already decoded in
+  `engine-rust/`; reuse, do not reinvent).
+- Do not install: IDA, Hopper (absent and not needed), ILSpy/dotNet (no
+  target), web/Java providers.
 
-## Límites
+## Limits
 
-- Sin dump vigente no hay análisis estático nuevo del juego (bloqueo
-  documentado, no fracaso de herramientas).
-- Pseudocódigo ≠ fuente original; nombres inferidos se marcan.
+- Without a current dump there is no new static analysis of the game (documented
+  blocker, not a tool failure).
+- Pseudocode ≠ original source; inferred names are marked.

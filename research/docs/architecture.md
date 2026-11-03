@@ -1,102 +1,102 @@
-# Mapa de arquitectura — StarCraft 1.23.10.13515 (Fase 5)
+# Architecture map — StarCraft 1.23.10.13515 (Phase 5)
 
-Fecha: 2026-10-28. Síntesis de 4 pistas paralelas
+Date: 2026-10-28. Synthesis of 4 parallel tracks
 (`analysis/investigations/entry-loop.md`, `orders-iscript.md`,
-`diff32-64.md`, `triggers-data.md`). Todo verificado contra los informes;
-aquí solo se integra, no se re-analiza. Direcciones 32b = VA del dump
-(base `0x400000`); 64b = VA absoluta (base `0x6ffffade0000`).
+`diff32-64.md`, `triggers-data.md`). Everything verified against the reports;
+here it is only integrated, not re-analyzed. 32-bit addresses = dump VA
+(base `0x400000`); 64-bit = absolute VA (base `0x6ffffade0000`).
 
-Fórmula de rebase validada (A-H10, 4 rutinas): `VA_dump32 = VA_rt − 0x79fa0000 + 0x400000`.
+Validated rebase formula (A-H10, 4 routines): `VA_dump32 = VA_rt − 0x79fa0000 + 0x400000`.
 
-## 1. Arranque (confianza alta)
+## 1. Startup (high confidence)
 
-- `entry` (`0x4a73a0`, 5 B) = `AddressOfEntryPoint` → `jmp` a `mainCRTStartup`
-  MSVC (`___security_init_cookie`, `__initterm`, `__cexit`). Toolchain MSVC
-  confirmada; el juego no empieza en `entry`.
-- Puerta del juego: **`0x70e810`** (90 B, 1 único llamante = el CRT, prólogo
-  SEH, carga `Starcraft.ini` vía `0x70ac50`, publica `argv` en `0x117c834`).
-- Init confirmados: `0xc61f70` (ventana + contexto GL, `pm_gles::Context::Init`
-  = capa GL propia del remaster), `0x8aee30` (orquestador settings
-  Mouse/Video/Network/Sfx, 317 calls, 0 llamantes E8 → invocado por
-  puntero/hilo), cargadores GL (`0xc60b80`/`0xc5fe60`), bzip2, FMOD,
-  streaming CASC, cinemáticas WMV, decodificador de errores DX (`0x4f3828`).
-- Infra ubicua (ruido de fondo para xrefs): `0x93ec70` (11 166 llamantes),
-  `0x538810` (5 731), `0xc046b0` dispatcher de 361 casos (2 941, por
-  identificar: ¿assert/log/getString?).
+- `entry` (`0x4a73a0`, 5 B) = `AddressOfEntryPoint` → `jmp` to MSVC `mainCRTStartup`
+  (`___security_init_cookie`, `__initterm`, `__cexit`). MSVC toolchain
+  confirmed; the game does not start at `entry`.
+- Game gateway: **`0x70e810`** (90 B, 1 single caller = the CRT, SEH
+  prologue, loads `Starcraft.ini` via `0x70ac50`, publishes `argv` at `0x117c834`).
+- Confirmed init: `0xc61f70` (window + GL context, `pm_gles::Context::Init`
+  = the remaster's own GL layer), `0x8aee30` (Mouse/Video/Network/Sfx settings
+  orchestrator, 317 calls, 0 E8 callers → invoked via
+  pointer/thread), GL loaders (`0xc60b80`/`0xc5fe60`), bzip2, FMOD,
+  CASC streaming, WMV cinematics, DX error decoder (`0x4f3828`).
+- Ubiquitous infra (background noise for xrefs): `0x93ec70` (11 166 callers),
+  `0x538810` (5 731), `0xc046b0` 361-case dispatcher (2 941, to be
+  identified: assert/log/getString?).
 
-## 2. Bucle y mensajes (actualizado: WndProc CONFIRMADO)
+## 2. Loop and messages (updated: WndProc CONFIRMED)
 
-- **`0x945050` = WindowProc principal** (3 759 B, 57 refs IAT / 25 slots,
-  `switch(msg)` 67 casos, `msg<0x100`, `msg==0x400`, `wParam&0xffff`,
-  0 xrefs = callback registrado). Veredicto posterior al informe A.
-- Reenvío OO: `0x9468e0` (103 B, ×20 desde el WndProc) resuelve objeto vía
-  IAT `0xd305a8` y salta a vtable+4 con (msg,wParam,lParam) — thunk
-  mensaje→objeto. Confirma despacho por objetos, no switch monolítico.
-- **`0x969f0d` reclasificado**: 0 IAT (lógica interna pura) → paso de
-  simulación/trabajador, NO bomba de mensajes. Adyacente: `0xa80e70`.
-- Bomba externa `GetMessage` sin localizar (prioridad baja: el cliente
-  reimplementado pone su propio bucle). IAT confirmada en `0xd301xx`.
+- **`0x945050` = main WindowProc** (3 759 B, 57 IAT refs / 25 slots,
+  `switch(msg)` 67 cases, `msg<0x100`, `msg==0x400`, `wParam&0xffff`,
+  0 xrefs = registered callback). Verdict after report A.
+- OO forwarding: `0x9468e0` (103 B, ×20 from the WndProc) resolves the object via
+  IAT `0xd305a8` and jumps to vtable+4 with (msg,wParam,lParam) — a
+  message→object thunk. Confirms dispatch through objects, not a monolithic switch.
+- **`0x969f0d` reclassified**: 0 IAT (pure internal logic) → simulation/worker
+  step, NOT a message pump. Adjacent: `0xa80e70`.
+- External `GetMessage` pump not located (low priority: the
+  reimplemented client runs its own loop). IAT confirmed at `0xd301xx`.
 
-## 3. Órdenes + iscript (sistema presente, identificación pendiente)
+## 3. Orders + iscript (system present, identification pending)
 
-- HECHO: ambos dumps contienen el sistema (`arr\*.dat`, `scripts\*.bin`,
-  RTTI `COrder`/`CUnit`). Los **nombres de fila no están** en el binario
-  (13/13 ausentes): localizar por anclas (`STR_*/SND_*`, `rescue_*`,
-  `nukeWarning`, contadores) — tabla de anclas por familia en informe B §1.3.
-- Ranking de familias (1 Cast … 10 Patrol; detalle y pools size-exactos en B
-  §1.5/§2). Firma `TARGET_ORDER`: **falsada en imagen** — solo existe la
-  tabla identidad (`.data 0xb2a570` / `0xdd5190`); el remap vive en heap o la
-  ref. antigua no transfiere. Caza del despachador por estructura de switch.
-- **Nuke CONFIRMADO** (`FUN_005d3823`, 440 B, ancla `SND_NUKE_LAUNCH`):
-  `switch(CUnit+0x4e)` casos 0–6, transiciones `+0x4e=3/5`. Único llamante:
-  `FUN_005ca229` (+0x41, UNCONDITIONAL_CALL; 0 xrefs hacia él → vía tabla).
-  Callees = glue de errores. B-exp.1 (cast size-531): sin stores `+0x4e` →
-  hipótesis de transferencia por tamaño debilitada.
-- Experimentos listos: 8 con direcciones candidatas y firmas de pseudocódigo
-  (stores `CUnit+0x4e/0x54/0x84/0x85/0x55` + nº de callees).
+- FACT: both dumps contain the system (`arr\*.dat`, `scripts\*.bin`,
+  RTTI `COrder`/`CUnit`). The **row names are not** in the binary
+  (13/13 absent): locate them via anchors (`STR_*/SND_*`, `rescue_*`,
+  `nukeWarning`, counters) — anchor table per family in report B §1.3.
+- Family ranking (1 Cast … 10 Patrol; details and size-exact pools in B
+  §1.5/§2). `TARGET_ORDER` signature: **falsified in the image** — only the
+  identity table exists (`.data 0xb2a570` / `0xdd5190`); the remap lives in the heap or the
+  old reference does not transfer. Hunt for the dispatcher by switch structure.
+- **Nuke CONFIRMED** (`FUN_005d3823`, 440 B, anchor `SND_NUKE_LAUNCH`):
+  `switch(CUnit+0x4e)` cases 0–6, transitions `+0x4e=3/5`. Single caller:
+  `FUN_005ca229` (+0x41, UNCONDITIONAL_CALL; 0 xrefs to it → via a table).
+  Callees = error glue. B-exp.1 (cast size-531): no `+0x4e` stores →
+  size-transfer hypothesis weakened.
+- Experiments ready: 8 with candidate addresses and pseudocode signatures
+  (stores `CUnit+0x4e/0x54/0x84/0x85/0x55` + number of callees).
 
-## 4. Datos y triggers (tablas del motor: sí; mapa cargado: no)
+## 4. Data and triggers (engine tables: yes; loaded map: no)
 
-- Tablas del parser CHK en `.rdata` (idénticas): registro largo (~20
-  secciones, C6) + despacho corto ligado a `League_%d.cnd` (8 secciones,
-  C1; asimetría `UNIT` sí / `TRIG,MRGN` no → camino melee/ladder).
-- Tabla SFX residente idéntica al byte (C2); tuplas `(id,fn,fn,id)` (C4);
-  tablas 100 % punteros (C5, referencia de "estático").
-- Negativos fuertes: 0 columnas DAT íntegras, 0 TRIG-2400, 0 `melee.trg`,
-  0 STR, 0 briefing/objetivos, clusters UNIT/MRGN = falsos positivos
-  (ceros / tabla de contadores). `.data` ~90 % BSS en cero.
-- **Veredicto D: el dump en partida no contiene mapa+triggers cargados** —
-  el volcado cubre la imagen del módulo; el mapa parseado vive en heap no
-  capturado. Experimento decisivo: re-volcar regiones RW de `/proc/pid/maps`
-  y repetir las firmas (requiere juego en marcha + autorización).
+- CHK parser tables in `.rdata` (identical): long registry (~20
+  sections, C6) + short dispatch tied to `League_%d.cnd` (8 sections,
+  C1; asymmetry `UNIT` yes / `TRIG,MRGN` no → melee/ladder path).
+- Resident SFX table byte-identical (C2); `(id,fn,fn,id)` tuples (C4);
+  100 % pointer tables (C5, reference for "static").
+- Strong negatives: 0 intact DAT columns, 0 TRIG-2400, 0 `melee.trg`,
+  0 STR, 0 briefing/objectives, UNIT/MRGN clusters = false positives
+  (zeros / counter table). `.data` ~90 % zeroed BSS.
+- **Verdict D: the in-game dump does not contain the loaded map+triggers** —
+  the dump covers the module image; the parsed map lives in uncaptured
+  heap. Decisive experiment: re-dump RW regions from `/proc/pid/maps`
+  and repeat the signatures (requires the game running + authorization).
 
-## 5. 32 vs 64 bits (H2 confirmada, confianza alta)
+## 5. 32 vs 64 bits (H2 confirmed, high confidence)
 
-- Mismo manifiesto `1.23.10.13515` + hash `2e031d5be4`, espejo RTTI exacto
-  (415 lambdas, 24 chat, 50 glue), vocabulario de engine compartido,
-  desplazamiento global de tamaños ×1.16–1.83 con colas gemelas.
-- Recomendación C: **base de análisis en 32 bits**, anclajes en 64 bits vía
-  pares RTTI; 64 bits solo si el objetivo lo exige.
+- Same manifest `1.23.10.13515` + hash `2e031d5be4`, exact RTTI mirror
+  (415 lambdas, 24 chat, 50 glue), shared engine vocabulary,
+  global size shift ×1.16–1.83 with twin tails.
+- Recommendation C: **32-bit analysis base**, 64-bit anchors via
+  RTTI pairs; 64-bit only if the goal requires it.
 
-## 6. Grafo de dependencias (confirmadas vs inferidas)
+## 6. Dependency graph (confirmed vs inferred)
 
-Confirmadas: CRT → `0x70e810` → config (`Starcraft.ini`); init settings →
-{ventana/GL, audio FMOD, streaming, cinemáticas}; loader mapas → MPQ
-(`LoadMapPass2`) → parser CHK (C6/C1) → [heap no capturado].
-Inferidas: `0x969f0d` → {input, sim, render}; despachador 189 filas →
-137 handlers; tablas estáticas → sesión (C4 por verificar).
+Confirmed: CRT → `0x70e810` → config (`Starcraft.ini`); settings init →
+{window/GL, FMOD audio, streaming, cinematics}; map loader → MPQ
+(`LoadMapPass2`) → CHK parser (C6/C1) → [uncaptured heap].
+Inferred: `0x969f0d` → {input, sim, render}; 189-row dispatcher →
+137 handlers; static tables → session (C4 to be verified).
 
-## 7. Plan de confirmación (ordenado por ratio señal/ruido)
+## 7. Confirmation plan (ordered by signal/noise ratio)
 
-1. Decompilar `0x70e810` + `0x70ac50` (firma `main`, global `0x117c834`).
-2. Resolver IAT (`0xd30000–0xd31000`) y etiquetar `0xc61f70`/`0x969f0d`
-   (busca `PeekMessage/Sleep/timeGetTime`).
-3. Cast genérico size-531 (4 en 32b): 25 callees + store `+0x4e=1`.
-4. Xrefs a `nukeWarning`/`SND_NUKE_*` → handlers filas 124–128.
-5. Buscar `TARGET_ORDER` (189 B, 10 divergencias) → despachador.
-6. Falsación Patrol size-69 (6 callees `…4dab0,57630…`).
-7. C1/C6: resolver handlers del parser CHK/TRIG en los CSV.
-8. Heap: re-volcar regiones RW en partida y repetir firmas TRIG/STR/UNIT.
+1. Decompile `0x70e810` + `0x70ac50` (`main` signature, global `0x117c834`).
+2. Resolve the IAT (`0xd30000–0xd31000`) and label `0xc61f70`/`0x969f0d`
+   (look for `PeekMessage/Sleep/timeGetTime`).
+3. Generic cast size-531 (4 in 32-bit): 25 callees + store `+0x4e=1`.
+4. Xrefs to `nukeWarning`/`SND_NUKE_*` → handlers for rows 124–128.
+5. Search for `TARGET_ORDER` (189 B, 10 divergences) → dispatcher.
+6. Falsification of Patrol size-69 (6 callees `…4dab0,57630…`).
+7. C1/C6: resolve the CHK/TRIG parser handlers in the CSVs.
+8. Heap: re-dump RW regions in-game and repeat the TRIG/STR/UNIT signatures.
 
-Detalles, direcciones candidatas y preguntas abiertas: informes de
+Details, candidate addresses and open questions: reports in
 `analysis/investigations/` (A: P1–P7, B: §4–§5, C: §4, D: §8).

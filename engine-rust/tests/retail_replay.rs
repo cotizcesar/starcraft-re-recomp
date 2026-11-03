@@ -15,8 +15,10 @@ fn replay_dirs() -> Vec<PathBuf> {
         out.push(PathBuf::from(dir));
     }
     let base = std::env::var("SC_REPLAY_BASE").unwrap_or_else(|_| {
-        "/home/cotizcesar/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays"
-            .to_string()
+        format!(
+            "{}/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays",
+            std::env::var("HOME").unwrap_or_default()
+        )
     });
     out.push(PathBuf::from(&base));
     out.push(PathBuf::from(&base).join("AutoSave/20261027"));

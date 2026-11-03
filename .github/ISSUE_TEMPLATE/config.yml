@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/cotizcesar/starcraft-re-recomp/security/advisories/new
+    about: Report security problems privately (see SECURITY.md)
+  - name: Project progress
+    url: https://github.com/cotizcesar/starcraft-re-recomp/blob/main/PROGRESS.md
+    about: What already works and what is missing

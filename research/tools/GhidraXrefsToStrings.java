@@ -13,10 +13,10 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Busca cadenas literales en memoria, lista sus xrefs y las funciones que las
- * referencian. Uso (headless, sin re-analisis):
+ * Searches memory for literal strings, lists their xrefs and the functions that
+ * reference them. Usage (headless, no re-analysis):
  *   analyzeHeadless <projdir> <proj> -process <exe> -noanalysis
- *     -scriptPath ~/ReverseEngineering/tools -postScript GhidraXrefsToStrings.java <salida.csv> <cad1> [<cad2> ...]
+ *     -scriptPath research/tools -postScript GhidraXrefsToStrings.java <output.csv> <str1> [<str2> ...]
  */
 public class GhidraXrefsToStrings extends GhidraScript {
 
@@ -24,11 +24,11 @@ public class GhidraXrefsToStrings extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            printerr("Uso: GhidraXrefsToStrings.java <salida.csv> <cad1> ...");
+            printerr("Usage: GhidraXrefsToStrings.java <output.csv> <str1> ...");
             return;
         }
-        // NOTA: las cadenas se buscan tal cual (sin forzar NUL), porque en
-        // memoria aparecen con sufijos (p.ej. "ChkLarvaStray: 1").
+        // NOTE: strings are searched as-is (without forcing NUL), because in
+        // memory they appear with suffixes (e.g. "ChkLarvaStray: 1").
         Memory mem = currentProgram.getMemory();
         ReferenceManager rm = currentProgram.getReferenceManager();
         FunctionManager fm = currentProgram.getFunctionManager();

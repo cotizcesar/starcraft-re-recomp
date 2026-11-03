@@ -1,22 +1,22 @@
-# Registro de decisiones
+# Decision log
 
-- 2026-10-28: Hermes fuera de la cadena. Motivo: simplificar a OpenCode+REA,
-  verificado E2E. Las menciones en docs previos quedan como histórico.
-- 2026-10-28: Estructura del master prompt (`original-manifest/`,
-  `analysis/discovery/`, …) se adopta por adición; no se borran los
-  artefactos previos (`manifests/`, `analysis/file-inventory.csv`) para no
-  romper referencias.
-- 2026-10-28: `GAME_PATH` = instalación Battle.net StarCraft 1.23.10.13515
-  (confirmada por el usuario). Solo lectura.
-- 2026-10-28: proveedor Ghidra 12.1.4 (pin REA); 12.2 instalado pero no usado.
-- 2026-10-28: reconstrucción en Rust (`~/Documents/galaxycraft`) se reutiliza
-  como implementación compatible; este directorio conserva evidencias y planes.
-- 2026-10-28: LAN multijugador DENTRO de alcance (decisión del usuario).
-  Battle.net/online sigue fuera. Diseño: lockstep determinista sobre el sim
-  actual (LCG; solo comandos por turno + checksum periódico), lobby LAN,
-  countdown, manejo de lag/drop, chat pre-partida. Aceptación: 1v1 2 PCs
-  20+ min sin desync. Comparte infraestructura con replays P0 (log de
-  comandos por tick).
-- 2026-10-28: orden LAN: diseño de protocolo EN PARALELO con P0
-  (implementación tras P0). Transporte: AMBOS (capa abstracta; TCP primero
-  para correctitud, UDP con retransmisión después). Decisión del usuario.
+- 2026-10-28: Hermes out of the chain. Reason: simplify to OpenCode+REA,
+  verified E2E. Mentions in earlier docs remain as history.
+- 2026-10-28: The master prompt's structure (`original-manifest/`,
+  `analysis/discovery/`, …) is adopted additively; prior artifacts
+  (`manifests/`, `analysis/file-inventory.csv`) are not deleted so as not to
+  break references. (Later merged: `original-manifest/` → `manifests/`.)
+- 2026-10-28: `GAME_PATH` = Battle.net install of StarCraft 1.23.10.13515
+  (confirmed by the user). Read-only.
+- 2026-10-28: Ghidra 12.1.4 provider (REA pin); 12.2 installed but not used.
+- 2026-10-28: the Rust reconstruction (now `engine-rust/`) is reused
+  as the compatible implementation; this directory keeps evidence and plans.
+- 2026-10-28: LAN multiplayer IN scope (user decision).
+  Battle.net/online remains out. Design: deterministic lockstep on the current
+  sim (LCG; only per-turn commands + periodic checksum), LAN lobby,
+  countdown, lag/drop handling, pre-game chat. Acceptance: 1v1 on 2 PCs
+  20+ min without desync. Shares infrastructure with P0 replays (per-tick
+  command log).
+- 2026-10-28: LAN order: protocol design IN PARALLEL with P0
+  (implementation after P0). Transport: BOTH (abstract layer; TCP first
+  for correctness, UDP with retransmission later). User decision.

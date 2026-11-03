@@ -335,7 +335,10 @@ mod tests {
 
     fn autosave() -> Option<Vec<u8>> {
         let root = std::env::var("SC_REPLAY_DIR").unwrap_or_else(|_| {
-            "/home/cotizcesar/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays/AutoSave/20261027".to_string()
+            format!(
+                "{}/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays/AutoSave/20261027",
+                std::env::var("HOME").unwrap_or_default()
+            )
         });
         let path = std::path::Path::new(&root).join("135033,(8)The Hunters.rep");
         std::fs::read(path).ok()

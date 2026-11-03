@@ -939,7 +939,7 @@ mod tests {
             assert_eq!(decode_order(&mut c), Some(o.clone()), "tag {:?}", o);
             assert_eq!(c.o, buf.len());
         }
-        // Las 24 variantes (tags 0..=23) quedan cubiertas.
+        // All 24 variants (tags 0..=23) are covered.
         assert_eq!(tags.len(), 24);
         assert!(tags.contains(&0) && tags.contains(&23));
         assert!(decode_order(&mut Cursor { b: &[99], o: 0 }).is_none());

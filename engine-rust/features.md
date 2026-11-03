@@ -1,138 +1,138 @@
-# GalaxyCraft — lo que falta para completar el juego
+# GalaxyCraft — what is missing to complete the game
 
-Inventario verificado el 2026-10-28 contra el código (`src/`), la cobertura
-documentada (`docs/COVERAGE.md`, `docs/EVIDENCE.md`) y la suite
-(`cargo test`: 141 lib + 15 integración, todo verde). Criterio: paridad con el
-StarCraft 1.23.10.13515 comercial jugando offline de un jugador, más lo necesario
-para que otros jugadores lo usen como juego completo, no como motor.
+Inventory verified on 2026-10-28 against the code (`src/`), the documented
+coverage (`docs/COVERAGE.md`, `docs/EVIDENCE.md`) and the suite
+(`cargo test`: 141 lib + 15 integration, all green). Criterion: parity with
+commercial StarCraft 1.23.10.13515 played offline single-player, plus what is needed
+for other players to use it as a complete game, not as an engine.
 
-## Lo que ya está (no tocar)
+## What already exists (do not touch)
 
-- Reglas: daño, proyectiles (10 balas, 25 hit types), movimiento (A* octil,
-  regiones, iscript walk), colisiones, economía, tech tree, hechizos, transportes,
-  bunkers, Nydus, visión/niebla/detectores, triggers 1..59, IA de campaña
-  (`aiscript`/`bwscript`), IA de escaramuza, iscript 0x00..=0x44.
-- Datos: 73/73 tablas verificadas contra el juego vivo, 391 mapas (323 + 68 de
-  campaña) simulados, tilesets, GRP, sonido/música/voces con `--install`.
-- Cliente `sc_view` jugable: menú, briefing, misión, pausa, victoria/derrota,
-  restart, oponente IA, HUD por raza, minimapa, hotkeys, opciones.
+- Rules: damage, projectiles (10 bullets, 25 hit types), movement (octile A*,
+  regions, iscript walk), collisions, economy, tech tree, spells, transports,
+  bunkers, Nydus, vision/fog/detectors, triggers 1..59, campaign AI
+  (`aiscript`/`bwscript`), skirmish AI, iscript 0x00..=0x44.
+- Data: 73/73 tables verified against the live game, 391 maps (323 + 68
+  campaign) simulated, tilesets, GRP, sound/music/voices with `--install`.
+- Playable `sc_view` client: menu, briefing, mission, pause, victory/defeat,
+  restart, AI opponent, per-race HUD, minimap, hotkeys, options.
 
-## P0 — Funcionalidad de juego base que hoy es stub
+## P0 — Base gameplay functionality that is a stub today
 
-### 1. Guardar / cargar partida — HECHO
-- Implementado como *command log + fast-forward* (`src/replay.rs`): el guardado
-  lleva el `.chk` embebido, razas, tick y el log de comandos; cargar reconstruye
-  el mundo y reaplica el log hasta el tick (`replay_to`), que es el mismo camino
-  que usan repeticiones y LAN.
-- `F5` guarda en `<dir>/saves/save-NNN.gcsave`, `F6` graba repetición en
-  `<dir>/replays/replay-NNN.gcrep` (ver `docs/replays.md`). `--replay FILE` abre
-  una repetición directamente desde la línea de comandos.
-- Aceptación cubierta por `tests/replay.rs`
+### 1. Save / load game — DONE
+- Implemented as *command log + fast-forward* (`src/replay.rs`): the save
+  carries the embedded `.chk`, races, tick and the command log; loading rebuilds
+  the world and reapplies the log up to the tick (`replay_to`), which is the same path
+  used by replays and LAN.
+- `F5` saves to `<dir>/saves/save-NNN.gcsave`, `F6` records a replay to
+  `<dir>/replays/replay-NNN.gcrep` (see `docs/replays.md`). `--replay FILE` opens
+  a replay directly from the command line.
+- Acceptance covered by `tests/replay.rs`
   (`savefile_roundtrip_with_embedded_map`,
-  `boxer_with_ai_save_reload_replays_identically`): el hash de estado tras
-  cargar coincide con el de la sesión original.
+  `boxer_with_ai_save_reload_replays_identically`): the state hash after
+  loading matches the one from the original session.
 
-### 2. Repeticiones (replays) — HECHO
-- Formato `.gcrep` (`GCS1` v2): semilla, hash del mapa, comandos por tick y
-  SHA-256 final; el `.gcsave` (`GCSF` v1) lo envuelve con el `.chk` embebido.
-  Especificación completa en `docs/replays.md`.
-- Reproductor en el cliente (`Espacio` pausa, `+`/`-` velocidad, `Esc` corta),
-  lista en `Multiplayer → Replays`, y `sc_view --replay FILE` para lanzarla
-  desde la terminal. `sc_replaytool make|info|verify` graba una demo, resume el
-  contenido y comprueba que dos pasadas dan el mismo hash.
-- Aceptación cubierta: mismo log → mismo `state_hash`
+### 2. Replays — DONE
+- `.gcrep` format (`GCS1` v2): seed, map hash, per-tick commands and
+  final SHA-256; the `.gcsave` (`GCSF` v1) wraps it with the embedded `.chk`.
+  Full specification in `docs/replays.md`.
+- Player in the client (`Space` pauses, `+`/`-` speed, `Esc` stops),
+  list under `Multiplayer → Replays`, and `sc_view --replay FILE` to launch it
+  from the terminal. `sc_replaytool make|info|verify` records a demo, summarizes the
+  contents and checks that two passes give the same hash.
+- Acceptance covered: same log → same `state_hash`
   (`sc_replaytool verify`, `tests/replay.rs`).
 
-### 3. Persistencia de perfil y progreso de campaña
-- Estado: los perfiles (`Player`, `REA`, `LinKa`) viven solo en memoria
-  (`sc_view.rs:600`); terminar una misión avanza en la sesión pero no se recuerda.
-  Los hotkeys ya tienen archivo propio (`~/.cache/galaxycraft/hotkeys.bin`,
-  GCHK v1 con SHA-256) y todas las unidades/edificios/razas se editan en el
-  panel Hotkeys; faltan misiones desbloqueadas y opciones.
-- Falta: archivo de perfil en disco (misiones desbloqueadas por episodio,
-  opciones), creado/editable desde el menú `Registry`.
-- Aceptación: cerrar el juego, abrirlo y seguir la campaña donde quedó.
+### 3. Profile persistence and campaign progress
+- Status: profiles (`Player`, `REA`, `LinKa`) live only in memory
+  (`sc_view.rs:600`); finishing a mission advances within the session but is not remembered.
+  Hotkeys already have their own file (`~/.cache/galaxycraft/hotkeys.bin`,
+  GCHK v1 with SHA-256) and all units/buildings/races are edited in the
+  Hotkeys panel; unlocked missions and options are missing.
+- Missing: on-disk profile file (unlocked missions per episode,
+  options), created/editable from the `Registry` menu.
+- Acceptance: close the game, open it and continue the campaign where it was left.
 
-## P1 — Multijugador (el bloque grande)
+## P1 — Multiplayer (the big block)
 
-Hoy no hay ni una línea de red en `src/` (sin sockets): todo es 1 humano vs IA.
+Today there is not a single line of networking in `src/` (no sockets): everything is 1 human vs AI.
 
-### 4. Multijugador LAN / directo
-- Falta: protocolo (idealmente lockstep determinista sobre el sim actual:
-  intercambiar solo comandos por turno, checksum periódico de estado),
-  descubrimiento en LAN, lobby con slots humanos, countdown, manejo de lag/drop,
-  y chat pre-partida.
-- Aceptación: 2 PCs en LAN juegan melee 1v1 completo sin desync en 20+ min.
+### 4. LAN / direct multiplayer
+- Missing: protocol (ideally deterministic lockstep over the current sim:
+  exchange only commands per turn, periodic state checksum),
+  LAN discovery, lobby with human slots, countdown, lag/drop handling,
+  and pre-game chat.
+- Acceptance: 2 PCs on LAN play a full 1v1 melee without desync for 20+ min.
 
 ### 5. Battle.net / online
-- Falta: todo (cuentas, ladder, matchmaking, NAT traversal, anti-cheat).
-  Es un proyecto de infraestructura aparte; ni el cliente retail offline lo necesita.
-- Decisión propuesta: declarar online fuera de alcance y apuntar a LAN + juego
-  directo por IP como techo del multijugador.
+- Missing: everything (accounts, ladder, matchmaking, NAT traversal, anti-cheat).
+  It is a separate infrastructure project; not even the offline retail client needs it.
+- Proposed decision: declare online out of scope and target LAN + direct
+  IP play as the multiplayer ceiling.
 
-### 6. Hotseat / segunda persona local
-- Estado: el lobby cicla `Random/Terran/Zerg/Protoss/Computer` por slot, sin
-  segunda entrada humana.
-- Falta (solo si se quiere sin red): doble esquema de teclas y pase de turno.
-  Recomendación: no hacerlo; el esfuerzo rinde más en LAN.
+### 6. Hotseat / second local player
+- Status: the lobby cycles `Random/Terran/Zerg/Protoss/Computer` per slot, with no
+  second human input.
+- Missing (only if wanted without networking): dual key scheme and turn passing.
+  Recommendation: do not do it; the effort pays off more in LAN.
 
-## P2 — Presentación y contenido
+## P2 — Presentation and content
 
-### 7. Cinemáticas a movimiento completo
-- Estado: completo para los 28 filmes de la tabla retail (REA `0x140ae7ae0`).
-  `src/cinematic.rs` reproduce en streaming con audio; `blizzard.webm` +
-  `starintr.webm` al arrancar, `starxintr.webm` en Brood War y los
-  `Pre<Race>_<act>`/`<Race><act>`/`x<Race>` alrededor de los actos de campaña.
-  Salto con Enter/Esc y póster de respaldo sin `ffmpeg`.
-- Aceptación: `SC_INSTALL=… cargo test --lib video::tests::` (28/28) y
+### 7. Full-motion cinematics
+- Status: complete for the 28 films in the retail table (REA `0x140ae7ae0`).
+  `src/cinematic.rs` plays in streaming with audio; `blizzard.webm` +
+  `starintr.webm` at startup, `starxintr.webm` in Brood War and the
+  `Pre<Race>_<act>`/`<Race><act>`/`x<Race>` around the campaign acts.
+  Skip with Enter/Esc and fallback poster without `ffmpeg`.
+- Acceptance: `SC_INSTALL=… cargo test --lib video::tests::` (28/28) and
   `--shot-screen intro-blizzard|intro-title|intro-expansion` (`docs/intro.png`).
 
-### 8. Skins conmemorativas / Carbot
-- Estado: consolas Terran/Zerg/Protoss stock + menús + voces (documentado como
-  límite en `COVERAGE.md`).
-- Falta: skins alternativas del 20.º aniversario y estilo Carbot.
-- Nota: puramente cosmético, no afecta jugabilidad.
+### 8. Anniversary / Carbot skins
+- Status: stock Terran/Zerg/Protoss consoles + menus + voices (documented as a
+  limit in `COVERAGE.md`).
+- Missing: alternative 20th-anniversary skins and Carbot style.
+- Note: purely cosmetic, does not affect gameplay.
 
-### 9. Creep pixel-exacto
-- Estado: malla orgánica determinista propia (no existe GRP de creep en CASC).
-- Falta: nada obligatorio; documentado como límite aceptado. Solo si se busca
-  paridad visual cuadro a cuadro.
+### 9. Pixel-exact creep
+- Status: own deterministic organic mesh (there is no creep GRP in CASC).
+- Missing: nothing mandatory; documented as an accepted limit. Only if
+  frame-by-frame visual parity is sought.
 
-### 10. Audio sin instalación
-- Estado: 9 WAV de respaldo incluidos; música (23 temas) y voces (1.122) solo
-  con `--install`.
-- Falta (opcional): nada de motor; es decisión de distribución (peso vs retail).
-  Solo documentar qué oye un jugador sin instalación.
+### 10. Audio without an install
+- Status: 9 fallback WAVs included; music (23 tracks) and voices (1,122) only
+  with `--install`.
+- Missing (optional): nothing engine-side; it is a distribution decision (size vs retail).
+  Only document what a player hears without an install.
 
-## P3 — Compatibilidad y pulido
+## P3 — Compatibility and polish
 
-### 11. Rutas de memoria EUD de StarCraft Remastered
-- Estado: parseadas, intencionalmente no ejecutadas; ningún mapa distribuido
-  las usa (`tools/trigger_ids.py`).
-- Falta: nada, salvo que aparezcan mapas que las requieran. Mantener el chequeo.
+### 11. StarCraft Remastered EUD memory paths
+- Status: parsed, intentionally not executed; no distributed map
+  uses them (`tools/trigger_ids.py`).
+- Missing: nothing, unless maps that require them appear. Keep the check.
 
-### 12. Puertos y empaquetado
-- Estado: binarios Linux x86_64; cliente con `minifb`/X11.
-- Falta (según audiencia): builds Windows/macOS, AppImage/Flatpak, iconos,
-  instalador que detecte la instalación retail, y `sc_assets --install` guiado.
-- Aceptación: un jugador no técnico instala y juega sin terminal.
+### 12. Ports and packaging
+- Status: Linux x86_64 binaries; client with `minifb`/X11.
+- Missing (depending on audience): Windows/macOS builds, AppImage/Flatpak, icons,
+  installer that detects the retail install, and guided `sc_assets --install`.
+- Acceptance: a non-technical player installs and plays without a terminal.
 
-### 13. Accesibilidad y localización
-- Estado: cliente enUS; sin reescalado de UI ni daltonismo ni subtítulos en cinemáticas.
-- Falta: al menos esMX/esES si el público es hispano, y escala de interfaz.
+### 13. Accessibility and localization
+- Status: enUS client; no UI scaling, colorblind mode or subtitles in cinematics.
+- Missing: at least esMX/esES if the audience is Spanish-speaking, and interface scaling.
 
-## Explícitamente fuera de alcance (proponer como no-objetivos)
+## Explicitly out of scope (propose as non-goals)
 
-- Editor de mapas/campañas (el retail trae Campaign Editor; es otro producto).
-- Battle.net, ladder y servicios online (ver §5).
-- Compatibilidad con parches distintos de 1.23.10.13515 sin re-verificación.
+- Map/campaign editor (retail ships the Campaign Editor; it is another product).
+- Battle.net, ladder and online services (see §5).
+- Compatibility with patches other than 1.23.10.13515 without re-verification.
 
-## Orden de ataque sugerido
+## Suggested order of attack
 
-1. Guardar/cargar (§1) — desbloquea sesiones reales y es prerrequisito de replays.
-2. Replays (§2) — reutiliza serialización y determinismo; además sirve para
-   verificar desyncs del futuro multijugador.
-3. Perfil + progreso (§3) — completa el bucle de campaña.
-4. Cinemáticas (§7) — cierra la presentación.
-5. LAN (§4) — el único bloque de red que vale la pena.
-6. Empaquetado (§12) — cuando el juego esté redondo.
+1. Save/load (§1) — unlocks real sessions and is a prerequisite for replays.
+2. Replays (§2) — reuses serialization and determinism; also serves to
+   verify desyncs of the future multiplayer.
+3. Profile + progress (§3) — completes the campaign loop.
+4. Cinematics (§7) — closes out presentation.
+5. LAN (§4) — the only networking block worth doing.
+6. Packaging (§12) — once the game is polished.
