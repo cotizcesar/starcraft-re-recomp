@@ -644,7 +644,14 @@ pub struct Terrain {
     walk: Vec<bool>,
     build: Vec<bool>,
     elevation: Vec<u8>,
+    /// vf4 flag 0x8 per walk cell ("blocks view", OpenBW `flag_very_high`).
+    view_block: Vec<bool>,
 }
+
+/// Bits of [`Terrain::tile_height_flags`].
+pub const TILE_MIDDLE: u8 = 1;
+pub const TILE_HIGH: u8 = 2;
+pub const TILE_VERY_HIGH: u8 = 4;
 
 /// Tileset tables the terrain grid is built from.  An MTXM entry is
 /// `group << 4 | index`; `cv5` maps it to a megatile and `vf4` holds 16
@@ -719,6 +726,7 @@ impl Terrain {
         let mut walk = vec![false; walk_width * walk_height];
         let mut build = vec![false; walk_width * walk_height];
         let mut elevation = vec![0u8; walk_width * walk_height];
+        let mut view_block = vec![false; walk_width * walk_height];
         for ty in 0..scenario.height {
             for tx in 0..scenario.width {
                 let tile = scenario.tiles[ty * scenario.width + tx];
@@ -735,6 +743,7 @@ impl Terrain {
                             // walkability and is narrowed by the scenario
                             // MASK below.
                             build[idx] = flag & 1 != 0 && !unbuildable;
+                            view_block[idx] = flag & 8 != 0;
                             elevation[idx] = if flag & 4 != 0 {
                                 2
                             } else if flag & 2 != 0 {
@@ -771,6 +780,7 @@ impl Terrain {
             walk,
             build,
             elevation,
+            view_block,
         }
     }
 
@@ -786,6 +796,7 @@ impl Terrain {
             walk: vec![true; walk_width * walk_height],
             build: vec![true; walk_width * walk_height],
             elevation: vec![0; walk_width * walk_height],
+            view_block: vec![false; walk_width * walk_height],
         }
     }
 
@@ -799,6 +810,36 @@ impl Terrain {
 
     pub fn walkable_cell(&self, wx: i32, wy: i32) -> bool {
         self.walk_index(wx, wy).is_some_and(|i| self.walk[i])
+    }
+
+    /// Retail tile height flags (OpenBW `set_mega_tile_flags`): bit 0
+    /// middle (middle + high cells >= 12 of 16, high < 12), bit 1 high
+    /// (>= 12 high cells), bit 2 very high (any view-blocking cell).
+    pub fn tile_height_flags(&self, tx: i32, ty: i32) -> u8 {
+        let (mut middle, mut high, mut very) = (0, 0, false);
+        for my in 0..4 {
+            for mx in 0..4 {
+                if let Some(i) = self.walk_index(tx * 4 + mx, ty * 4 + my) {
+                    match self.elevation[i] {
+                        2 => high += 1,
+                        1 => middle += 1,
+                        _ => {}
+                    }
+                    very |= self.view_block[i];
+                }
+            }
+        }
+        let mut f = 0;
+        if high < 12 && middle + high >= 12 {
+            f |= TILE_MIDDLE;
+        }
+        if high >= 12 {
+            f |= TILE_HIGH;
+        }
+        if very {
+            f |= TILE_VERY_HIGH;
+        }
+        f
     }
 
     /// Retail `tile_can_have_creep`: the tile is buildable and fully

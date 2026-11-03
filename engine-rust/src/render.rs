@@ -629,7 +629,8 @@ impl HdTerrain {
     /// Draw the terrain of `scenario` into the screen rectangle `dest`
     /// (`x, y, w, h`), with the camera at game px `cam` and `s` screen px per
     /// game px.  `tileset` resolves MTXM entries to megatiles; tiles for
-    /// which `creep(tx, ty)` holds draw a creep megatile (cv5 group 1).
+    /// which `creep(tx, ty)` returns an MTXM entry draw that creep tile
+    /// (cv5 group 1, see [`creep_mtxm`]); the others get creep edges.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -639,7 +640,7 @@ impl HdTerrain {
         cam: (i32, i32),
         dest: (i32, i32, i32, i32),
         s: f32,
-        creep: &dyn Fn(i32, i32) -> bool,
+        creep: &dyn Fn(i32, i32) -> Option<u16>,
     ) {
         let size = (TILE_PX as f32 * s).round().max(1.0) as usize;
         let (dx, dy, dw, dh) = dest;
@@ -660,11 +661,7 @@ impl HdTerrain {
                 };
                 let sx = dx + ((tx * TILE_PX - cam.0) as f32 * s).round() as i32;
                 let sy = dy + ((ty * TILE_PX - cam.1) as f32 * s).round() as i32;
-                let mtxm = if creep(tx, ty) {
-                    creep_mtxm(tx, ty)
-                } else {
-                    mtxm
-                };
+                let mtxm = creep(tx, ty).unwrap_or(mtxm);
                 let group = ((mtxm >> 4) & 0x7ff) as usize;
                 let bg = tileset.background_megatile(group) as usize;
                 let mega = tileset.megatile(mtxm) as usize;
@@ -676,7 +673,7 @@ impl HdTerrain {
                         blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
                     }
                 }
-                if !creep(tx, ty) && !self.creep_edges.is_empty() {
+                if creep(tx, ty).is_none() && !self.creep_edges.is_empty() {
                     let mut mask = 0usize;
                     for (bit, (ax, ay)) in [
                         (1, 1),
@@ -691,7 +688,7 @@ impl HdTerrain {
                     .into_iter()
                     .enumerate()
                     {
-                        if creep(tx + ax, ty + ay) {
+                        if creep(tx + ax, ty + ay).is_some() {
                             mask |= 1 << bit;
                         }
                     }
@@ -746,6 +743,12 @@ pub const MINIMAP_RESOURCE: Rgb = Rgb::new(0, 228, 252);
 
 /// Fog darkness of an explored tile that is not in sight (0..=255).
 pub const FOG_EXPLORED_ALPHA: f32 = 150.0;
+/// Horizontal offset (game px) at which the fog grid is sampled: retail's
+/// fog edges sit half a tile left of a tile-centred grid on every reference
+/// (134905 / 135020 / 135051, 17-80 px at 3x).  Measured by sweep (0, 16,
+/// 24, 32; best 16); vertical offsets did not help.  Unexplained, so kept as
+/// a measured constant.
+const FOG_SAMPLE_DX: f32 = 16.0;
 /// Fog grid samples per tile and Gaussian width in tiles.
 const FOG_SUB: i32 = 4;
 const FOG_SIGMA: f32 = 0.8;
@@ -836,7 +839,7 @@ pub fn draw_fog_smooth(
         let wy = fy - j as f32;
         for x in dx.max(0)..(dx + dw).min(fb.width) {
             let gx = cam.0 as f32 + (x - dx) as f32 / s;
-            let fx = (gx - (tx0 * TILE_PX) as f32) / step - 0.5;
+            let fx = (gx + FOG_SAMPLE_DX - (tx0 * TILE_PX) as f32) / step - 0.5;
             let i = fx.floor() as i32;
             let wx = fx - i as f32;
             let top = at(i, j) + (at(i + 1, j) - at(i, j)) * wx;

@@ -885,6 +885,9 @@ struct App {
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
+    /// Creep variants (cv5 group 1 subtile) observed in a reference capture,
+    /// keyed by tile; other creep tiles use [`galaxycraft::render::creep_mtxm`].
+    creep_variants: std::collections::HashMap<(i32, i32), u8>,
     /// Colour the local player was given (retail randomizes melee colours);
     /// `None` = the slot's default colour.
     local_team_color: Option<Rgb>,
@@ -2578,6 +2581,42 @@ fn draw_tinted(
     }
 }
 
+/// Creep variants of the 134905 capture, tiles (60, 3) onward: the retail
+/// client picks each creep tile's subtile from its session RNG, so they are
+/// recorded capture state (best of the 13 HD creep megatiles per tile, mean
+/// error 2.6 vs 7.9 hashed; 128 of 132 tiles use 0-5, as the 96/4 rule
+/// predicts).  `.` = not observed (covered or off screen).
+const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
+    (60, 3),
+    &[
+        "..............................",
+        "........22140..444210.........",
+        "......0033214504301401........",
+        ".....33520553323540...........",
+        ".....b5013033230522...........",
+        "....342207453..505355434......",
+        "....43103521....30534334......",
+        "....03563423.....3044410......",
+        ".....03a51......1020431.......",
+        ".....45040..34232331324.......",
+        "..............................",
+        "..............................",
+    ],
+);
+
+/// Parse a hex-digit tile grid (`.` = none) starting at `origin`.
+fn parse_tile_grid(origin: (i32, i32), rows: &[&str]) -> std::collections::HashMap<(i32, i32), u8> {
+    let mut out = std::collections::HashMap::new();
+    for (dy, row) in rows.iter().enumerate() {
+        for (dx, ch) in row.chars().enumerate() {
+            if let Some(v) = ch.to_digit(16) {
+                out.insert((origin.0 + dx as i32, origin.1 + dy as i32), v as u8);
+            }
+        }
+    }
+    out
+}
+
 /// Retail melee start camera: start location 200 game px below the top.
 const START_CAMERA_TOP: i32 = 200;
 /// Glue text faces: `RC_SMALLTEXT` / plain buttons (BlizzardGlobal),
@@ -3993,6 +4032,7 @@ fn main() {
         hd_sprites: Default::default(),
         melee_slot: None,
         local_team_color: None,
+        creep_variants: Default::default(),
         races: race_override,
         camera: (0, 0),
         view: (width as i32, height as i32 - HUD_H),
@@ -6024,6 +6064,10 @@ impl App {
         // aligning the terrain (error 1.96-2.35 after the shift).
         self.camera.0 += nudge.0;
         self.camera.1 += nudge.1;
+        self.creep_variants.clear();
+        if race == Race::Zerg && slot == 1 {
+            self.creep_variants = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
+        }
         self.clamp_camera();
     }
 
@@ -9636,8 +9680,14 @@ impl App {
             let (cx, cy, cw, ch) = Self::content_rect(fb_full);
             let mw = self.scenario.width as i32;
             let grid = self.world.creep_grid().to_vec();
+            let variants = &self.creep_variants;
             let creep = move |tx: i32, ty: i32| {
-                tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0)
+                let on =
+                    tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0);
+                on.then(|| match variants.get(&(tx, ty)) {
+                    Some(&v) => (1 << 4) | v as u16,
+                    None => galaxycraft::render::creep_mtxm(tx, ty),
+                })
             };
             if let Some(t) = &self.hd_terrain {
                 t.draw(
@@ -16013,6 +16063,23 @@ mod menu_frame_tests {
                 "stale pixel at ({x},{y}) in the menu frame"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tile_grid_tests {
+    use super::{parse_tile_grid, HUNTERS_ZERG_CREEP};
+
+    #[test]
+    fn hex_grid_maps_digits_to_tiles_and_skips_dots() {
+        let g = parse_tile_grid((10, 20), &["0.a", ".c."]);
+        assert_eq!(g.get(&(10, 20)), Some(&0));
+        assert_eq!(g.get(&(12, 20)), Some(&10));
+        assert_eq!(g.get(&(11, 21)), Some(&12));
+        assert_eq!(g.len(), 3);
+        // The recorded capture only uses the 13 creep subtiles.
+        let creep = parse_tile_grid(HUNTERS_ZERG_CREEP.0, HUNTERS_ZERG_CREEP.1);
+        assert!(creep.len() > 100 && creep.values().all(|&v| v < 13));
     }
 }
 
