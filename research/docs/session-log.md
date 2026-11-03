@@ -3660,3 +3660,16 @@ Fresh clone without fixtures (FACT, measured before this change): lib tests
 136 passed / 107 failed, because the Blizzard-derived fixtures are
 gitignored by design.  CI therefore runs only the fixture-free targets; the
 full suite stays a local Definition-of-Done gate.
+
+## 2026-11-03 (74) — Branch protection and MIT-only license
+
+- `main` is protected on GitHub (FACT, read back from the API): the two CI
+  checks (`Rust (fmt, clippy, build, tests)`, `Scripts and progress`) are
+  required and must be up to date, a pull request is required (0
+  approvals, stale reviews dismissed), history is linear, conversations must
+  be resolved, force pushes and deletion are blocked, and admins are
+  included.
+- License: MIT only, at the user's request (single author across all
+  commits). `LICENSE-APACHE` is removed, `LICENSE-MIT` → `LICENSE`, and
+  `Cargo.toml` now has `license = "MIT"`. README badge/section and `NOTICE.md`
+  are updated. `third_party/pklib/LICENSE` is unchanged.
