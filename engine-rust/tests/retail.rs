@@ -216,6 +216,15 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
             .unwrap()
             .as_nanos()
     ));
+    // Removed even when an assertion below fails: the materialised install
+    // is ~1.7 GB and used to be left behind in the temp folder.
+    struct RemoveOnDrop(std::path::PathBuf);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = RemoveOnDrop(dir.clone());
     let report = install.materialize(&dir).expect("materialise");
     assert_eq!(report.maps, 323);
     assert_eq!(report.campaign_maps, 68);
@@ -581,4 +590,28 @@ fn write_fixtures_reproduces_the_pinned_tables() {
     }
     assert_eq!(checked, 3, "units/weapons/flingy.dat are pinned");
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The install's `x86/StarCraft.exe` carries the command-card table the
+/// fixture was generated from (menu-time dump): identical set by set.
+#[test]
+fn command_cards_read_from_the_install_match_the_dump_fixture() {
+    let Some(install) = install() else {
+        eprintln!("skip: no retail install");
+        return;
+    };
+    let sets = install.button_sets().expect("table in x86/StarCraft.exe");
+    assert_eq!(sets.len(), 250);
+    assert_eq!(sets.iter().filter(|s| !s.is_empty()).count(), 161);
+    if galaxycraft::button_sets::BUTTON_SETS.is_empty() {
+        eprintln!("no button_sets.in fixture: skipped the comparison");
+        return;
+    }
+    for (unit, set) in sets.iter().enumerate() {
+        let fixture = galaxycraft::button_sets::BUTTON_SETS
+            .get(unit)
+            .copied()
+            .unwrap_or(&[]);
+        assert_eq!(&set[..], fixture, "unit {unit}");
+    }
 }

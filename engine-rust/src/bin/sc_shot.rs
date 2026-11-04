@@ -141,9 +141,10 @@ fn main() {
     let cam = (start.0 - 640, start.1 - 400);
     tileset.draw_terrain(&mut fb, &scenario, cam);
     {
-        let tick = world.tick;
-        let grid = world.creep_grid();
-        galaxycraft::render::draw_creep(&mut fb, &scenario, cam, grid, tick);
+        let mut creep = galaxycraft::render::CreepTiles::default();
+        let mut rand = galaxycraft::render::CrtRand::new(0);
+        creep.update(&mut rand, world.creep_grid(), scenario.width);
+        tileset.draw_creep(&mut fb, &scenario, cam, &|x, y| creep.get(x, y));
     }
 
     let sprites = SpriteBank::load(&assets);

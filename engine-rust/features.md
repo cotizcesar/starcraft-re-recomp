@@ -94,9 +94,12 @@ Today there is not a single line of networking in `src/` (no sockets): everythin
 - Note: purely cosmetic, does not affect gameplay.
 
 ### 9. Pixel-exact creep
-- Status: own deterministic organic mesh (there is no creep GRP in CASC).
-- Missing: nothing mandatory; documented as an accepted limit. Only if
-  frame-by-frame visual parity is sought.
+- Status: done (2026-11-03). Retail art and rule: cv5 group-1 creep tiles
+  picked per tile by the client's CRT `rand` (64-bit `0x64fb30`) and the
+  `tileset/<era>.grp` edge frames at their offsets, on the SD and HD paths.
+  The old "no creep GRP in CASC" note was wrong (`tileset/<era>.grp` is it).
+- Note: retail seeds the pick with `time(NULL)`, so variants differ per
+  session by design; headless captures use a fixed seed.
 
 ### 10. Audio without an install
 - Status: 9 fallback WAVs included; music (23 tracks) and voices (1,122) only

@@ -48,6 +48,7 @@ pub mod menu_masks;
 pub mod net;
 pub mod orders;
 pub mod path;
+pub mod portrait;
 pub mod projectile;
 pub mod render;
 pub mod replay;

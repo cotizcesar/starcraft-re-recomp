@@ -51,3 +51,6 @@ research/analysis/
 *.mp4
 engine-rust/docs/evidence/
 research/docs/rea-evidence-c.md
+
+# Release packages (scripts/package_*.sh)
+dist/

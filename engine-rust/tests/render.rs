@@ -76,9 +76,9 @@ fn screenshot_binary_writes_a_bmp() {
 }
 
 #[test]
-fn creep_overlay_is_animated_from_the_gameplay_maturity_grid() {
+fn creep_draws_the_retail_creep_megatiles_without_animation() {
     use galaxycraft::ids::unit as uid;
-    use galaxycraft::render::draw_creep;
+    use galaxycraft::render::CreepTiles;
     use galaxycraft::sim::{Race, World};
     use std::sync::Arc;
 
@@ -139,22 +139,45 @@ fn creep_overlay_is_animated_from_the_gameplay_maturity_grid() {
     let tileset =
         Tileset::load(&assets.join("TileSet"), scenario.era, &scenario).expect("bundled tileset");
 
-    let mut first = Framebuffer::new(160, 128);
-    tileset.draw_terrain(&mut first, &scenario, cam);
-    let terrain_only = first.pixels.clone();
-    draw_creep(&mut first, &scenario, cam, &grid, 0);
+    let mut creep = CreepTiles::default();
+    creep.update(
+        &mut galaxycraft::render::CrtRand::new(1),
+        &grid,
+        scenario.width,
+    );
+    let lookup = |x: i32, y: i32| creep.get(x, y);
+
+    let mut drawn = Framebuffer::new(160, 128);
+    tileset.draw_terrain(&mut drawn, &scenario, cam);
+    let terrain_only = drawn.pixels.clone();
+    tileset.draw_creep(&mut drawn, &scenario, cam, &lookup);
     assert_ne!(
-        first.pixels, terrain_only,
+        drawn.pixels, terrain_only,
         "creep did not alter the terrain pixels"
     );
 
-    let mut later = Framebuffer::new(160, 128);
-    tileset.draw_terrain(&mut later, &scenario, cam);
-    draw_creep(&mut later, &scenario, cam, &grid, 48);
-    assert_ne!(
-        first.pixels, later.pixels,
-        "creep texture has no animation between ticks"
-    );
+    // Pixel-exact: the creep tile is the cv5 group-1 tile the picker chose,
+    // drawn exactly like any terrain tile (no tint, no noise).
+    let mtxm = creep.get(tx, ty).expect("picked tile");
+    assert_eq!(mtxm >> 4, 1, "cv5 group 1 holds the creep tiles");
+    let mut alone = Framebuffer::new(32, 32);
+    tileset.draw_tile(&mut alone, mtxm, 0, 0);
+    let (ox, oy) = (tx * 32 - cam.0, ty * 32 - cam.1);
+    for y in 0..32 {
+        for x in 0..32 {
+            assert_eq!(
+                drawn.get(ox + x, oy + y),
+                alone.get(x, y),
+                "pixel ({x}, {y})"
+            );
+        }
+    }
+
+    // Retail creep is static: the same picks draw the same pixels.
+    let mut again = Framebuffer::new(160, 128);
+    tileset.draw_terrain(&mut again, &scenario, cam);
+    tileset.draw_creep(&mut again, &scenario, cam, &lookup);
+    assert_eq!(drawn.pixels, again.pixels, "creep must not animate");
 }
 
 #[test]
@@ -256,4 +279,83 @@ fn minimap_blips_are_outlined_and_prepainted_backgrounds_survive() {
     );
     let hidden = draw(MinimapTerrain::Hidden);
     assert_eq!(hidden.get(100, 100), Rgb::new(0, 0, 0), "black radar");
+}
+
+/// Materialised retail cache (`sc_assets ... extract`), if any.
+fn retail_cache() -> Option<std::path::PathBuf> {
+    let base = std::env::var("GALAXYCRAFT_CACHE")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|p| p.join("TileSet").is_dir())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            std::env::var("XDG_CACHE_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|_| std::env::var("HOME").map(|h| std::path::Path::new(&h).join(".cache")))
+                .map(|c| c.join("galaxycraft"))
+        })
+        .ok()?;
+    if base.join("TileSet").is_dir() {
+        return Some(base);
+    }
+    std::fs::read_dir(base)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.join("TileSet").is_dir() && p.join("hd/tileset").is_dir())
+}
+
+/// SD creep edges are the install's `tileset/<era>.grp` frames, drawn at
+/// their GRP offsets in the tileset palette (OpenBW `draw_tiles`).  Skips
+/// without a materialised retail cache.
+#[test]
+fn sd_creep_edges_are_the_retail_grp_frames_at_their_offsets() {
+    use galaxycraft::render::{creep_edge_frame, era_name, Grp};
+    let Some(cache) = retail_cache() else {
+        eprintln!("skip: no materialised retail cache");
+        return;
+    };
+    let chk = cache.join("maps").join("(2)Bottleneck.chk");
+    let Ok(raw) = fs::read(&chk) else {
+        eprintln!("skip: {} missing", chk.display());
+        return;
+    };
+    let scenario = Scenario::parse(&raw).expect("valid CHK");
+    let tileset =
+        Tileset::load(&cache.join("TileSet"), scenario.era, &scenario).expect("cached tileset");
+    let grp_bytes = fs::read(
+        cache
+            .join("hd/tileset")
+            .join(format!("{}.grp", era_name(scenario.era))),
+    )
+    .expect("creep grp");
+    let grp = Grp::parse(&grp_bytes).expect("creep grp parses");
+    assert_eq!(grp.frames.len(), 37);
+
+    let creep = |x: i32, y: i32| (x == 5 && y == 5).then_some(0x10u16);
+    let mut fb = Framebuffer::new(320, 320);
+    tileset.draw_creep(&mut fb, &scenario, (0, 0), &creep);
+    // A creep tile seen only diagonally draws no edge.
+    assert_eq!(creep_edge_frame(&creep, 4, 4), None);
+    let mut checked = 0;
+    for (tx, ty) in [(4, 5), (6, 5), (5, 4), (5, 6)] {
+        let f = creep_edge_frame(&creep, tx, ty).expect("edge next to creep");
+        let frame = &grp.frames[f];
+        for y in 0..frame.h {
+            for x in 0..frame.w {
+                let c = frame.indices[(y * frame.w + x) as usize];
+                if c == 0 {
+                    continue;
+                }
+                let (px, py) = (tx * 32 + frame.x + x, ty * 32 + frame.y + y);
+                assert_eq!(
+                    fb.get(px, py),
+                    tileset.palette.colors[c as usize],
+                    "tile ({tx}, {ty}) frame {f} pixel ({x}, {y})"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 500, "{checked} edge pixels checked");
 }

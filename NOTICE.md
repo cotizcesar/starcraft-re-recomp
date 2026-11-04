@@ -22,6 +22,15 @@ generated fixtures.
 reference installation so you can verify a local copy. It contains no file
 contents.
 
+Release packages (AppImage, Flatpak, Windows zip, macOS app) are built only
+from the tracked, non-ignored files (`scripts/stage_clean_tree.sh` refuses to
+stage fixtures, masks or extracted assets), so they contain no game data
+either. The client reads the command-card table and the Hotkeys panel data
+from the player's install at run time. The AppImage and the Windows zip may
+bundle an LGPL build of FFmpeg (https://ffmpeg.org, source at
+https://github.com/BtbN/FFmpeg-Builds) for video playback, shipped with its
+licence as `ffmpeg-LICENSE.txt`; the Flatpak uses the runtime's FFmpeg.
+
 StarCraft, Brood War and Blizzard Entertainment are trademarks or registered
 trademarks of Blizzard Entertainment, Inc. This project is not affiliated
 with or endorsed by Blizzard.

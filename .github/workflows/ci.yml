@@ -16,6 +16,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   SC_NO_AUDIO: "1"
+  # Lib unit tests that need no developer fixtures (paths, audio backends,
+  # portraits, button-table parser, creep picker, ffmpeg resolution).
+  PLATFORM_TESTS: >-
+    retail::tests audio::tests portrait:: button_sets:: render::hd_terrain_tests
+    ffmpeg_resolution scratch_inputs hotkey_data::tests::js_tables
 
 jobs:
   rust:
@@ -48,6 +53,36 @@ jobs:
           cargo test --locked
           --test menus --test menu_layers --test hd_tileset
           --test portraits --test retail_replay
+      - name: Platform unit tests (fixture-free)
+        run: cargo test --locked --lib -- ${{ env.PLATFORM_TESTS }}
+
+  # The client and every tool must build and pass the fixture-free tests on
+  # the three desktop platforms the release packages target.
+  cross:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: engine-rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine-rust
+      - name: Build all binaries
+        run: cargo build --bins --locked
+      - name: Fixture-free tests
+        run: >
+          cargo test --locked
+          --test menus --test menu_layers --test hd_tileset
+          --test portraits --test retail_replay
+      - name: Platform unit tests (fixture-free)
+        run: cargo test --locked --lib -- ${{ env.PLATFORM_TESTS }}
 
   python:
     name: Scripts and progress
@@ -61,6 +96,10 @@ jobs:
         run: python -m compileall -q scripts research/tools engine-rust/tools
       - name: Shell syntax
         run: for f in scripts/*.sh; do bash -n "$f"; done
+      - name: Packaging metadata
+        run: |
+          python -c "import plistlib; plistlib.load(open('engine-rust/packaging/macos/Info.plist','rb'))"
+          python -c "import xml.dom.minidom as m; m.parse('engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.metainfo.xml'); m.parse('engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.svg')"
       - name: progress.py unit tests
         run: python -m unittest scripts/test_progress.py -v
       - name: PROGRESS.md summary is current

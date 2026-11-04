@@ -3828,3 +3828,92 @@ Addendum 2 (75): the residuals that needed no user input.
   worse), `ui_diff.py` 39/39 (unchanged), walkthrough PASS (145 steps).
 - Remaining: building/mineral lighting.  It needs the client's point-light
   inputs, which only a read-only capture of the running game can give.
+
+## 2026-11-03 (76) — Retail creep, full-motion portraits, Windows/macOS and packages
+
+Goal (user): pixel-exact creep, full-motion WebM outside the title and
+briefing screens, Windows/macOS builds and a packaged release (AppImage /
+Flatpak), "1:1".
+
+**Creep (FACT, 64-bit in-game dump `sc_mem_ingame64_20261028_0814`, file
+offsets).**  `0xa12380` is the CRT `rand` (`s*214013+2531011`,
+`(s>>16)&0x7fff`), seeded with `srand(time(NULL))` at `0x2b17e2` (after
+`srand(0x75)` and four throw-away calls).  `0x64fb30` picks a tile's creep
+megatile when the tile gains creep: `r = rand()%100; v = rand();
+0x10 + (r < 4 ? 6 + v%7 : v%6)`; it is reached through `0x64fbe0` from the
+creep set/spread loops (`0x64f967`, `0x650010`).  So variants are
+per-session client state, chosen in creep order, not a prefilled table.
+*Falsified:* OpenBW's 256x256 table (`ui.h` `creep_random_tile_indices`)
+with the Borland or MSVC LCG and stride 128 or 256: none of the 2^32
+generator states reproduces the 160 recorded 134905 tiles, even allowing 60
+mismatches (brute force, /tmp scratch, 4 x 2^32 states).  *Falsified:* "there
+is no creep GRP in CASC" (PROGRESS wording): `tileset/<era>.grp` is the SD
+creep-edge GRP (37 frames with offsets) and was already used by the HD path.
+Implementation: `render::CreepTiles` + `CrtRand` (one stream per process,
+as retail), `creep_edge_frame` shared by SD and HD, `Tileset::draw_creep`
+draws the cv5 group-1 tile and the GRP edge frame at its offset; the
+procedural mat (`creep_hash`, `creep_cell`, animated `draw_creep`) is
+removed (retail creep does not animate).  Tests: CRT sequence (`srand(1)`
+gives 41, 18467, ...), 4 % rare tiles, pick-once/forget, creep tile pixels
+equal the cv5 megatile, edge pixels equal the install's GRP frames at their
+offsets (cache-gated).  Capture state: 9 more 134905 tiles around the
+Hatchery recorded (best of 13 renders on the pixels where variants differ,
+error < 3.5, margin > 2.5; 11 tiles failed and stay unrecorded).
+
+**Portraits (FACT, same dump).**  `portdata.dat` = 110 idle + 110 talking
+`portdata.tbl` indices, then four u8 rows of 110 idle-clip weights (every
+row sums to 100).  `0x32cb20` (per frame): when a clip stops, a talking
+portrait that still talks plays `0x32d180` (`(rand()>>8)%3`, `(c+2)%3` if
+it repeats), otherwise `0x32cfa0` (`r=(rand()>>8)%101`, first clip whose
+cumulative weight reaches `r`).  `rand()>>8` spans 0..127, so rolls 0..26
+are twice as likely (clip 0 gets 88.3 %, kept).  Setting a portrait
+(`0x3fd300`) uses a 3-word additive generator (`+0x71823402`) when the
+`UnitPortraits` option is 2, else clip 0.  Clips: VP9 10 fps, 1-1.6 s.
+`src/portrait.rs` + `sc_view` play them frame by frame (talking while the
+unit's voice line lasts, or for a trigger Transmission / Talking Portrait;
+duration per the public CHK spec, INFERENCE).  Headless shots stay frozen
+unless `--menu-at` pins the clock: 5 distinct Marine frames over 6 clocks,
+everything outside the portrait well byte-identical.
+
+**Builds without fixtures.**  A clean clone rendered 12 screens: command
+card and Hotkeys panel differed.  FACT: the on-disk `x86/StarCraft.exe` holds
+the button-set table byte-identically to the menu dump (RVA `0xb2ddf8`, file
+`0xb2c5f8`, 250 sets, 161 arrays) -> `button_sets::parse_exe`.  Hotkeys:
+`hotkeypanel.js` + `stat_txt` rebuild the fixture exactly (220 actions, 88
+units) except 25 labels the native client sends and no file ships (searched
+CASC text, both executables, both dumps) -> `NATIVE_LABELS`.  After that the
+clean build is pixel-identical on all 12 screens.  `sc_view` now finds the
+install without `--install` and shows a message window when it cannot.
+
+**Platforms.**  Audio behind `PcmOut`: ALSA, WinMM (`winmm.dll`), CoreAudio
+AudioQueue, all dlopen'd and compiled on every OS.  One cache root
+(`retail::user_cache_root`: XDG / `%LOCALAPPDATA%` / `~/Library/Caches`),
+per-OS install candidates, `ffmpeg_path` (env, next to the exe, Homebrew,
+PATH), GUI subsystem on Windows.  Windows: mingw cross build in a podman
+container (Debian trixie, Wine 10; bookworm's Wine 8 lacks
+`bcryptprimitives.dll`): clippy 0, 407 tests pass, `sc_view.exe` frames
+byte-identical to Linux.  macOS: not buildable here (minifb's Cocoa
+backend); `cross` CI job and `scripts/package_macos.sh` written, not run.
+
+**Packages.**  `scripts/stage_clean_tree.sh` (tracked + non-ignored files,
+refuses fixtures/masks/assets); AppImage (2.3 MB, or 56 MB with the BtbN
+LGPL ffmpeg n8.1), Flatpak (runtime 26.08, its ffmpeg 8.1.3 has
+libvpx-vp9), Windows zip (+ `ffmpeg.exe`), macOS app.  Parity gate
+`engine-rust/docs/gates/package-parity.txt`: AppImage 18/18 renders with 0
+changed px; Flatpak and the Windows zip (Wine, bundled ffmpeg only) 0 px on
+the screens run.  `release.yml` publishes on `v*` tags (not run).
+
+**Bug fixed on the way.**  Video decoding left one
+`/tmp/galaxycraft-video-<pid>` per process (1 500+ here; the cause of the
+earlier "Disk quota exceeded") and shared a fixed input file between
+threads; `ScratchInput` gives each decode its own directory, removed on
+drop.  The retail test also left its 1.7 GB materialised install behind;
+it is removed now.
+
+**Verification.**  `cargo test` (fixtures + `SC_INSTALL`): 407 passed, 0
+failed; clippy 0 warnings (Linux and the Windows target); `cargo fmt
+--check` clean; `ui_visual_diff.py` 51/51 raw and calibrated, none worse
+(134905 2.46 -> 2.44, 134919 2.51 -> 2.50, 134931 2.79 -> 2.78);
+`ui_diff.py` 39/39 (output identical); walkthrough PASS (145 steps);
+`progress.py --check` OK.  Open: macOS build on CI, the published release,
+transmission text and map WAV.

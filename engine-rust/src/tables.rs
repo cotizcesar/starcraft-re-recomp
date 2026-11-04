@@ -169,6 +169,12 @@ impl StringTable {
         self.strings.len()
     }
 
+    /// A table holding `strings` (tests build small tables this way).
+    #[cfg(test)]
+    pub(crate) fn from_strings(strings: Vec<String>) -> Self {
+        Self { strings }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.strings.is_empty()
     }

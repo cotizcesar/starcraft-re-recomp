@@ -1819,7 +1819,10 @@ retail title/briefing screens.
 The following are **not** claimed as recovered.  None of them is a missing
 rule in the playable simulation.
 
-* the exact retail creep texture.  CASC ships no creep GRP and the engine
+* (superseded 2026-11-03, session log entry 76: creep is now the retail cv5
+  group-1 tiles plus the `tileset/<era>.grp` edge frames, picked by the
+  client's CRT `rand` rule; the statement below was wrong) the exact retail
+  creep texture.  CASC ships no creep GRP and the engine
   builds the mat procedurally; the client now renders an opaque organic mat
   from the recovered maturity grid (purple-brown grain, 8-pixel blisters with
   shadow rings, 16-pixel mottling, 6-tick phase, ragged noise edge).  The
@@ -1828,7 +1831,10 @@ rule in the playable simulation.
 * the Remastered 20th-anniversary/Carbot alternative console skins.  The stock
   Terran/Zerg/Protoss consoles, menus, score panels and all voice/music sets
   are used; the cosmetic alternate skins are materialised only on request.
-* decoded WebM cinematics are used on the retail title/briefing screens only.
+* (superseded 2026-11-03, session log entry 76: the HUD portraits play
+  their WebM clips full motion and the campaign act movies stream through
+  `src/cinematic.rs`) decoded WebM cinematics are used on the retail
+  title/briefing screens only.
   The `smk/starintr.webm` / `starxintr.webm` intros and the
   `interstitials/*.webm` briefing movies are parsed (`src/video.rs`) and
   their poster frames are composited on the intro and briefing screens;

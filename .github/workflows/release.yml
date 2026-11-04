@@ -1,0 +1,114 @@
+name: Release
+
+# Packages the GalaxyCraft client for Linux (AppImage, Flatpak), Windows and
+# macOS.  Every package is built from scripts/stage_clean_tree.sh, so no
+# retail-derived file can be included: the client reads the player's own
+# StarCraft: Remastered install at run time.  Tag pushes (v*) publish a
+# GitHub release; manual runs only upload the artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # LGPL ffmpeg builds (no GPL/nonfree parts) bundled for video playback.
+  FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest
+
+jobs:
+  appimage:
+    name: Linux AppImage
+    # The oldest supported runner keeps the glibc requirement low.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: LGPL ffmpeg
+        run: |
+          curl -fsSL -o /tmp/ff.tar.xz "$FFMPEG_URL/ffmpeg-n8.1-latest-linux64-lgpl-8.1.tar.xz"
+          mkdir -p /tmp/ff && tar -xf /tmp/ff.tar.xz -C /tmp/ff --strip-components=1
+      - name: Build AppImage
+        run: FFMPEG=/tmp/ff/bin/ffmpeg scripts/package_appimage.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: dist/*.AppImage
+
+  flatpak:
+    name: Linux Flatpak
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build bundle
+        run: scripts/package_flatpak.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak
+
+  windows:
+    name: Windows x86_64
+    # Cross-built with mingw-w64 (the build verified under Wine).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: mingw-w64 and LGPL ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+          curl -fsSL -o /tmp/ff.zip "$FFMPEG_URL/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip"
+          mkdir -p /tmp/ff && cd /tmp/ff && python3 -m zipfile -e /tmp/ff.zip . && mv ffmpeg-*/* .
+      - name: Build zip
+        run: FFMPEG=/tmp/ff/bin/ffmpeg.exe scripts/package_windows.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Icon tooling
+        run: brew install librsvg
+      - name: Build app
+        run: scripts/package_macos.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [appimage, flatpak, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
