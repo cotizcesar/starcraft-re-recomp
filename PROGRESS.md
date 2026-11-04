@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 14 | 18 | 78 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 16 | 18 | 89 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 6 | 9 | 67 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 8 | 14 | 57 % |
-| **Overall (weighted)** | **100** | **56** | **70** | **85 %** |
+| **Overall (weighted)** | **100** | **58** | **70** | **87 %** |
 
 _Last updated: 2026-11-03_
 <!-- progress:summary:end -->
@@ -93,8 +93,8 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [ ] Trigger transmissions show their text and play the map WAV (the portrait already talks)
 - [x] Windows build (mingw cross build; 407 tests pass under Wine 10, same frames as Linux) — `scripts/package_windows.sh`, `engine-rust/docs/gates/package-parity.txt`
 - [x] Linux packages: AppImage and Flatpak, built from a clean tree, pixel-identical to the developer build — `scripts/package_appimage.sh`, `scripts/package_flatpak.sh`, `engine-rust/docs/gates/package-parity.txt`
-- [ ] macOS universal app verified on CI (`scripts/package_macos.sh`, `cross` job in `ci.yml`; not run yet)
-- [ ] Published GitHub release with all packages (`.github/workflows/release.yml` on a `v*` tag; not run yet)
+- [x] macOS universal app (x86_64 + arm64) built and tested on CI — `cross` job in `ci.yml` (run 41761417870), `scripts/package_macos.sh` (release run 41761682900)
+- [x] Published GitHub release with all packages and SHA-256 sums — [v0.1.0](https://github.com/cotizcesar/starcraft-re-recomp/releases/tag/v0.1.0), `.github/workflows/release.yml`
 
 ## Persistence: saves, replays, profiles
 

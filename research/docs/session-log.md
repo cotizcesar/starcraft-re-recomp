@@ -3917,3 +3917,15 @@ failed; clippy 0 warnings (Linux and the Windows target); `cargo fmt
 `ui_diff.py` 39/39 (output identical); walkthrough PASS (145 steps);
 `progress.py --check` OK.  Open: macOS build on CI, the published release,
 transmission text and map WAV.
+
+Addendum (76): pushed with the user's approval as PR #7 (rebase-merged,
+`db33b08`).  CI: `Build and test (macos-latest)` built every binary and
+passed the fixture-free and 22 platform unit tests; `windows-latest`
+likewise.  Tag `v0.1.0` ran `release.yml` (run 41761682900): all five jobs
+green; the macOS binary is universal (`lipo`: x86_64 arm64); the release
+has the AppImage (56.3 MB), Flatpak (1.1 MB), Windows zip (56.1 MB), macOS
+zip (3.2 MB) and `SHA256SUMS`.  The published AppImage passes its checksum
+and renders `ingame --menu-at 0.3` with 0 changed px against the developer
+build.  appimagetool warned that an SVG `.DirIcon` will be refused in a
+future release; the symlink is dropped (the icon comes from the desktop
+entry).
