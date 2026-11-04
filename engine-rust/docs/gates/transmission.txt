@@ -1,0 +1,8 @@
+# Trigger transmission gate (2026-11-04T05:45Z)
+# SC_NO_AUDIO=1 sc_view --install "$SC_INSTALL" --no-intro --width 1280 --height 720 --shot /tmp/tx.bmp --shot-screen ingame-transmission
+transmission: tick 30 map T: Wasteland text lines 5 sounds ["~/.cache/galaxycraft/retail-864772b9/campaign/terran/terran01/wav/combeep0.ogg"]
+# SC_INSTALL=... cargo test --release --test retail campaign_transmissions -- --nocapture
+Wasteland, 90 s: 9 text lines, sounds ["staredit\\wav\\ComBeep0.wav", "staredit\\wav\\T1M01uci.wav"]
+first lines: ["          TIP", "               You can select multiple units by clicking", "               and dragging a box around them."]
+test campaign_transmissions_resolve_to_text_and_playable_map_audio ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.31s

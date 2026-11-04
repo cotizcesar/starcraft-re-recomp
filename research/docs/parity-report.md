@@ -1,5 +1,14 @@
 # Visual parity report (44 references)
 
+> **Historical (2026-10-29), superseded.**  These numbers predate the
+> retail-art rebuilds of the menus and the in-game rounds 1–3.  The live
+> measurement is `engine-rust/docs/gates/ui-visual-diff.txt`
+> (`scripts/ui_visual_diff.py`, 2560x1440 content box): **51/51 screens
+> pass** (mean ≤ 8.0, outliers ≤ 8 %) with a mean of 2.10 and the worst at
+> 6.99 (`saved`); the eight (8)The Hunters in-game references are at
+> 2.44–3.27 raw (`ui-visual-diff-raw.txt`).  What is still open is listed
+> in `PROGRESS.md`.
+
 Metric: mean absolute per-channel difference (0..255) between our
 headless render at 3440x1440 and the corresponding retail capture.
 Lower is better; 0 would be identical (impossible with a different map state).

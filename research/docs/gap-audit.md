@@ -1,5 +1,12 @@
 # Visual parity audit vs `docs/original_screenshots` (44 refs, 3440x1440)
 
+> **Status note (2026-11-04).**  The tables below record the 2026-10-29
+> rounds and are kept as history; most "Missing" cells have since been
+> closed (Options, Hotkeys, Collections, Credits, Objectives, Tips, Game
+> Menu, the in-game HUD).  Current numbers: `engine-rust/docs/gates/
+> ui-visual-diff.txt` (51/51 pass, in-game 2.44–3.27 raw); open work:
+> `PROGRESS.md` (in-game building/mineral lighting).
+
 Reference: 44 screenshots of the Remastered client at 21:9. Our client is
 rendered headless with `scripts/render_screens.sh` at the same resolution and
 compared screen by screen.

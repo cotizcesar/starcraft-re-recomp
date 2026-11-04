@@ -23,13 +23,13 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 16 | 18 | 89 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 17 | 18 | 94 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 6 | 100 % |
-| [LAN multiplayer](#lan-multiplayer) | 15 | 6 | 9 | 67 % |
-| [Reverse engineering](#reverse-engineering) | 10 | 8 | 14 | 57 % |
-| **Overall (weighted)** | **100** | **59** | **70** | **88 %** |
+| [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
+| [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
+| **Overall (weighted)** | **100** | **68** | **70** | **97 %** |
 
-_Last updated: 2026-11-03_
+_Last updated: 2026-11-04_
 <!-- progress:summary:end -->
 
 **Currently working on:** in-game visual parity against the retail captures,
@@ -87,10 +87,10 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Resolutions from 16:9 up to 4K and ultrawide — `research/docs/graphics-remastered.md`
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`
 - [x] Plays from the player's own install, with no retail files in the repository — `NOTICE.md`, `sc_assets`
-- [ ] In-game frame parity with the retail captures (raw mean difference currently 2.46–3.27 on the eight (8)The Hunters references; open: building/mineral lighting, which needs the client's point-light inputs) — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, session log 2026-11-03 (75)
+- [ ] In-game frame parity with the retail captures (raw mean difference currently 2.44–3.27 on the eight (8)The Hunters references; open: building/mineral lighting, which needs the client's point-light inputs) — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, session log 2026-11-03 (75)
 - [x] Pixel-exact creep from the retail art and rule: cv5 group-1 tiles picked per tile by the client's CRT `rand` (64-bit `0x64fb30`), `tileset/<era>.grp` edge frames at their offsets, SD and HD (variants are per-session in retail) — `tests/render.rs`, `src/render.rs` creep tests, session log 2026-11-03 (76)
 - [x] Full-motion WebM outside the title and briefing screens: HUD portraits (weighted idle clips, talking while the unit or a trigger transmission speaks), campaign act movies — `src/portrait.rs`, `tests/portraits.rs`, `engine-rust/docs/gates/package-parity.txt`
-- [ ] Trigger transmissions show their text and play the map WAV (the portrait already talks)
+- [x] Trigger transmissions show their text and play the map WAV (the portrait already talks) — `src/transmission.rs`, `TriggerCue` in `src/trigger.rs`, retail test `campaign_transmissions_resolve_to_text_and_playable_map_audio`, `engine-rust/docs/gates/transmission.txt`, session log 2026-11-04 (78)
 - [x] Windows build (mingw cross build; 407 tests pass under Wine 10, same frames as Linux) — `scripts/package_windows.sh`, `engine-rust/docs/gates/package-parity.txt`
 - [x] Linux packages: AppImage and Flatpak, built from a clean tree, pixel-identical to the developer build — `scripts/package_appimage.sh`, `scripts/package_flatpak.sh`, `engine-rust/docs/gates/package-parity.txt`
 - [x] macOS universal app (x86_64 + arm64) built and tested on CI — `cross` job in `ci.yml` (run 41761417870), `scripts/package_macos.sh` (release run 41761682900)
@@ -118,8 +118,8 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Lobby inside `sc_view` (key **L**) — `scripts/menu_walkthrough.py`
 - [x] Reconnect by resyncing the command log (no state transfer) — `tests/lan.rs`
 - [ ] Physical test on two machines (`scripts/lan_two_machines.sh`)
-- [ ] Lobby with more than two players in the UI
-- [ ] Automatic reconnect with backoff
+- [x] Lobby with more than two players in the UI (up to 8, one seat per start location) — `JoinQueue` in `src/net.rs`, `tests/lan.rs::three_peers_join_a_polled_lobby_and_stay_in_sync`, `engine-rust/docs/gates/lan-lobby-reconnect.txt`
+- [x] Automatic reconnect with backoff (host waits and accepts rejoins, clients retry on `Backoff::lan`) — `tests/lan.rs::a_dropped_peer_rejoins_with_backoff_while_the_others_wait`, `rejoin_backoff_retries_until_the_host_listens`, `engine-rust/docs/gates/lan-lobby-reconnect.txt`
 
 ## Reverse engineering
 
@@ -133,9 +133,9 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Architecture map: gate `0x70e810`, WndProc `0x945050`, simulation step `0x969f0d`, nuke handler `0x5d3823` — `research/docs/architecture.md`
 - [x] CHK parser and TRIG handlers decompiled — `research/docs/architecture.md`
 - [x] Same engine behind both binaries confirmed (hypothesis H2) — `research/docs/architecture.md`
-- [ ] In-game map heap captured (needs a re-dump with the game running)
-- [ ] Function `0x8aee30` analysed (parked after two timeouts)
-- [ ] `GetMessage` message pump located
-- [ ] Manifest from every extracted file to its origin in CASC/MPQ
-- [ ] Capability matrix A–F completed
-- [ ] CEF UI sound ID to file resolution (`GLUSND_*` → WAV)
+- [x] In-game map heap captured (RW re-dump during Terran 8; map text and objectives found) — `research/docs/heap-ingame-findings.md` (re-verified 2026-11-04)
+- [x] Function `0x8aee30` analysed: protector-obfuscated body (junk, overlapping branches), why it never decompiles, what it touches — `research/docs/architecture.md` §1, `research/tools/FunctionProfile.java`
+- [x] Message pump located: `FUN_00946500` (`PeekMessage`/Translate/Dispatch, `WM_QUIT`), called per frame at `0x6bbdfa` — `research/docs/architecture.md` §2
+- [x] Manifest from every extracted file to its origin in CASC/MPQ (2 923 files by CKey = MD5, 0 without origin) — `research/manifests/extracted-origin.tsv`, `sc_assets manifest`, retail test `materialised_assets_load_without_the_bundled_asset_directory`
+- [x] Capability matrix A–F completed (15 rows × 6 columns, new rows observed 2026-11-04) — `research/docs/rea-capabilities.md`
+- [x] CEF UI sound ID to file resolution (`GLUSND_*` → WAV): sound id = `sfxdata.dat` row, 1-based `.tbl` string — `src/sfx.rs` (`SfxData`, `glusnd_path`, tests)

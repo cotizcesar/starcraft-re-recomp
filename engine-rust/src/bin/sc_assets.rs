@@ -39,9 +39,10 @@ fn main() -> ExitCode {
                 out = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
-            "verify" | "extract" | "fixtures" | "maps" | "path" | "mpq" => {
+            "verify" | "extract" | "fixtures" | "maps" | "path" | "mpq" | "manifest" | "list" => {
                 command = Some(args[i].clone());
-                if (args[i] == "path" || args[i] == "mpq") && i + 1 < args.len() {
+                let takes_arg = matches!(args[i].as_str(), "path" | "mpq" | "manifest" | "list");
+                if takes_arg && i + 1 < args.len() && !args[i + 1].starts_with("--") {
                     path_arg = Some(args[i + 1].clone());
                     i += 1;
                 }
@@ -73,6 +74,52 @@ fn main() -> ExitCode {
     };
 
     match command.as_str() {
+        // `list PREFIX`: CASC ROOT paths under a prefix, one per line.
+        "list" => {
+            for path in install.list(path_arg.as_deref().unwrap_or(""), "") {
+                println!("{path}");
+            }
+            ExitCode::SUCCESS
+        }
+        // `manifest [DIR] [--out FILE]`: every materialised file (default:
+        // the player's cache) with its CASC / MPQ origin; fails if any file
+        // cannot be attributed.
+        "manifest" => {
+            let dir = path_arg
+                .map(PathBuf::from)
+                .unwrap_or_else(|| install.default_cache_dir());
+            let rows = match install.origin_manifest(&dir) {
+                Ok(rows) => rows,
+                Err(e) => {
+                    eprintln!("manifest of {} failed: {e}", dir.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut text = String::from(galaxycraft::retail::ORIGIN_TSV_HEADER);
+            text.push('\n');
+            let mut counts = std::collections::BTreeMap::new();
+            for row in &rows {
+                text.push_str(&row.tsv());
+                text.push('\n');
+                let kind = row.tsv().split('\t').nth(3).unwrap_or("").to_string();
+                *counts.entry(kind).or_insert(0usize) += 1;
+            }
+            match &out {
+                Some(file) => {
+                    if let Err(e) = std::fs::write(file, &text) {
+                        eprintln!("cannot write {}: {e}", file.display());
+                        return ExitCode::FAILURE;
+                    }
+                }
+                None => print!("{text}"),
+            }
+            eprintln!("{} files in {}: {counts:?}", rows.len(), dir.display());
+            if counts.contains_key("unknown") {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
         "path" => {
             let Some(path) = path_arg else {
                 eprintln!("path needs a CASC path");

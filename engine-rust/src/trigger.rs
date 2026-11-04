@@ -46,6 +46,37 @@ pub fn transmission_ms(action: &TriggerAction) -> u32 {
     }
 }
 
+/// Action flag "Always Display": the text shows even with subtitles off.
+/// INFERENCE from the public CHK spec (staredit.net `TRIG`, action flags
+/// bit 2); falsifier: a retail map whose flagged Display Text hides with
+/// subtitles off.
+pub const ALWAYS_DISPLAY: u8 = 0x04;
+
+/// One thing a trigger shows or plays (`string` = 1-based `STR` id, 0 =
+/// none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerCue {
+    Text {
+        player: usize,
+        string: u32,
+        always: bool,
+        /// Transmission length (0 for Display Text Message).
+        ms: u32,
+    },
+    Wav {
+        player: usize,
+        string: u32,
+    },
+}
+
+impl TriggerCue {
+    pub fn player(&self) -> usize {
+        match *self {
+            TriggerCue::Text { player, .. } | TriggerCue::Wav { player, .. } => player,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TriggerAction {
     pub location: u32,
@@ -114,12 +145,14 @@ pub struct TriggerSystem {
     /// Presentation/state side effects that a renderer or campaign shell would
     /// consume.  They are recorded so the headless VM still executes the
     /// action instead of silently dropping it.
-    pub display_messages: Vec<(usize, u32)>,
     pub mission_objectives: Vec<Option<u32>>,
     /// `(player, unit type, text id, duration ms)` of each Transmission
     /// (see [`transmission_ms`]).
     pub transmissions: Vec<(usize, u16, u32, u32)>,
-    pub sounds: Vec<(usize, u32)>,
+    /// What players read and hear, in execution order: Transmission (7),
+    /// Play WAV (8) and Display Text Message (9).  Presentation only (not
+    /// part of `state_hash`); the client shows / plays the new entries.
+    pub cues: Vec<TriggerCue>,
     pub center_views: Vec<(usize, u32)>,
     pub minimap_pings: Vec<(usize, u32)>,
     pub talking_portraits: Vec<(usize, u16, u32)>,
@@ -142,10 +175,9 @@ impl Default for TriggerSystem {
             paused: false,
             timer_paused: false,
             preserved: Vec::new(),
-            display_messages: Vec::new(),
             mission_objectives: Vec::new(),
             transmissions: Vec::new(),
-            sounds: Vec::new(),
+            cues: Vec::new(),
             center_views: Vec::new(),
             minimap_pings: Vec::new(),
             talking_portraits: Vec::new(),
@@ -270,10 +302,9 @@ impl TriggerSystem {
             paused: false,
             timer_paused: false,
             preserved: Vec::new(),
-            display_messages: Vec::new(),
             mission_objectives: Vec::new(),
             transmissions: Vec::new(),
-            sounds: Vec::new(),
+            cues: Vec::new(),
             center_views: Vec::new(),
             minimap_pings: Vec::new(),
             talking_portraits: Vec::new(),
@@ -1112,18 +1143,33 @@ impl TriggerSystem {
                 }
             }
             7 => {
-                self.transmissions.push((
+                let ms = transmission_ms(action);
+                self.transmissions
+                    .push((player, action.extra, action.text_id, ms));
+                self.cues.push(TriggerCue::Wav {
                     player,
-                    action.extra,
-                    action.text_id,
-                    transmission_ms(action),
-                ));
+                    string: action.sound_id,
+                });
+                self.cues.push(TriggerCue::Text {
+                    player,
+                    string: action.text_id,
+                    always: action.flags & ALWAYS_DISPLAY != 0,
+                    ms,
+                });
             }
             8 => {
-                self.sounds.push((player, action.sound_id));
+                self.cues.push(TriggerCue::Wav {
+                    player,
+                    string: action.sound_id,
+                });
             }
             9 => {
-                self.display_messages.push((player, action.text_id));
+                self.cues.push(TriggerCue::Text {
+                    player,
+                    string: action.text_id,
+                    always: action.flags & ALWAYS_DISPLAY != 0,
+                    ms: 0,
+                });
             }
             10 => {
                 self.center_views.push((player, action.location));
@@ -1299,6 +1345,59 @@ mod tests {
         r[2372 + enabled] = 1;
         let _ = kind;
         r
+    }
+
+    #[test]
+    fn transmission_play_wav_and_display_text_log_ordered_cues() {
+        // One Always trigger: Transmission (text 5, wav 6, 2 s, flag
+        // "always display"), Play WAV (wav 7), Display Text (text 8).
+        let mut r = record(22, 7, 0);
+        let act = |r: &mut Vec<u8>, i: usize, kind: u8, text: u32, wav: u32, flags: u8| {
+            let o = 320 + 32 * i;
+            r[o + 4..o + 8].copy_from_slice(&text.to_le_bytes());
+            r[o + 8..o + 12].copy_from_slice(&wav.to_le_bytes());
+            r[o + 12..o + 16].copy_from_slice(&2000u32.to_le_bytes());
+            r[o + 24..o + 26].copy_from_slice(&1u16.to_le_bytes()); // Marine
+            r[o + 26] = kind;
+            r[o + 28] = flags;
+        };
+        act(&mut r, 0, 7, 5, 6, ALWAYS_DISPLAY);
+        act(&mut r, 1, 8, 0, 7, 0);
+        act(&mut r, 2, 9, 8, 0, 0);
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        t.process(&mut w);
+        assert_eq!(
+            t.cues,
+            vec![
+                TriggerCue::Wav {
+                    player: 0,
+                    string: 6
+                },
+                TriggerCue::Text {
+                    player: 0,
+                    string: 5,
+                    always: true,
+                    ms: 2000
+                },
+                TriggerCue::Wav {
+                    player: 0,
+                    string: 7
+                },
+                TriggerCue::Text {
+                    player: 0,
+                    string: 8,
+                    always: false,
+                    ms: 0
+                },
+            ]
+        );
+        assert_eq!(
+            t.transmissions,
+            vec![(0, 1, 5, 2000)],
+            "portrait record kept"
+        );
+        assert!(t.cues.iter().all(|c| c.player() == 0));
     }
 
     #[test]

@@ -25,6 +25,18 @@ public class GhidraDecompileBatch extends GhidraScript {
         }
         String outDir = args[0];
         DecompInterface decomp = new DecompInterface();
+        // GHIDRA_DECOMPILE_PAYLOAD_MB / GHIDRA_DECOMPILE_MAX_INSTR lift the
+        // decompiler's output and flow limits (large init functions).
+        ghidra.app.decompiler.DecompileOptions opts = new ghidra.app.decompiler.DecompileOptions();
+        String payload = System.getenv("GHIDRA_DECOMPILE_PAYLOAD_MB");
+        if (payload != null) {
+            opts.setMaxPayloadMBytes(Integer.parseInt(payload.trim()));
+        }
+        String maxInstr = System.getenv("GHIDRA_DECOMPILE_MAX_INSTR");
+        if (maxInstr != null) {
+            opts.setMaxInstructions(Integer.parseInt(maxInstr.trim()));
+        }
+        decomp.setOptions(opts);
         decomp.openProgram(currentProgram);
         FunctionManager fm = currentProgram.getFunctionManager();
         int ok = 0, fail = 0;
@@ -41,7 +53,13 @@ public class GhidraDecompileBatch extends GhidraScript {
                 continue;
             }
             try {
-                DecompileResults res = decomp.decompileFunction(fn, 300, monitor);
+                // GHIDRA_DECOMPILE_TIMEOUT (seconds) for very large functions.
+                int timeout = 300;
+                String env = System.getenv("GHIDRA_DECOMPILE_TIMEOUT");
+                if (env != null) {
+                    timeout = Integer.parseInt(env.trim());
+                }
+                DecompileResults res = decomp.decompileFunction(fn, timeout, monitor);
                 String name = "0x" + fn.getEntryPoint().toString().replace(" ", "");
                 if (res != null && res.decompileCompleted()) {
                     try (PrintWriter w = new PrintWriter(new FileWriter(outDir + "/" + name + ".c"))) {
@@ -53,7 +71,8 @@ public class GhidraDecompileBatch extends GhidraScript {
                     ok++;
                 }
                 else {
-                    println("FAIL " + args[i]);
+                    println("FAIL " + args[i] + " size=" + fn.getBody().getNumAddresses()
+                            + " error=" + (res == null ? "null" : res.getErrorMessage()));
                     fail++;
                 }
             }

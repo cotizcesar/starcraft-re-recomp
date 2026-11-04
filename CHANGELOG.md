@@ -4,6 +4,35 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-04 — Transmissions, multi-player LAN lobby, reconnect, RE closure
+
+### Added
+- Trigger Transmission / Play WAV / Display Text: the text shows above the
+  console (subtitles option respected unless the action says "always
+  display") and the map sound plays: the Remastered voice-over `.ogg` by
+  default, the original `.wav` with "original voice-overs".  The cache now
+  carries each map's trigger sounds (cache marker v16).
+- LAN lobby for up to 8 players (one seat per start location), started when
+  full or with ENTER; protocol 2 tells each client its peer index.
+- Automatic LAN reconnect: the host pauses and accepts the dropped peer for
+  30 s; clients retry on an exponential backoff (250 ms → 4 s, 8 attempts)
+  and rebuild from the host's command log.  `scripts/lan_ui_gate.sh`.
+- `sc_assets manifest` / `list`: every extracted file traced to its CASC
+  path (MD5 = content key) or MPQ member;
+  `research/manifests/extracted-origin.tsv`.
+- `GLUSND_*` CEF sound ids resolve to their WAVs through `sfxdata.dat`.
+
+### Fixed
+- CHK `STR` strings came out empty when StarEdit stored the offsets out of
+  order (they ended at the next entry's offset instead of their NUL); this
+  hid map sound paths and some trigger text.
+- `sfxdata.dat` was read as 4-byte records; it is a 9-byte column table.
+
+### Docs
+- `unresolved-questions.md` and `blockers.md` restated (in-game dump and heap
+  capture exist; what needs the user is listed); `parity-report.md` and
+  `gap-audit.md` marked historical with the current gate numbers.
+
 ## 2026-11-03 — Player profile persistence
 
 ### Added

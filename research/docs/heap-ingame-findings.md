@@ -18,6 +18,13 @@ The briefing objectives live in the module's `.data`, and the map's STR
 block was parsed into the heap. Before (image-only dumps) this gave 0 hits: **the
 RW re-dump was the right experiment**.
 
+Re-verified 2026-11-04 on the local capture (484 region files + `manifest.txt`
+with base/size/SHA-256 per region, 897 MB): `THE BIG PUSH` in `0xa942000`
+(+`0x202cd3`) and `0x147d0000` (+`0x1f74125`); the objectives text
+`-Eliminate the Confederate\r\n forces.\r\n-Duke must survive.` at
+`0xad22000` +`0x432fbf1` (the `\r\n` inside it is why a plain search for the
+one-line sentence misses this copy) and again in `0x147d0000` (+`0x1f74135`).
+
 ## 2. RULED OUT: raw TRIG-2400 and DAT columns (FACT)
 
 0 valid candidates across 483 regions. The positives from the lax scoring were

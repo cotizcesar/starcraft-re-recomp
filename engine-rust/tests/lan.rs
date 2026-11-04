@@ -292,3 +292,253 @@ fn peer_reconnects_and_resyncs_from_the_command_log() {
         "reconnected peer must land on the host's exact state"
     );
 }
+
+/// Host loop used by the multi-peer tests: `turns` turns where every peer
+/// contributes a command on a turn of its own.
+fn scripted_acts(world: &World, peer: u8, turn: u32) -> Vec<RecAct> {
+    if turn == 2 + peer as u32 {
+        vec![RecAct::Issue {
+            unit: first_unit_of(world, peer),
+            order: Order::Move {
+                pos: (200 + 40 * peer as i32, 300),
+            },
+        }]
+    } else {
+        vec![]
+    }
+}
+
+fn setup_of(msg: galaxycraft::net::Msg) -> (u8, u8, Vec<Race>) {
+    match msg {
+        galaxycraft::net::Msg::Setup {
+            peers, you, races, ..
+        } => (peers, you, races),
+        other => panic!("expected Setup, got {other:?}"),
+    }
+}
+
+#[test]
+fn three_peers_join_a_polled_lobby_and_stay_in_sync() {
+    use galaxycraft::net::JoinQueue;
+    let map_hash = [21u8; 32];
+    let seed = 0x1234_5678_9abc_def0;
+    let turns = 12u32;
+    let (addr_tx, addr_rx) = mpsc::channel();
+    let host = thread::spawn(move || -> Result<(u64, Vec<Race>), String> {
+        let lobby = Lobby::bind("127.0.0.1:0", map_hash, seed).map_err(|e| e.to_string())?;
+        addr_tx.send(lobby.local_addr().unwrap()).unwrap();
+        // The menu's way: poll without blocking until the lobby is full.
+        let mut queue = JoinQueue::new(3);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while queue.players() < 3 {
+            assert!(std::time::Instant::now() < deadline, "peers never joined");
+            if lobby
+                .poll_join(&mut queue, false)
+                .map_err(|e| e.to_string())?
+                .is_none()
+            {
+                thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        assert_eq!(queue.members().len(), 2);
+        let (mut clients, races) = lobby.start(queue, Race::Zerg).map_err(|e| e.to_string())?;
+        let mut lock = Lockstep::new(0, 3, DEFAULT_TICKS_PER_TURN);
+        let mut world = world_for(&races);
+        for turn in 0..turns {
+            let acts = scripted_acts(&world, 0, turn);
+            if host_turn(&mut lock, &mut world, &mut clients, acts).map_err(|e| e.to_string())? {
+                return Err(format!("desync at {turn}"));
+            }
+        }
+        Ok((state_hash(&world), races))
+    });
+    let addr = addr_rx.recv().unwrap().to_string();
+    // `connect` returns once the host starts, so each client joins from its
+    // own thread; the stagger keeps the join (= peer) order deterministic.
+    let workers: Vec<_> = [Race::Terran, Race::Protoss]
+        .into_iter()
+        .enumerate()
+        .map(|(k, race)| {
+            let addr = addr.clone();
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(150 * k as u64));
+                let (mut conn, setup) = connect(&addr, map_hash, seed, race).expect("connect");
+                let (peers, you, races) = setup_of(setup);
+                let mut lock = Lockstep::new(you, peers, DEFAULT_TICKS_PER_TURN);
+                let mut world = world_for(&races);
+                for turn in 0..turns {
+                    let acts = scripted_acts(&world, you, turn);
+                    assert!(!client_turn(&mut lock, &mut world, &mut conn, acts).expect("turn"));
+                }
+                (you, peers, state_hash(&world))
+            })
+        })
+        .collect();
+    let (host_hash, races) = host.join().unwrap().expect("host");
+    assert_eq!(races, vec![Race::Zerg, Race::Terran, Race::Protoss]);
+    let mut seen = Vec::new();
+    for w in workers {
+        let (you, peers, hash) = w.join().unwrap();
+        assert_eq!(peers, 3);
+        assert_eq!(hash, host_hash, "peer {you} diverged");
+        seen.push(you);
+    }
+    seen.sort();
+    assert_eq!(seen, vec![1, 2], "each client learns its own index");
+}
+
+#[test]
+fn a_dropped_peer_rejoins_with_backoff_while_the_others_wait() {
+    use galaxycraft::net::{
+        host_turn_peers, rejoin_with_backoff, try_accept_rejoin, Backoff, JoinQueue,
+    };
+    let map_hash = [33u8; 32];
+    let seed = 0x1234_5678_9abc_def0;
+    let (drop_at, total) = (6u32, 14u32);
+    let (addr_tx, addr_rx) = mpsc::channel();
+    let host = thread::spawn(move || -> Result<(u64, Vec<u8>), String> {
+        let lobby = Lobby::bind("127.0.0.1:0", map_hash, seed).map_err(|e| e.to_string())?;
+        addr_tx.send(lobby.local_addr().unwrap()).unwrap();
+        let mut queue = JoinQueue::new(3);
+        while queue.players() < 3 {
+            lobby
+                .poll_join(&mut queue, true)
+                .map_err(|e| e.to_string())?;
+        }
+        let (mut clients, races) = lobby
+            .start(queue, Race::Terran)
+            .map_err(|e| e.to_string())?;
+        let mut lock = Lockstep::new(0, 3, DEFAULT_TICKS_PER_TURN);
+        let mut world = world_for(&races);
+        let mut lost = Vec::new();
+        while lock.turn < total {
+            let acts = scripted_acts(&world, 0, lock.turn);
+            match host_turn_peers(&mut lock, &mut world, &mut clients, acts) {
+                Ok(false) => {}
+                Ok(true) => return Err(format!("desync at {}", lock.turn)),
+                Err(f) => {
+                    // Wait (polling, as the game loop does) for the peer to
+                    // come back on the lobby listener.
+                    lost.push(f.peer);
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                    loop {
+                        assert!(std::time::Instant::now() < deadline, "no rejoin");
+                        match try_accept_rejoin(&lobby, &lock, false).map_err(|e| e.to_string())? {
+                            Some((peer, t)) => {
+                                assert_eq!(peer, f.peer, "the lost peer is the one back");
+                                lock.forget_peer_turn(peer);
+                                clients[peer as usize - 1] = t;
+                                break;
+                            }
+                            None => thread::sleep(std::time::Duration::from_millis(5)),
+                        }
+                    }
+                }
+            }
+        }
+        Ok((state_hash(&world), lost))
+    });
+    let addr = addr_rx.recv().unwrap().to_string();
+    // Peer 1 joins first (its own thread: `connect` returns at the start)
+    // and plays straight through.
+    let steady_addr = addr.clone();
+    let steady = thread::spawn(move || {
+        let (c1, s1) = connect(&steady_addr, map_hash, seed, Race::Protoss).expect("peer 1");
+        let (peers, you, races) = setup_of(s1);
+        assert_eq!(you, 1);
+        let mut conn = c1;
+        let mut lock = Lockstep::new(you, peers, DEFAULT_TICKS_PER_TURN);
+        let mut world = world_for(&races);
+        while lock.turn < total {
+            let acts = scripted_acts(&world, you, lock.turn);
+            client_turn(&mut lock, &mut world, &mut conn, acts).expect("steady peer");
+        }
+        state_hash(&world)
+    });
+    // Peer 2 crashes after `drop_at` turns, then rejoins on the backoff
+    // schedule and rebuilds its world from the host's command log.
+    thread::sleep(std::time::Duration::from_millis(150));
+    let (c2, s2) = connect(&addr, map_hash, seed, Race::Zerg).expect("peer 2");
+    let (peers, you, races) = setup_of(s2);
+    assert_eq!(you, 2);
+    let mut conn = c2;
+    let mut lock = Lockstep::new(you, peers, DEFAULT_TICKS_PER_TURN);
+    let mut world = world_for(&races);
+    while lock.turn < drop_at {
+        let acts = scripted_acts(&world, you, lock.turn);
+        client_turn(&mut lock, &mut world, &mut conn, acts).expect("before the drop");
+    }
+    drop(conn);
+    drop(world);
+    let mut backoff = Backoff::lan(std::time::Instant::now());
+    let (mut conn, turn, rec) =
+        rejoin_with_backoff(&addr, map_hash, seed, you, &mut backoff).expect("rejoin");
+    assert_eq!(turn, drop_at, "host resumes at the interrupted turn");
+    let mut world = world_for(&races);
+    let mut lock = Lockstep::new(you, peers, DEFAULT_TICKS_PER_TURN);
+    apply_resync(&mut world, &mut lock, turn, &rec);
+    while lock.turn < total {
+        let acts = scripted_acts(&world, you, lock.turn);
+        client_turn(&mut lock, &mut world, &mut conn, acts).expect("after the rejoin");
+    }
+    let rejoined = state_hash(&world);
+    let steady = steady.join().unwrap();
+    let (host_hash, lost) = host.join().unwrap().expect("host");
+    assert_eq!(lost, vec![2], "the host named the dropped peer once");
+    assert_eq!(steady, host_hash, "the peer that stayed is in sync");
+    assert_eq!(rejoined, host_hash, "the rejoined peer is in sync");
+}
+
+#[test]
+fn rejoin_backoff_retries_until_the_host_listens() {
+    use galaxycraft::net::{rejoin_with_backoff, Backoff};
+    use std::time::{Duration, Instant};
+    // Reserve a port, then free it: nobody listens there for a while.
+    let addr = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let map_hash = [44u8; 32];
+    let seed = 7;
+    let host = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(400));
+        let lobby = Lobby::bind(&addr.to_string(), map_hash, seed).expect("late bind");
+        let lock = Lockstep::new(0, 2, DEFAULT_TICKS_PER_TURN);
+        accept_rejoin(&lobby, &lock).expect("rejoin accepted");
+    });
+    let mut backoff = Backoff::new(
+        Duration::from_millis(50),
+        Duration::from_millis(200),
+        20,
+        Instant::now(),
+    );
+    let started = Instant::now();
+    let (_, turn, _) =
+        rejoin_with_backoff(&addr.to_string(), map_hash, seed, 1, &mut backoff).expect("rejoins");
+    host.join().unwrap();
+    assert_eq!(turn, 0);
+    assert!(
+        backoff.failures() >= 2,
+        "refused attempts were retried: {}",
+        backoff.failures()
+    );
+    assert!(started.elapsed() >= Duration::from_millis(350));
+    // With no host at all the schedule runs out instead of looping forever.
+    let gone = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut short = Backoff::new(
+        Duration::from_millis(10),
+        Duration::from_millis(20),
+        3,
+        Instant::now(),
+    );
+    let err = rejoin_with_backoff(&gone.to_string(), map_hash, seed, 1, &mut short)
+        .err()
+        .expect("gives up");
+    assert!(
+        err.to_string().contains("gave up after 3 attempts"),
+        "{err}"
+    );
+}

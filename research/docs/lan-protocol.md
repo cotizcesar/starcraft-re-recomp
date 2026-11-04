@@ -34,11 +34,17 @@ diagnostics.
   menu (and `--shot-screen lan` for headless verification).
 - **S: scan** — discovers real games via UDP broadcast
   (`DISCOVERY_PORT = 7778`), lists `name - ip [port]`.
-- **H: host** — opens the lobby on `:7777`, announces itself every second and accepts
-  the first peer (non-blocking handshake: the menu keeps drawing).
+- **H: host** — opens the lobby on `:7777` with one seat per start
+  location of the map (2..=8, `JoinQueue`), announces itself every second
+  with the current player count, and takes joins without blocking
+  (`Lobby::poll_join`).  The panel lists every seat (host, joined clients
+  with their race, open seats).  The match starts when the lobby is full or
+  on **ENTER** with at least two players (`Lobby::start`).
 - **ENTER: join** — handshake with the selected lobby; the host decides
-  map and races, and both build the world with `build_from_save` to
-  start in an identical state.
+  map and races, and every peer builds the world with `build_from_save` to
+  start in an identical state.  Protocol 2: `Setup` carries `you`, the
+  receiving client's peer index (protocol 1 clients assumed peer 1, which
+  broke any lobby above two players).
 - In game, all orders go through `send_order`/`send_train`: if there is a
   LAN session they are queued for the next turn; otherwise they are applied locally.
 
@@ -46,22 +52,38 @@ diagnostics.
 
 Design: **no state is transferred, the log is transferred**.
 
-1. The connection drops → `host_turn` returns an error → the client is left out.
-2. The peer comes back and requests `Rejoin { peer, map_hash, seed }`.
-3. The host replies `Resync { turn, log }` with the complete `Recording`.
-4. The peer rebuilds the world with its copy of the map and does a deterministic
-   fast-forward up to `turn`; then it continues normal lockstep.
+1. The connection drops → `host_turn_peers` names the lost peer
+   (`PeerFailure`).  Commands already received for the turn stay in the
+   lockstep inbox, so the retry never waits again for a message it read;
+   once all commands are in, a peer failing during the bundle or hash
+   exchange does not stop the others (the turn is committed, the failure
+   reported after).  A stale `Sum` is acknowledged and skipped.
+2. The host pauses and polls `try_accept_rejoin` without blocking for up to
+   30 s (`REJOIN_WAIT`); the lobby listener stays open during the match.
+   The in-match read timeout (40 s) is longer, so peers that stayed do not
+   give up on a host that is waiting for someone else.
+3. The dropped client retries on an exponential `Backoff` (`Backoff::lan`:
+   250 ms doubling to 4 s, 8 attempts ≈ 17 s; connect timeout 1.5 s) and
+   sends `Rejoin { peer, map_hash, seed }`.
+4. The host replies `Resync { turn, log }` with the complete `Recording` and
+   forgets what that peer sent for the interrupted turn.
+5. The peer rebuilds the world with its copy of the map and does a
+   deterministic fast-forward up to `turn`; then it continues lockstep.
 
-Covered by `tests/lan.rs::peer_reconnects_and_resyncs_from_the_command_log`
-(8 turns → drop → resync → 8 turns → final hash identical to the host's).
+Covered by `tests/lan.rs`: `peer_reconnects_and_resyncs_from_the_command_log`
+(2 peers), `a_dropped_peer_rejoins_with_backoff_while_the_others_wait`
+(3 peers: peer 2 drops at turn 6, peer 1 keeps its turn, all three end on
+the host's hash), `rejoin_backoff_retries_until_the_host_listens` (refused
+attempts retried; a schedule that runs out gives up).  In the client:
+`engine-rust/docs/gates/lan-lobby-reconnect.txt`.
 
 ## 5. Tests executed (evidence)
 
 | Test | Result |
 |---|---|
-| `cargo test --lib net::` | 7/7 (messages, merge, bidirectional UDP, duplicates, discovery) |
-| `cargo test --test lan` | 3/3 (TCP 20 turns, different map rejected, reconnection+resync) |
-| `cargo test` (all) | **256 passed, 0 failed** |
+| `cargo test --lib net::` | 9/9 (messages, merge, bidirectional UDP, duplicates, discovery, backoff, lobby capacity) |
+| `cargo test --test lan` | 6/6 (TCP 20 turns, different map rejected, reconnection+resync, 3-peer polled lobby, 3-peer drop + backoff rejoin, backoff until the host listens); 5 consecutive runs green (2026-11-04) |
+| `cargo test` (all, 2026-11-04) | **436 passed, 0 failed** |
 | `cargo clippy --all-targets` | 0 warnings |
 | TCP, 2 processes, Boxer.chk, 600/1200/2400 ticks | identical hash in both, exit 0 (2400 = 600 turns/checksums) |
 | UDP, 2 processes, Boxer.chk, 600 ticks | identical hash `bdf9377e0487c36f` in both, exit 0 |
@@ -85,9 +107,10 @@ PASS criterion: both exit 0, no `DESYNC` line, and the two
 
 ## 7. Pending (honest)
 
-- Lobby with more than 2 players in the UI (the protocol supports up to 8;
-  `sc_lan` TCP already accepts N-1 clients, the UI opens 1v1).
 - Chat in the UI (the `Chat` message exists and is tested in the codec).
-- Automatic reconnection (today it requires the peer to re-enter; there is no
-  retry with backoff).
-- Host migration: if the host drops, the game ends (out of scope).
+- Host migration: if the host drops, the clients retry for ≈17 s and the
+  game ends (out of scope).
+- Commands a peer issued in the turn interrupted by its own drop are lost
+  (it resends that turn after the resync with what it has queued since).
+- Done 2026-11-04: lobby with up to 8 players in the UI, automatic
+  reconnection with backoff (see §3, §4).

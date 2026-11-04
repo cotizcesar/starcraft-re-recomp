@@ -2,7 +2,13 @@
 
 > Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
-Last update: 2026-11-03 (entry 77: full player profile persistence:
+Last update: 2026-11-04 (entry 78: trigger transmissions show text and
+play the map voice-over; LAN lobby up to 8 players and automatic reconnect
+with backoff (protocol 2); RE: message pump `0x946500` located, `0x8aee30`
+shown to be protector-obfuscated, extracted→origin manifest (2 923 files,
+CKey = MD5), `GLUSND_*` → `sfxdata` rows, capability matrix A–F; CHK `STR`
+parser fix (out-of-order offsets emptied strings).
+Entry 77: full player profile persistence:
 Registry IDs, settings, statistics and campaign progress in `profiles.bin`
 (`GCPF`), retail `.spc`/`.mpc` format recovered from the 32-bit dump and
 importable, `docs/profile-format.md`; persistence area complete.
@@ -33,10 +39,12 @@ implemented; proofs in `engine-rust/docs/proof-sheets/`).
 7. Current architecture: two valid dumps — 32-bit menu
    (`work/sc_mem_menu_pe.exe`, `.text` 6.8950) and **64-bit in-game**
    (`work/sc_mem_ingame64_20261028_0814_pe.exe`, `.text` 6.7975, `.text`
-   stable across 3 reads). Dump map pending analysis.
+   stable across 3 reads), plus the RW heap capture during Terran 8
+   (`heap-ingame-findings.md`). Both dumps analysed (`architecture.md`).
 8. Current phase: Phase 5 closed with verdicts (`docs/architecture.md`);
-   next: pending validation/instrumentation (in-game heap,
-   `0x8aee30`, extracted→origin manifest, A–F matrix).
+   the validation items it left (in-game heap, `0x8aee30`,
+   extracted→origin manifest, A–F matrix, message pump) are closed as of
+   2026-11-04 (entry 78).
 9. Finished tasks: environment, REA E2E, inventory (724, hashes OK),
    `manifests/`, engine, strategy, capabilities, rawness docs
    (see `docs/session-log.md`).
@@ -45,9 +53,12 @@ implemented; proofs in `engine-rust/docs/proof-sheets/`).
     nuke `0x5d3823` confirmed, 4 CHK + TRIG handlers decompiled,
     TARGET_ORDER falsified in the image, size-transfer weakened, H2 (32-bit base),
     loaded map absent (heap pending).
-11. Pending tasks: `GetMessage` pump (low priority); `0x8aee30`
-    parked; heap re-dump (requires game+user); extracted→origin
-    manifest; A–F matrix; P0+LAN (design ready).
+11. Pending tasks (2026-11-04): physical two-machine LAN test, in-game
+    lighting parity; see `PROGRESS.md`.  Closed in entry 78: message pump
+    (`0x946500`, PeekMessage), `0x8aee30` (protector-obfuscated, analysed
+    structurally), heap capture (verified), extracted→origin manifest, A–F
+    matrix, GLUSND → WAV, trigger text + map WAV, LAN lobby up to 8 players,
+    reconnect with backoff.
 12. Blockers: REA MCP `binary_overview` on large images →
     `provider_timeout` (see `docs/blockers.md`); mitigated with direct Ghidra
     (EXIT:0 on both dumps: 32-bit 209 MB + 64-bit 242 MB).
