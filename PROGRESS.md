@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 10 | 14 | 71 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 14 | 18 | 78 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 6 | 9 | 67 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 8 | 14 | 57 % |
-| **Overall (weighted)** | **100** | **52** | **66** | **83 %** |
+| **Overall (weighted)** | **100** | **56** | **70** | **85 %** |
 
 _Last updated: 2026-11-03_
 <!-- progress:summary:end -->
@@ -88,9 +88,13 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`
 - [x] Plays from the player's own install, with no retail files in the repository — `NOTICE.md`, `sc_assets`
 - [ ] In-game frame parity with the retail captures (raw mean difference currently 2.46–3.27 on the eight (8)The Hunters references; open: building/mineral lighting, which needs the client's point-light inputs) — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, session log 2026-11-03 (75)
-- [ ] Pixel-exact creep (today a deterministic procedural mesh; there is no creep GRP in CASC)
-- [ ] Full-motion WebM outside the title and briefing screens
-- [ ] Windows/macOS builds and a packaged release (AppImage/Flatpak)
+- [x] Pixel-exact creep from the retail art and rule: cv5 group-1 tiles picked per tile by the client's CRT `rand` (64-bit `0x64fb30`), `tileset/<era>.grp` edge frames at their offsets, SD and HD (variants are per-session in retail) — `tests/render.rs`, `src/render.rs` creep tests, session log 2026-11-03 (76)
+- [x] Full-motion WebM outside the title and briefing screens: HUD portraits (weighted idle clips, talking while the unit or a trigger transmission speaks), campaign act movies — `src/portrait.rs`, `tests/portraits.rs`, `engine-rust/docs/gates/package-parity.txt`
+- [ ] Trigger transmissions show their text and play the map WAV (the portrait already talks)
+- [x] Windows build (mingw cross build; 407 tests pass under Wine 10, same frames as Linux) — `scripts/package_windows.sh`, `engine-rust/docs/gates/package-parity.txt`
+- [x] Linux packages: AppImage and Flatpak, built from a clean tree, pixel-identical to the developer build — `scripts/package_appimage.sh`, `scripts/package_flatpak.sh`, `engine-rust/docs/gates/package-parity.txt`
+- [ ] macOS universal app verified on CI (`scripts/package_macos.sh`, `cross` job in `ci.yml`; not run yet)
+- [ ] Published GitHub release with all packages (`.github/workflows/release.yml` on a `v*` tag; not run yet)
 
 ## Persistence: saves, replays, profiles
 

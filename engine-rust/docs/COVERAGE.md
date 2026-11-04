@@ -154,9 +154,8 @@ The only remaining non-gameplay limits (see `docs/EVIDENCE.md`) are:
 * the cosmetic 20th-anniversary/Carbot alternative console skins (the stock
   Terran/Zerg/Protoss consoles, menus, score panels, music and all voice sets
   are used);
-* pixel-exact retail creep (no creep GRP exists in CASC; the client renders
-  a deterministic organic mat from the recovered maturity grid, so the mat
-  animates correctly but is not a pixel copy);
+* (closed 2026-11-03) creep is the retail art and pick rule, see
+  `src/render.rs` `CreepTiles` and session log entry 76;
 * cinematics now play the full retail intro table (REA: executable table at
   `0x140ae7ae0`): `smk/blizzard.webm` (11.4 s logo) then `smk/starintr.webm`
   on first launch, `smk/starxintr.webm` for Brood War, and the 25

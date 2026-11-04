@@ -427,6 +427,9 @@ pub struct Tileset {
     hd: Option<Vec<Option<Box<[u32]>>>>,
     pub minimap: Vec<Rgb>,
     pub minimap_size: (usize, usize),
+    /// SD creep-edge frames (`tileset/<era>.grp`, 37 palette-indexed frames
+    /// with their offsets inside the 32 px tile), when the install has them.
+    creep_grp: Option<Grp>,
 }
 
 pub fn era_name(era: u16) -> &'static str {
@@ -630,7 +633,7 @@ impl HdTerrain {
     /// (`x, y, w, h`), with the camera at game px `cam` and `s` screen px per
     /// game px.  `tileset` resolves MTXM entries to megatiles; tiles for
     /// which `creep(tx, ty)` returns an MTXM entry draw that creep tile
-    /// (cv5 group 1, see [`creep_mtxm`]); the others get creep edges.
+    /// (cv5 group 1, see [`CreepTiles`]); the others get creep edges.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -650,7 +653,6 @@ impl HdTerrain {
         let first_y = (cam.1 / TILE_PX).max(0);
         let last_x = ((cam.0 + view_w) / TILE_PX + 1).min(scenario.width as i32);
         let last_y = ((cam.1 + view_h) / TILE_PX + 1).min(scenario.height as i32);
-        let edges = creep_edge_frame_table();
         for ty in first_y..last_y {
             for tx in first_x..last_x {
                 let Some(&mtxm) = scenario
@@ -673,29 +675,8 @@ impl HdTerrain {
                         blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
                     }
                 }
-                if creep(tx, ty).is_none() && !self.creep_edges.is_empty() {
-                    let mut mask = 0usize;
-                    for (bit, (ax, ay)) in [
-                        (1, 1),
-                        (0, 1),
-                        (-1, 1),
-                        (1, 0),
-                        (-1, 0),
-                        (1, -1),
-                        (0, -1),
-                        (-1, -1),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        if creep(tx + ax, ty + ay).is_some() {
-                            mask |= 1 << bit;
-                        }
-                    }
-                    let frame = edges[mask] as usize;
-                    if let Some((img, ox, oy)) =
-                        frame.checked_sub(1).and_then(|f| self.creep_edges.get(f))
-                    {
+                if let Some(frame) = creep_edge_frame(creep, tx, ty) {
+                    if let Some((img, ox, oy)) = self.creep_edges.get(frame) {
                         let k = s / 4.0;
                         let (w, h) = (
                             (img.width as f32 * k).round() as i32,
@@ -949,24 +930,113 @@ pub fn draw_fog_smooth(
     }
 }
 
-/// MTXM entry of a creep tile: cv5 group 1 holds the 13 creep megatiles.
-/// The client draws subtile 0..5 for 96 % of tiles and 6..12 (the speckled
-/// ones) for 4 % (OpenBW `creep_random_tile_indices`, seeded per session);
-/// a fixed per-tile hash stands in for the session generator.
-pub fn creep_mtxm(tx: i32, ty: i32) -> u16 {
-    let mix = |v: u32| {
-        let v = v ^ (v >> 16);
-        let v = v.wrapping_mul(0x7feb_352d);
-        let v = v ^ (v >> 15);
-        v.wrapping_mul(0x846c_a68b) ^ (v >> 16)
-    };
-    let h = mix((tx as u32).wrapping_mul(0x9e37_79b9) ^ (ty as u32).wrapping_mul(0x85eb_ca6b));
-    let sub = if h % 100 < 4 {
-        6 + (h >> 8) % 7
-    } else {
-        (h >> 8) % 6
-    };
-    (1 << 4) | sub as u16
+/// Client-side creep tile picker: which of the 13 creep megatiles (cv5
+/// group 1) each creep tile draws with.
+///
+/// FACT (2026-11-03, 64-bit 1.23.10 in-game dump
+/// `sc_mem_ingame64_20261028_0814`, file offsets): the client picks a tile's
+/// creep megatile when the tile gains creep (`0x64fb30`, reached through
+/// `0x64fbe0` from the creep set/spread loops at `0x64f967` and `0x650010`):
+/// `r = rand() % 100; v = rand(); tile = 0x10 + (r < 4 ? 6 + v % 7 : v % 6)`.
+/// `rand` is the CRT generator at `0xa12380`
+/// (`s = s * 214013 + 2531011; (s >> 16) & 0x7fff`), seeded with
+/// `srand(time(NULL))` at `0x2b17e2`, so the variants are per-session state
+/// and not part of the synchronised game.  Falsified on the way: OpenBW's
+/// prefilled 256 x 256 table (Borland or MSVC LCG, stride 128 or 256) does
+/// not reproduce the 160 tiles recorded from the 134905 capture for any of
+/// the 2^32 generator states, even allowing 60 mismatches.
+#[derive(Clone, Debug, Default)]
+pub struct CreepTiles {
+    width: usize,
+    /// MTXM entry per tile (`0` = no creep).
+    tiles: Vec<u16>,
+}
+
+/// The client's CRT `rand()` (64-bit 1.23.10 `0xa12380`): one stream per
+/// process, shared by every non-synchronised random choice (creep tiles,
+/// portrait clips, ...).  Retail seeds it with `srand(time(NULL))`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrtRand(u32);
+
+impl CrtRand {
+    pub fn new(seed: u32) -> Self {
+        Self(seed)
+    }
+
+    /// `s = s * 214013 + 2531011; (s >> 16) & 0x7fff`.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(214_013).wrapping_add(2_531_011);
+        (self.0 >> 16) & 0x7fff
+    }
+}
+
+impl CreepTiles {
+    /// Pick the MTXM entry of a tile that just gained creep (`0x64fb30`).
+    pub fn pick(rand: &mut CrtRand) -> u16 {
+        let roll = rand.next() % 100;
+        let v = rand.next();
+        0x10 | if roll < 4 { 6 + v % 7 } else { v % 6 } as u16
+    }
+
+    /// Follow the sim's creep grid (`World::creep_grid`, maturity per tile):
+    /// a tile that gained creep picks its megatile, one that lost it forgets
+    /// it.  A new map (different size) starts empty; the CRT stream carries
+    /// on, as it does in the retail process.
+    pub fn update(&mut self, rand: &mut CrtRand, grid: &[u8], width: usize) {
+        if self.width != width || self.tiles.len() != grid.len() {
+            self.width = width;
+            self.tiles = vec![0; grid.len()];
+        }
+        for (tile, &maturity) in self.tiles.iter_mut().zip(grid) {
+            match (maturity > 0, *tile != 0) {
+                (true, false) => *tile = Self::pick(rand),
+                (false, true) => *tile = 0,
+                _ => {}
+            }
+        }
+    }
+
+    /// MTXM entry the creep tile `(tx, ty)` draws with, `None` off creep.
+    pub fn get(&self, tx: i32, ty: i32) -> Option<u16> {
+        if tx < 0 || ty < 0 || tx as usize >= self.width {
+            return None;
+        }
+        let v = *self.tiles.get(ty as usize * self.width + tx as usize)?;
+        (v != 0).then_some(v)
+    }
+}
+
+/// Creep-edge frame (0-based index into `tileset/<era>.grp`) drawn on the
+/// non-creep tile `(tx, ty)`, from its creep neighbours (OpenBW
+/// `draw_tiles`); `None` on creep tiles and where no edge applies.
+pub fn creep_edge_frame(
+    creep: &dyn Fn(i32, i32) -> Option<u16>,
+    tx: i32,
+    ty: i32,
+) -> Option<usize> {
+    if creep(tx, ty).is_some() {
+        return None;
+    }
+    let mut mask = 0usize;
+    for (bit, (ax, ay)) in [
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (1, 0),
+        (-1, 0),
+        (1, -1),
+        (0, -1),
+        (-1, -1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if creep(tx + ax, ty + ay).is_some() {
+            mask |= 1 << bit;
+        }
+    }
+    (creep_edge_frame_table()[mask] as usize).checked_sub(1)
 }
 
 /// Alpha-blend a square ARGB tile clipped to `clip` (`x0, y0, x1, y1`).
@@ -1087,6 +1157,10 @@ impl Tileset {
             vr4,
             minimap: Vec::new(),
             minimap_size: (0, 0),
+            creep_grp: dir
+                .parent()
+                .and_then(|root| fs::read(root.join("hd/tileset").join(format!("{name}.grp"))).ok())
+                .and_then(|b| Grp::parse(&b)),
             hd: dir
                 .parent()
                 .and_then(|root| {
@@ -1222,6 +1296,50 @@ impl Tileset {
                     continue;
                 };
                 self.draw_tile(fb, mtxm, tx * TILE_PX - cam.0, ty * TILE_PX - cam.1);
+            }
+        }
+    }
+
+    /// Draw creep over the terrain as the retail client does (OpenBW
+    /// `draw_tiles`): every tile for which `creep` returns an MTXM entry
+    /// (cv5 group 1, see [`CreepTiles`]) draws that tile, and the other
+    /// tiles draw their creep-edge frame from `tileset/<era>.grp` at the
+    /// frame's offset.  The art is static: retail does not animate creep.
+    pub fn draw_creep(
+        &self,
+        fb: &mut Framebuffer,
+        scenario: &Scenario,
+        cam: (i32, i32),
+        creep: &dyn Fn(i32, i32) -> Option<u16>,
+    ) {
+        let first_x = (cam.0 / TILE_PX).max(0);
+        let first_y = (cam.1 / TILE_PX).max(0);
+        let last_x = ((cam.0 + fb.width) / TILE_PX + 1).min(scenario.width as i32);
+        let last_y = ((cam.1 + fb.height) / TILE_PX + 1).min(scenario.height as i32);
+        for ty in first_y..last_y {
+            for tx in first_x..last_x {
+                let (sx, sy) = (tx * TILE_PX - cam.0, ty * TILE_PX - cam.1);
+                if let Some(mtxm) = creep(tx, ty) {
+                    self.draw_tile(fb, mtxm, sx, sy);
+                    continue;
+                }
+                let Some(frame) = creep_edge_frame(creep, tx, ty)
+                    .and_then(|f| self.creep_grp.as_ref()?.frames.get(f))
+                else {
+                    continue;
+                };
+                for y in 0..frame.h {
+                    for x in 0..frame.w {
+                        let c = frame.indices[(y * frame.w + x) as usize];
+                        if c != 0 {
+                            fb.put(
+                                sx + frame.x + x,
+                                sy + frame.y + y,
+                                self.palette.colors[c as usize],
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -1407,148 +1525,6 @@ impl Tileset {
         fb.rect(vx - t, vy + vh, vw + 2 * t, t, white);
         fb.rect(vx - t, vy, t, vh, white);
         fb.rect(vx + vw, vy, t, vh, white);
-    }
-}
-
-/// Stable hash for one 8-pixel creep cell.  The retail client draws creep
-/// procedurally from the gameplay maturity grid, so the reconstructed client
-/// uses a deterministic texture instead of sampling an asset that does not
-/// exist in CASC.
-fn creep_hash(x: i32, y: i32, phase: u32) -> u32 {
-    let mut h = (x as u32)
-        .wrapping_mul(0x9e37_79b1)
-        .wrapping_add((y as u32).wrapping_mul(0x85eb_ca6b))
-        .wrapping_add(phase.wrapping_mul(0xc2b2_ae35));
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2c1b_3c6d);
-    h ^= h >> 12;
-    h
-}
-
-/// Sample the creep colour at one 4-pixel grain cell, or `None` when the
-/// noise leaves a gap.  `strength` is the tile maturity (1..=3).
-///
-/// The mat is drawn from overlapping grain rather than a pre-rendered sprite:
-/// retail ships no creep GRP, so the engine composites the texture from the
-/// gameplay maturity grid.  The hash is stable across frames; only the slow
-/// pulse and the edge noise move.
-pub fn creep_cell(tx: i32, ty: i32, mx: i32, my: i32, strength: u8, tick: u64) -> Option<Rgb> {
-    if strength == 0 {
-        return None;
-    }
-    let phase = ((tick / 6) & 3) as u32;
-    let wx = tx * 8 + mx;
-    let wy = ty * 8 + my;
-    let h = creep_hash(wx, wy, phase);
-    let pulse = [0i32, 5, 1, -4][((tick / 8) & 3) as usize];
-    // Dark organic mat with raised blisters and hairline veins.
-    let vein = if (h >> 12) & 0x1f == 0 { -14 } else { 0 };
-    let blister = if (h >> 18) & 0x1f == 0 { 22 } else { 0 };
-    let ring = if (h >> 23) & 0x1f == 0 { -10 } else { 0 };
-    let r = (48 + (h & 13) as i32 + pulse + vein + blister + ring).clamp(0, 255) as u8;
-    let g = (30 + ((h >> 4) & 9) as i32 + pulse + vein + blister + ring).clamp(0, 255) as u8;
-    let b = (42 + ((h >> 8) & 11) as i32 + vein + blister + ring).clamp(0, 255) as u8;
-    Some(Rgb::new(r, g, b))
-}
-
-/// Blend the creep mat into the framebuffer over already-drawn terrain.
-///
-/// `grid` is `World::creep_grid()`: one maturity byte per 32-pixel tile.
-/// Creep is drawn between the terrain and the fog mask, so unexplored creep
-/// stays hidden and explored creep dims with the rest of the map.
-pub fn draw_creep(
-    fb: &mut Framebuffer,
-    scenario: &Scenario,
-    cam: (i32, i32),
-    grid: &[u8],
-    tick: u64,
-) {
-    let w = scenario.width as i32;
-    let h = scenario.height as i32;
-    if w == 0 || h == 0 || grid.len() < (w * h) as usize {
-        return;
-    }
-    let first_x = (cam.0 / TILE_PX).max(0);
-    let first_y = (cam.1 / TILE_PX).max(0);
-    let last_x = ((cam.0 + fb.width) / TILE_PX + 1).min(w);
-    let last_y = ((cam.1 + fb.height) / TILE_PX + 1).min(h);
-    let at = |tx: i32, ty: i32| -> u8 {
-        if tx < 0 || ty < 0 || tx >= w || ty >= h {
-            0
-        } else {
-            grid[(ty * w + tx) as usize]
-        }
-    };
-    let phase = ((tick / 6) & 3) as u32;
-    for ty in first_y..last_y {
-        for tx in first_x..last_x {
-            let strength = at(tx, ty);
-            if strength == 0 {
-                continue;
-            }
-            let px = tx * TILE_PX - cam.0;
-            let py = ty * TILE_PX - cam.1;
-            let left = at(tx - 1, ty) == 0;
-            let right = at(tx + 1, ty) == 0;
-            let up = at(tx, ty - 1) == 0;
-            let down = at(tx, ty + 1) == 0;
-            let base_alpha = 190 + strength as i32 * 18;
-            for yy in 0..TILE_PX {
-                for xx in 0..TILE_PX {
-                    let wx = tx * TILE_PX + xx;
-                    let wy = ty * TILE_PX + yy;
-                    let n = creep_hash(wx >> 2, wy >> 2, phase);
-                    // Ragged, noise-driven border instead of a 32-pixel
-                    // square: each missing neighbour eats a 3..=12 px strip.
-                    let inset_l = 3 + (n & 15) as i32;
-                    let inset_r = 3 + ((n >> 4) & 15) as i32;
-                    let inset_u = 3 + ((n >> 8) & 15) as i32;
-                    let inset_d = 3 + ((n >> 12) & 15) as i32;
-                    if (left && xx < inset_l)
-                        || (right && xx >= TILE_PX - inset_r)
-                        || (up && yy < inset_u)
-                        || (down && yy >= TILE_PX - inset_d)
-                    {
-                        continue;
-                    }
-                    let Some(col) = creep_cell(tx, ty, xx >> 2, yy >> 2, strength, tick) else {
-                        continue;
-                    };
-                    // Raised blisters and their shadow rings, one 8x8 cell
-                    // at a time.  This is the visible texture of the mat at
-                    // normal zoom rather than a flat tint.
-                    let cell = creep_hash(wx >> 3, wy >> 3, phase ^ 0x5bd1_e995);
-                    let center_x = 3 + ((cell >> 2) & 3) as i32;
-                    let center_y = 3 + ((cell >> 6) & 3) as i32;
-                    let cx = (wx & 7) - center_x;
-                    let cy = (wy & 7) - center_y;
-                    let d2 = cx * cx + cy * cy;
-                    let shade = if cell.is_multiple_of(23) && d2 <= 3 {
-                        20
-                    } else if cell.is_multiple_of(23) && (7..=12).contains(&d2) {
-                        -8
-                    } else {
-                        0
-                    };
-                    let col = if shade != 0 {
-                        let r = (((col.0 >> 16) & 0xff) as i32 + shade).clamp(0, 255) as u8;
-                        let g = (((col.0 >> 8) & 0xff) as i32 + shade / 2).clamp(0, 255) as u8;
-                        let b = ((col.0 & 0xff) as i32 + shade / 2).clamp(0, 255) as u8;
-                        Rgb::new(r, g, b)
-                    } else {
-                        col
-                    };
-                    // Low-frequency mottling keeps the mat from reading as a
-                    // flat tint at normal zoom.
-                    let blob = creep_hash(wx >> 4, wy >> 4, phase);
-                    let alpha =
-                        (base_alpha + ((n >> 16) & 0x0f) as i32 + ((blob >> 8) & 0x1f) as i32 - 22)
-                            .clamp(0, 245) as u8;
-                    let c = fb.get(px + xx, py + yy);
-                    fb.put(px + xx, py + yy, c.blend(col, alpha));
-                }
-            }
-        }
     }
 }
 
@@ -2094,6 +2070,60 @@ mod hd_terrain_tests {
             (1936, 112, 1936 + 853, 112 + 368),
         );
         assert_eq!(b, (198, 1053, 81, 36, 3));
+    }
+
+    #[test]
+    fn creep_picker_is_the_crt_rand_rule_of_the_retail_client() {
+        // MSVC `srand(1)` yields 41, 18467, 6334, 26500: the first pick
+        // rolls 41 (common tile) with 18467 % 6 = 5, the second 34 with
+        // 26500 % 6 = 4.
+        use super::{CreepTiles, CrtRand};
+        let mut r = CrtRand::new(1);
+        assert_eq!(CreepTiles::pick(&mut r), 0x15);
+        assert_eq!(CreepTiles::pick(&mut r), 0x14);
+        // 4 % of picks are the speckled tiles 6..=12, the rest 0..=5.
+        let mut r = CrtRand::new(12345);
+        let n = 100_000;
+        let rare = (0..n)
+            .map(|_| CreepTiles::pick(&mut r))
+            .inspect(|&t| assert!((0x10..=0x1c).contains(&t)))
+            .filter(|&t| t >= 0x16)
+            .count();
+        assert!((3_500..4_500).contains(&rare), "{rare} rare tiles");
+    }
+
+    #[test]
+    fn creep_tiles_pick_once_per_gain_and_forget_on_loss() {
+        let mut c = super::CreepTiles::default();
+        let r = &mut super::CrtRand::new(1);
+        let mut grid = vec![0u8; 6];
+        grid[4] = 3;
+        c.update(r, &grid, 3);
+        assert_eq!(c.get(1, 1), Some(0x15));
+        assert_eq!(c.get(0, 0), None);
+        // Maturity changes do not re-pick; a new tile draws the next pair.
+        grid[4] = 1;
+        grid[0] = 2;
+        c.update(r, &grid, 3);
+        assert_eq!((c.get(1, 1), c.get(0, 0)), (Some(0x15), Some(0x14)));
+        // Losing creep forgets the tile; regaining it picks afresh.
+        grid[4] = 0;
+        c.update(r, &grid, 3);
+        assert_eq!(c.get(1, 1), None);
+        grid[4] = 3;
+        c.update(r, &grid, 3);
+        assert!(c.get(1, 1).is_some());
+        assert_eq!(c.get(3, 0), None, "outside the map width");
+    }
+
+    #[test]
+    fn creep_edges_only_surround_creep() {
+        let creep = |x: i32, y: i32| (x == 5 && y == 5).then_some(0x10);
+        assert_eq!(super::creep_edge_frame(&creep, 5, 5), None, "creep tile");
+        assert_eq!(super::creep_edge_frame(&creep, 9, 9), None, "far away");
+        let left = super::creep_edge_frame(&creep, 4, 5).expect("edge left of creep");
+        let right = super::creep_edge_frame(&creep, 6, 5).expect("edge right of creep");
+        assert_ne!(left, right);
     }
 
     #[test]

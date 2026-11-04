@@ -4,6 +4,29 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-03 — Retail creep, full-motion portraits, Windows/macOS and packages
+
+### Added
+- Creep is the retail art on both render paths: the 13 cv5 group-1 creep
+  tiles chosen per tile by the client's CRT `rand` rule (recovered from the
+  64-bit executable), and the creep-edge frames of `tileset/<era>.grp` at
+  their GRP offsets.  The procedural creep mat is gone.
+- The in-game HUD portrait plays the retail WebM clips: weighted idle clips
+  from `portdata.dat`, talking clips while the selected unit speaks.
+- Windows (WinMM) and macOS (CoreAudio) audio output, per-platform cache and
+  install folders, `ffmpeg` resolution (env, bundled, Homebrew, `PATH`).
+- The command-card table and the Hotkeys panel data are read from the
+  player's install, so a build without developer fixtures plays the same.
+- Release packaging: `scripts/package_{appimage,flatpak,windows,macos}.sh`,
+  `.github/workflows/release.yml`, and a Windows/macOS CI job.
+- `sc_view` finds the install without `--install` and explains when it
+  cannot (it no longer panics without fixtures).
+
+### Fixed
+- Video decoding left one temporary directory per process in the temp
+  folder (thousands accumulated) and could share an input file between
+  threads; each decode now uses its own directory, removed afterwards.
+
 ## 2026-11-03 — In-game parity round 3
 
 ### Changed

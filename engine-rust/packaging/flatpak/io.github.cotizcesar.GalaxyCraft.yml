@@ -1,0 +1,45 @@
+# Flatpak manifest for the GalaxyCraft client (`sc_view`).
+#
+# Built by scripts/package_flatpak.sh, which stages a clean tree (no
+# retail-derived files) next to this manifest as `src/` and vendors the
+# crates into `src/engine-rust/vendor` so the build runs offline.  No game
+# data is packaged: the client reads the player's StarCraft: Remastered
+# install (home folder, read-only; pass --install for other locations after
+# `flatpak override --filesystem=PATH:ro`).  The runtime's ffmpeg decodes
+# the WebM portraits and cinematics (libvpx-vp9, vorbis, opus).
+id: io.github.cotizcesar.GalaxyCraft
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: galaxycraft
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=pulseaudio
+  # LAN games (TCP + UDP discovery).
+  - --share=network
+  # The StarCraft install (Wine prefixes and Battle.net folders live here).
+  - --filesystem=home:ro
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/galaxycraft/cargo-home
+    CARGO_NET_OFFLINE: 'true'
+modules:
+  - name: galaxycraft
+    buildsystem: simple
+    build-commands:
+      - mkdir -p engine-rust/.cargo
+      - printf '[source.crates-io]\nreplace-with = "vendored"\n[source.vendored]\ndirectory = "vendor"\n' > engine-rust/.cargo/config.toml
+      - cd engine-rust && cargo build --release --locked --offline --bin sc_view
+      - install -Dm755 engine-rust/target/release/sc_view /app/bin/galaxycraft
+      - install -Dm644 engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.desktop /app/share/applications/io.github.cotizcesar.GalaxyCraft.desktop
+      - install -Dm644 engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.metainfo.xml /app/share/metainfo/io.github.cotizcesar.GalaxyCraft.metainfo.xml
+      - install -Dm644 engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.svg /app/share/icons/hicolor/scalable/apps/io.github.cotizcesar.GalaxyCraft.svg
+      - install -Dm644 LICENSE /app/share/licenses/io.github.cotizcesar.GalaxyCraft/LICENSE
+      - install -Dm644 NOTICE.md /app/share/licenses/io.github.cotizcesar.GalaxyCraft/NOTICE.md
+    sources:
+      - type: dir
+        path: src

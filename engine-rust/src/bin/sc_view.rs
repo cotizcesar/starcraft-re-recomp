@@ -19,6 +19,10 @@
 //! Headless screens: `--shot FILE --shot-screen
 //! intro|menu|briefing|mission|selection|pause|leaderboard|stats|victory|defeat|score`.
 
+// A player-facing window on Windows: no console (stderr goes nowhere; the
+// missing-install case shows its own message window).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -231,13 +235,7 @@ fn format_timestamp(t: std::time::SystemTime) -> String {
 fn save_dirs() -> (PathBuf, PathBuf) {
     let base = std::env::var("GALAXYCRAFT_SAVES")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::var("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".cache")))
-                .unwrap_or_else(|_| PathBuf::from("/tmp"))
-                .join("galaxycraft")
-        });
+        .unwrap_or_else(|_| galaxycraft::retail::user_cache_root());
     (base.join("saves"), base.join("replays"))
 }
 
@@ -897,8 +895,32 @@ struct App {
     /// capture: the client picks idle clips at random (capture state).
     portrait_pick: Option<(u8, f32)>,
     /// Creep variants (cv5 group 1 subtile) observed in a reference capture,
-    /// keyed by tile; other creep tiles use [`galaxycraft::render::creep_mtxm`].
+    /// keyed by tile; other creep tiles use `creep_tiles`.
     creep_variants: std::collections::HashMap<(i32, i32), u8>,
+    /// Retail creep tile picks (see [`galaxycraft::render::CreepTiles`]).
+    creep_tiles: galaxycraft::render::CreepTiles,
+    /// The client's CRT `rand` stream (creep tiles, portrait clips).
+    crt_rand: galaxycraft::render::CrtRand,
+    /// Headless capture (`--shot`): video clocks are frozen.
+    headless: bool,
+    /// `arr/portdata.dat` + `portdata.tbl` (`None` inside = unavailable).
+    portrait_data: Option<
+        Option<(
+            galaxycraft::portrait::PortData,
+            galaxycraft::tables::StringTable,
+        )>,
+    >,
+    /// Full-motion HUD portrait state and decoded clips per CASC path.
+    portrait_player: galaxycraft::portrait::PortraitPlayer,
+    portrait_clips: std::collections::HashMap<String, Option<std::rc::Rc<Vec<PosterFrame>>>>,
+    /// Unit type whose voice is playing and when it ends (talking portrait).
+    portrait_talk: Option<(u16, Instant)>,
+    /// A voice just started: the portrait switches to a talking clip.
+    portrait_talk_started: bool,
+    /// Trigger Transmission / Talking Portrait records already shown
+    /// (indices into the trigger VM's lists).
+    trigger_portraits_seen: (usize, usize),
+    portrait_epoch: Instant,
     /// Colour the local player was given (retail randomizes melee colours);
     /// `None` = the slot's default colour.
     local_team_color: Option<Rgb>,
@@ -2757,7 +2779,10 @@ fn draw_tinted(
 /// on the pixels where the variants differ, kept only with error < 3.5 and
 /// a margin > 2.5 over the runner-up (accepted: 0.8-2.8 error, 3.0-7.8
 /// margin); error over x 600-2100, y 900-1080: 5.99 -> 1.17 on all three
-/// Zerg captures.
+/// Zerg captures.  Nine more tiles around the Hatchery (2026-11-03,
+/// partly under its sprite): best of 13 renders on the pixels where the
+/// variants differ, same acceptance (error < 3.5, margin > 2.5); 11 other
+/// visible tiles failed it and stay unrecorded.
 const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
     (60, 3),
     &[
@@ -2766,11 +2791,11 @@ const HUNTERS_ZERG_CREEP: ((i32, i32), &[&str]) = (
         "......0033214504301401........",
         ".....33520553323540...........",
         ".....b5013033230522...........",
-        "....342207453..505355434......",
-        "....43103521....30534334......",
-        "....03563423.....3044410......",
-        ".....03a51......1020431.......",
-        ".....45040..34232331324.......",
+        "....342207453.5505355434......",
+        "....431035211..930534334......",
+        "....035634231.1..3044410......",
+        ".....03a5144....1020431.......",
+        ".....450405134232331324.......",
         "......5523384431512019........",
         "........445044052320..........",
     ],
@@ -2859,6 +2884,63 @@ fn parse_tile_grid(origin: (i32, i32), rows: &[&str]) -> std::collections::HashM
         }
     }
     out
+}
+
+/// The newest Transmission / Talking Portrait `(unit, ms)` of `player`
+/// recorded after `seen` (indices into the two trigger lists), and the new
+/// `seen`.  Lists shorter than `seen` (a new world) start over.
+fn latest_trigger_portrait(
+    transmissions: &[(usize, u16, u32, u32)],
+    talking: &[(usize, u16, u32)],
+    seen: (usize, usize),
+    player: usize,
+) -> (Option<(u16, u32)>, (usize, usize)) {
+    let from_tx = if seen.0 > transmissions.len() {
+        0
+    } else {
+        seen.0
+    };
+    let from_tp = if seen.1 > talking.len() { 0 } else { seen.1 };
+    let latest = transmissions[from_tx..]
+        .iter()
+        .map(|&(p, unit, _, ms)| (p, unit, ms))
+        .chain(talking[from_tp..].iter().copied())
+        .rfind(|&(p, _, _)| p == player)
+        .map(|(_, unit, ms)| (unit, ms));
+    (latest, (transmissions.len(), talking.len()))
+}
+
+/// A small window with `lines` of text, open until it is closed or Escape
+/// is pressed (used when no game data can be found).
+fn show_message_window(lines: &[&str]) {
+    let (w, h) = (900usize, 200usize);
+    let Ok(mut window) = Window::new("GalaxyCraft", w, h, WindowOptions::default()) else {
+        return;
+    };
+    let mut fb = Framebuffer::new(w, h);
+    fb.clear(Rgb::new(0, 0, 0));
+    for (i, line) in lines.iter().enumerate() {
+        fb.text(24, 40 + i as i32 * 28, line, Rgb::new(220, 220, 220), 2);
+    }
+    window.set_target_fps(30);
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+        if window.update_with_buffer(&fb.pixels, w, h).is_err() {
+            break;
+        }
+    }
+}
+
+/// Seed of the client's CRT stream: retail calls `srand(time(NULL))`
+/// (64-bit 1.23.10, `0x2b17e2`); headless captures use a fixed seed so they
+/// stay reproducible.
+fn crt_session_seed(headless: bool) -> u32 {
+    if headless {
+        return 0;
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as u32)
+        .unwrap_or(0)
 }
 
 /// Retail melee start camera: start location 200 game px below the top.
@@ -3431,22 +3513,6 @@ fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     }
 }
 
-/// Idle portrait clip of a units.dat portrait id: `arr/portdata.dat` holds
-/// 110 idle and 110 talking `portdata.tbl` indices (1-based), each a path
-/// stem such as `padvisor\PAdFid0` whose first clip is `...fid00.webm`.
-fn portrait_idle_path(install: &RetailInstall, portrait: u16, clip: u8) -> Option<String> {
-    let dat = install.read("arr/portdata.dat")?;
-    let tbl = install.read("arr/portdata.tbl")?;
-    let at = portrait as usize * 4;
-    let idx = u32::from_le_bytes(dat.get(at..at + 4)?.try_into().ok()?) as usize;
-    let table = galaxycraft::tables::StringTable::parse(&tbl).ok()?;
-    let stem = table.get(u16::try_from(idx.checked_sub(1)?).ok()?)?;
-    Some(format!(
-        "portrait/{}{clip}.webm",
-        stem.replace('\\', "/").to_ascii_lowercase()
-    ))
-}
-
 /// Colour marking "no world pixel" in the 1x unit layer composited over the
 /// screen-resolution HD terrain.
 const WORLD_KEY: Rgb = Rgb(0x0001_0203);
@@ -3980,6 +4046,9 @@ fn main() {
     let mut retail_data: Option<Arc<GameData>> = None;
     let mut install_handle: Option<RetailInstall> = None;
     let mut campaign_maps: Vec<MapEntry> = Vec::new();
+    // Without `--install`: `SC_INSTALL` & co., then the platform's default
+    // folders (a packaged build is started without arguments).
+    let install = install.or_else(|| RetailInstall::from_env().map(|i| i.root().to_path_buf()));
     if let Some(path) = install {
         let install = RetailInstall::open(&path).unwrap_or_else(|e| {
             eprintln!("cannot open retail install {}: {e}", path.display());
@@ -4004,10 +4073,45 @@ fn main() {
             scan_maps(&maps_dir).len()
         );
         retail_data = install.game_data().ok().map(Arc::new);
+        // Command cards come from the install's executable, so a build
+        // without the developer fixtures (a release package) has them too.
+        match install.button_sets() {
+            Some(sets) => galaxycraft::button_sets::use_install_table(sets),
+            None => eprintln!(
+                "command cards: x86/StarCraft.exe table not found; using the embedded one"
+            ),
+        }
+        // Hotkeys panel data, rebuilt from the install's CEF bundle and
+        // stat_txt (same reason).
+        let hotkeys = install
+            .read("webui/dist/hotkeypanel/hotkeypanel.js")
+            .and_then(|b| String::from_utf8(b).ok())
+            .zip(
+                install
+                    .read("rez/stat_txt.tbl")
+                    .and_then(|b| galaxycraft::tables::StringTable::parse(&b).ok()),
+            );
+        if !hotkeys.is_some_and(|(js, tbl)| hotkey_data::HotkeyData::use_install(&js, &tbl)) {
+            eprintln!("hotkeys: install panel data not found; using the embedded one");
+        }
         install_handle = Some(install);
     }
-    let data =
-        retail_data.unwrap_or_else(|| Arc::new(GameData::bundled().expect("bundled tables")));
+    let Some(data) = retail_data.or_else(|| GameData::bundled().ok().map(Arc::new)) else {
+        // A build without the developer fixtures needs the player's game.
+        let msg = [
+            "StarCraft: Remastered was not found.",
+            "",
+            "Start GalaxyCraft with --install <StarCraft folder>",
+            "or set SC_INSTALL to that folder.",
+        ];
+        for line in msg {
+            eprintln!("{line}");
+        }
+        if shot.is_none() {
+            show_message_window(&msg);
+        }
+        std::process::exit(2);
+    };
     // Campaign missions come from the same materialised cache; they are
     // listed first and keep their retail episode order.
     let mut maps = campaign_maps;
@@ -4281,6 +4385,18 @@ fn main() {
         melee_slot: None,
         local_team_color: None,
         creep_variants: Default::default(),
+        creep_tiles: Default::default(),
+        crt_rand: galaxycraft::render::CrtRand::new(crt_session_seed(shot.is_some())),
+        headless: shot.is_some(),
+        portrait_data: None,
+        portrait_player: galaxycraft::portrait::PortraitPlayer::new(crt_session_seed(
+            shot.is_some(),
+        )),
+        portrait_clips: Default::default(),
+        portrait_talk: None,
+        portrait_talk_started: false,
+        trigger_portraits_seen: (0, 0),
+        portrait_epoch: Instant::now(),
         portrait_pick: None,
         unit_poses: Default::default(),
         geyser_smoke: None,
@@ -5095,6 +5211,7 @@ impl App {
             let unit_type = u.type_id;
             if let Some(samples) = self.voices.cue(unit_type, VoiceCue::Yes, take) {
                 self.audio.play(Some(&samples));
+                self.start_portrait_talk(unit_type, samples.len());
                 return;
             }
         }
@@ -5107,6 +5224,43 @@ impl App {
         self.audio.play(self.sounds.race_yes(race));
     }
 
+    /// The selected unit speaks for `samples` mono 44.1 kHz samples: its
+    /// portrait talks until the line ends.
+    fn start_portrait_talk(&mut self, unit_type: u16, samples: usize) {
+        let secs = samples as f64 / 44_100.0;
+        self.portrait_talk = Some((unit_type, Instant::now() + Duration::from_secs_f64(secs)));
+        self.portrait_talk_started = true;
+    }
+
+    /// Trigger Transmissions (action 7) and Talking Portrait (29) of the
+    /// local player make the named unit's portrait talk for the action's
+    /// duration, whatever is selected.
+    fn follow_trigger_portraits(&mut self) {
+        let Some(t) = self.world.triggers.as_ref() else {
+            return;
+        };
+        let (latest, seen) = latest_trigger_portrait(
+            &t.transmissions,
+            &t.talking_portraits,
+            self.trigger_portraits_seen,
+            self.local_player,
+        );
+        self.trigger_portraits_seen = seen;
+        if let Some((unit, ms)) = latest {
+            self.start_portrait_talk(unit, ms as usize * 441 / 10);
+        }
+    }
+
+    /// Unit whose portrait the HUD shows: the one talking for a trigger, else
+    /// the first selected unit.
+    fn portrait_unit(&self) -> Option<u16> {
+        let talking = self
+            .portrait_talk
+            .filter(|&(_, until)| Instant::now() < until)
+            .map(|(unit, _)| unit);
+        talking.or_else(|| self.first_selected().map(|u| u.type_id))
+    }
+
     /// Retail "ready" line when a unit is first selected.
     fn play_selected(&mut self) {
         let take = self.ack_variant;
@@ -5114,6 +5268,7 @@ impl App {
             let unit_type = u.type_id;
             if let Some(samples) = self.voices.cue(unit_type, VoiceCue::Ready, take) {
                 self.audio.play(Some(&samples));
+                self.start_portrait_talk(unit_type, samples.len());
             }
         }
     }
@@ -5544,6 +5699,7 @@ impl App {
         self.last_races = races.clone();
         world.recorder = Some(Recorder::new());
         self.world = world;
+        self.trigger_portraits_seen = (0, 0);
         self.replay = None;
         self.save_sel = 0;
         self.map_index = index;
@@ -5790,6 +5946,7 @@ impl App {
             .unwrap_or(Race::Terran);
         self.console = ConsoleArt::load(&self.assets_root, self.console_race);
         self.world = world;
+        self.trigger_portraits_seen = (0, 0);
         self.menu = false;
         self.briefing = false;
         self.paused = false;
@@ -6142,9 +6299,16 @@ impl App {
             return hit.clone();
         }
         let decoded = (|| {
-            let install = self.install.as_ref()?;
             let (clip, at) = self.portrait_pick.unwrap_or((0, 0.6));
-            let path = portrait_idle_path(install, self.data.unit(type_id).portrait, clip)?;
+            let portrait = self.data.unit(type_id).portrait;
+            let (dat, tbl) = self.portrait_tables()?;
+            let c = galaxycraft::portrait::PortraitClip {
+                portrait,
+                talking: false,
+                clip,
+            };
+            let path = galaxycraft::portrait::clip_path(dat, tbl, c, clip)?;
+            let install = self.install.as_ref()?;
             let bytes = install.read_by_path(&path).ok()?;
             let info = galaxycraft::video::parse_webm(&bytes).ok()?;
             galaxycraft::video::decode_frame_at(&bytes, &info, Some(at), 256)
@@ -6159,6 +6323,102 @@ impl App {
         }
         self.portraits.insert(type_id, decoded.clone());
         decoded
+    }
+
+    /// `portdata.dat` + `portdata.tbl`, read once from the install.
+    fn portrait_tables(
+        &mut self,
+    ) -> Option<&(
+        galaxycraft::portrait::PortData,
+        galaxycraft::tables::StringTable,
+    )> {
+        if self.portrait_data.is_none() {
+            let install = self.install.as_ref();
+            self.portrait_data = Some((|| {
+                let install = install?;
+                let dat =
+                    galaxycraft::portrait::PortData::parse(&install.read("arr/portdata.dat")?)?;
+                let tbl =
+                    galaxycraft::tables::StringTable::parse(&install.read("arr/portdata.tbl")?)
+                        .ok()?;
+                Some((dat, tbl))
+            })());
+        }
+        self.portrait_data.as_ref()?.as_ref()
+    }
+
+    /// Decoded frames of portrait clip `clip`, falling back to lower clip
+    /// numbers when a file is missing (retail tries `c` down to 0).
+    fn portrait_clip_frames(
+        &mut self,
+        c: galaxycraft::portrait::PortraitClip,
+    ) -> Option<std::rc::Rc<Vec<PosterFrame>>> {
+        let (dat, tbl) = self.portrait_tables()?;
+        let paths: Vec<String> = (0..=c.clip)
+            .rev()
+            .filter_map(|n| galaxycraft::portrait::clip_path(dat, tbl, c, n))
+            .collect();
+        for path in paths {
+            if let Some(hit) = self.portrait_clips.get(&path) {
+                if hit.is_some() {
+                    return hit.clone();
+                }
+                continue;
+            }
+            let decoded = (|| {
+                let install = self.install.as_ref()?;
+                let bytes = install.read_by_path(&path).ok()?;
+                let info = galaxycraft::video::parse_webm(&bytes).ok()?;
+                let frames = galaxycraft::video::decode_frames(
+                    &bytes,
+                    &info,
+                    0.0,
+                    64,
+                    galaxycraft::portrait::PORTRAIT_FPS,
+                    256,
+                );
+                (!frames.is_empty()).then(|| std::rc::Rc::new(frames))
+            })();
+            self.portrait_clips.insert(path, decoded.clone());
+            if decoded.is_some() {
+                return decoded;
+            }
+        }
+        None
+    }
+
+    /// Full-motion portrait frame of `type_id` now: idle clips re-picked by
+    /// weight as each ends, talking clips while its voice line plays.
+    fn portrait_motion_frame(&mut self, type_id: u16, now: f64) -> Option<PosterFrame> {
+        let portrait = self.data.unit(type_id).portrait;
+        // A headless capture plays the portrait from second 0.
+        let start = if self.headless { 0.0 } else { now };
+        let talking = self
+            .portrait_talk
+            .is_some_and(|(t, until)| t == type_id && Instant::now() < until);
+        let start_talk = std::mem::take(&mut self.portrait_talk_started) && talking;
+        let (dat, _) = self.portrait_tables()?.clone();
+        let cur = self.portrait_player.current;
+        if cur.map(|c| c.portrait) != Some(portrait)
+            || (start_talk && !cur.is_some_and(|c| c.talking))
+        {
+            self.portrait_player
+                .set(&dat, Some(portrait), talking, true, start);
+        }
+        let fps = galaxycraft::portrait::PORTRAIT_FPS as f64;
+        // Each clip starts where the previous one ended (bounded catch-up).
+        for _ in 0..256 {
+            let clip = self.portrait_player.current?;
+            let frames = self.portrait_clip_frames(clip)?;
+            let at = ((now - self.portrait_player.started).max(0.0) * fps) as usize;
+            if at < frames.len() {
+                return Some(frames[at].clone());
+            }
+            let ended = self.portrait_player.started + frames.len() as f64 / fps;
+            self.portrait_player
+                .clip_ended(&dat, &mut self.crt_rand, talking, ended);
+        }
+        None
     }
 
     /// First frame of the episode-select art for a race, with alpha.
@@ -9843,6 +10103,7 @@ impl App {
             self.accumulator -= 1.0;
             steps += 1;
         }
+        self.follow_trigger_portraits();
         // Drop dead selections.
         self.selected
             .retain(|id| self.world.unit(*id).is_some_and(|u| u.alive));
@@ -9925,12 +10186,11 @@ impl App {
         if !hd {
             self.tileset.draw_terrain(fb, &self.scenario, cam);
         }
-        // Creep sits on the terrain and under the fog, exactly where the
-        // engine's procedural mat is composited.
-        let tick = self.world.tick;
+        // Creep sits on the terrain and under the fog (retail tiles and
+        // edge frames; the HD path draws it with the terrain below).
         if !hd {
-            let grid = self.world.creep_grid();
-            galaxycraft::render::draw_creep(fb, &self.scenario, cam, grid, tick);
+            let creep = self.creep_lookup();
+            self.tileset.draw_creep(fb, &self.scenario, cam, &creep);
         }
         if self.fog && !hd {
             self.tileset.draw_fog(
@@ -10032,18 +10292,19 @@ impl App {
     }
 
     /// MTXM entry each creep tile draws with (recorded capture variants,
-    /// else the per-tile hash), `None` off creep: shared by the playfield
+    /// else the session picker), `None` off creep: shared by the playfield
     /// and the terrain minimap.
     fn creep_lookup(&mut self) -> impl Fn(i32, i32) -> Option<u16> + 'static {
-        let mw = self.scenario.width as i32;
-        let grid = self.world.creep_grid().to_vec();
+        let width = self.scenario.width;
+        self.creep_tiles
+            .update(&mut self.crt_rand, self.world.creep_grid(), width);
+        let tiles = self.creep_tiles.clone();
         let variants = self.creep_variants.clone();
         move |tx: i32, ty: i32| {
-            let on =
-                tx >= 0 && ty >= 0 && grid.get((ty * mw + tx) as usize).is_some_and(|&c| c > 0);
-            on.then(|| match variants.get(&(tx, ty)) {
+            let picked = tiles.get(tx, ty)?;
+            Some(match variants.get(&(tx, ty)) {
                 Some(&v) => (1 << 4) | v as u16,
-                None => galaxycraft::render::creep_mtxm(tx, ty),
+                None => picked,
             })
         }
     }
@@ -10557,7 +10818,7 @@ impl App {
     /// `statport` button 1: the selected unit's idle portrait (the race
     /// advisor for buildings, via units.dat -> portdata).
     fn draw_hud_portrait(&mut self, fb: &mut Framebuffer) {
-        let Some(type_id) = self.first_selected().map(|u| u.type_id) else {
+        let Some(type_id) = self.portrait_unit() else {
             return;
         };
         let port = self.hud_control("statport", 1, UiRect::new(413, 410, 60, 56));
@@ -10568,7 +10829,22 @@ impl App {
         // region error 24.6 -> 8.4 on 135051.
         let k = self.content_box.3 as f32 / 1440.0;
         let px = |v: f32| (v * k).round() as i32;
-        if let Some(frame) = self.portrait_frame(type_id) {
+        // Options: 0 Animated, 1 Still, 2 Disabled.  Recorded capture state
+        // and headless captures show a fixed frame, unless `--menu-at` pins
+        // the clip clock (the portrait then plays from 0 to that second).
+        let clock = if self.headless {
+            self.menu_at.map(f64::from)
+        } else {
+            Some(self.portrait_epoch.elapsed().as_secs_f64())
+        };
+        let frame = match (self.game_options.portraits, clock) {
+            (2, _) => None,
+            (0, Some(now)) if self.portrait_pick.is_none() => self
+                .portrait_motion_frame(type_id, now)
+                .or_else(|| self.portrait_frame(type_id)),
+            _ => self.portrait_frame(type_id),
+        };
+        if let Some(frame) = frame {
             let (fx, fy, fw, fh) = PORTRAIT_FACE;
             // The clips are opaque (the advisor's dark backdrop hides the
             // well behind it).
@@ -16538,10 +16814,34 @@ mod tile_grid_tests {
         assert!(creep.len() > 100 && creep.values().all(|&v| v < 13));
         // The band above the console (tile rows 13-14) is recorded too:
         // 16 + 12 tiles, one of them a rare 6-12 variant.
-        assert_eq!(creep.len(), 132 + 28);
+        // Plus the nine tiles around the Hatchery (one a rare 6-12 variant).
+        assert_eq!(creep.len(), 132 + 28 + 9);
+        assert_eq!(creep.get(&(75, 9)), Some(&9));
+        assert_eq!(creep.get(&(70, 12)), Some(&5));
         assert_eq!(creep.get(&(66, 13)), Some(&5));
         assert_eq!(creep.get(&(81, 13)), Some(&9));
         assert_eq!(creep.get(&(79, 14)), Some(&0));
+    }
+}
+
+#[cfg(test)]
+mod trigger_portrait_tests {
+    use super::latest_trigger_portrait;
+
+    #[test]
+    fn transmissions_make_the_local_players_portrait_talk_once() {
+        let tx = [(0, 1, 10, 3000), (1, 2, 11, 2000)];
+        let tp = [(0, 7, 1500)];
+        // Player 0: its own records only, talking portraits after transmissions.
+        let (hit, seen) = latest_trigger_portrait(&tx, &tp, (0, 0), 0);
+        assert_eq!((hit, seen), (Some((7, 1500)), (2, 1)));
+        // Already shown: nothing new.
+        assert_eq!(latest_trigger_portrait(&tx, &tp, seen, 0).0, None);
+        // Another player's transmission is not ours.
+        assert_eq!(latest_trigger_portrait(&tx[1..], &[], (0, 0), 0).0, None);
+        // A new world (shorter lists) starts over.
+        let (hit, _) = latest_trigger_portrait(&tx[..1], &[], (5, 5), 0);
+        assert_eq!(hit, Some((1, 3000)));
     }
 }
 
@@ -16883,10 +17183,10 @@ mod hud_font_tests {
     #[test]
     fn hud_text_matches_the_retail_ink_widths() {
         let root = std::env::var("GC_RETAIL_CACHE").unwrap_or_else(|_| {
-            let base = std::env::var("XDG_CACHE_HOME").unwrap_or_else(|_| {
-                format!("{}/.cache", std::env::var("HOME").unwrap_or_default())
-            });
-            format!("{base}/galaxycraft/retail-864772b9")
+            format!(
+                "{}/retail-864772b9",
+                galaxycraft::retail::user_cache_root().display()
+            )
         });
         let Some(font) =
             galaxycraft::text::UiFont::load(&std::path::Path::new(&root).join(HUD_FONT))

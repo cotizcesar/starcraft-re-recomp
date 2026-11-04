@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GalaxyCraft
+GenericName=Real-time strategy engine
+Comment=Reconstructed StarCraft 1.23 engine; plays from your own StarCraft: Remastered install
+Exec=galaxycraft %F
+Icon=io.github.cotizcesar.GalaxyCraft
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=starcraft;rts;strategy;

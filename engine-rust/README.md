@@ -131,11 +131,13 @@ RTS client.  It is still not a byte-for-byte replacement for
   follows the `OWNR == 6` human seat instead of assuming player 0, and
   advances to the next mission of the episode on victory.  The same campaign
   corpus is simulated by `sc_campaign --install` (391/391 maps, 0 failed).
-* **Client rendering**: mission briefing, result overlay, animated procedural
-  creep over the gameplay maturity grid, minimap units and camera.
+* **Client rendering**: mission briefing, result overlay, retail creep tiles
+  and edge frames over the gameplay creep grid, full-motion HUD portraits,
+  minimap units and camera.
 * **Audio**: nine shipped CASC WAV effects (UI, acknowledgements, mission
-  start, victory/defeat) decoded natively and mixed by a small ALSA backend;
-  the mixer degrades to a no-op on headless systems.
+  start, victory/defeat) decoded natively and mixed in software; output is
+  ALSA (Linux), WinMM (Windows) or CoreAudio (macOS), loaded at run time,
+  and degrades to a no-op on headless systems.
 * **A deterministic AI** that mines, maintains supply, follows a short build
   order and attacks.
 
@@ -186,10 +188,11 @@ hashes match.
 The stock Terran/Zerg/Protoss console HUD, main menu, pause menu, score panel,
 in-game leaderboard, mission statistics and title intro are drawn from the
 retail DDS/GRP surfaces and the exact `*.ui.json` rectangles; the cosmetic
-20th-anniversary/Carbot skins are not used.  The creep overlay is rendered from
-the recovered maturity grid with a deterministic organic texture (CASC ships
-no creep GRP), so the mat animates correctly but is not a pixel copy of the
-retail texture.  Music and the complete voice sets are decoded from the
+20th-anniversary/Carbot skins are not used.  Creep is drawn like retail: the cv5
+group-1 creep tiles, chosen per tile by the client's CRT `rand` rule, and the
+`tileset/<era>.grp` edge frames (see `src/render.rs`).  Release packages for
+Linux, Windows and macOS are described in
+[`packaging/README.md`](packaging/README.md).  Music and the complete voice sets are decoded from the
 player's installation with `--install` (23 Ogg tracks and 1,122 voice files);
 nine small WAV effects remain bundled for no-install runs.  The same loader
 can read any of them by path with `sc_assets path <CASC path>`.
@@ -252,8 +255,8 @@ cargo run --bin sc_sim -- duel marine zealot
 cargo run --bin sc_match -- --ticks 4000 --verbose
 ```
 
-`sc_view` opens ALSA for the bundled effects; set `SC_NO_AUDIO=1` on a
-headless box.  Controls: menu Up/Down + Enter, `R` chooses race, `I` replays
+`sc_view` opens the platform audio output for the bundled effects; set
+`SC_NO_AUDIO=1` on a headless box.  Controls: menu Up/Down + Enter, `R` chooses race, `I` replays
 the title intro; in game drag/shift-click select, right click
 move/attack/gather, `A` attack-move, `P` patrol, `S` stop, `H` hold,
 `B`/number keys build or train, `Ctrl+1..9` control groups, arrows scroll,
@@ -295,7 +298,7 @@ The executable completeness checklist is in
 | `src/combat.rs` | Damage pipeline, shields, status branches, fixed-tick battle sim |
 | `src/projectile.rs` | Bullet behaviours, lifetime, bounce and impact state |
 | `src/vision.rs` | Per-player visible/explored masks, cloak and detector rules |
-| `src/audio.rs` | WAV decoder, effect bank and ALSA software mixer |
+| `src/audio.rs` | WAV decoder, effect bank, software mixer and ALSA/WinMM/CoreAudio outputs |
 | `src/retail.rs` | Read-only CASC + MPQ installation reader, asset materialiser |
 | `build.rs`, `third_party/pklib/` | Vendored MIT PKWARE DCL explode for MPQ maps |
 | `src/render.rs` | CV5/VX4EX/VR4/WPE terrain, GRP decoder, sprites, fog, minimap, framebuffer text |

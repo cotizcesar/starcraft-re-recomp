@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Original GalaxyCraft icon: an orbit ring around a four-point star. -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="60%">
+      <stop offset="0" stop-color="#1d2b4f"/>
+      <stop offset="1" stop-color="#070b16"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="url(#bg)"/>
+  <ellipse cx="128" cy="132" rx="98" ry="38" fill="none" stroke="#5fb4ff" stroke-width="10"
+           transform="rotate(-24 128 132)"/>
+  <path d="M128 44 L144 116 L212 132 L144 148 L128 220 L112 148 L44 132 L112 116 Z" fill="#ffd166"/>
+  <circle cx="128" cy="132" r="14" fill="#fff6d8"/>
+</svg>

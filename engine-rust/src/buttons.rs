@@ -7,7 +7,7 @@
 //! button that exists in the set.  Falsifier for any line: the retail card
 //! of a unit in that state showing/hiding the button differently.
 
-use crate::button_sets::{Button, BUTTON_SETS};
+use crate::button_sets::{set_of, Button};
 use crate::sim::{SimUnit, World};
 
 /// Semantic class of a retail button condition.
@@ -99,10 +99,7 @@ pub fn state(world: &World, unit: &SimUnit, b: &Button) -> Option<ButtonState> {
 /// Land / Cancel all live in position 9 of the Command Center).
 pub fn card(world: &World, unit: &SimUnit) -> [Option<(Button, ButtonState)>; 9] {
     let mut out = [None; 9];
-    let set = BUTTON_SETS
-        .get(unit.type_id as usize)
-        .copied()
-        .unwrap_or(&[]);
+    let set = set_of(unit.type_id as usize);
     for b in set {
         let i = (b.pos as usize).wrapping_sub(1);
         if i < 9 && out[i].is_none() {
@@ -170,8 +167,8 @@ mod tests {
 
     #[test]
     fn every_set_uses_card_positions_one_to_nine() {
-        for (uid, set) in BUTTON_SETS.iter().enumerate() {
-            for b in set.iter() {
+        for uid in 0..crate::button_sets::slots() {
+            for b in set_of(uid) {
                 assert!((1..=9).contains(&b.pos), "unit {uid}: pos {}", b.pos);
             }
         }

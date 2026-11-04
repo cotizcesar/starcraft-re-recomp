@@ -22,6 +22,10 @@ local-only and never committed.
 | `compare_shot.py` / `compare_all.py` | Region-grid difference of one render, or all 44 references | references |
 | `extract_menu_masks.py` | Measure text coverage masks into `engine-rust/src/menu_masks/` | references |
 | `gen_button_sets.py` | Generate `engine-rust/fixtures/button_sets.in` from your own menu-time memory dump | dump |
+| `stage_clean_tree.sh` | Copy the tracked, non-ignored files to a folder (packages are built only from it) | git |
+| `package_appimage.sh` / `package_flatpak.sh` | Linux release packages into `dist/` | see `engine-rust/packaging/README.md` |
+| `package_windows.sh` / `package_macos.sh` | Windows zip (mingw cross build) / universal macOS app | same |
+| `render_parity.py` | Pixel parity of two client builds (e.g. dev build vs a package) over the headless screens and portrait clocks | `SC_INSTALL` |
 | `cef_host_probe.py` | Serve the shipped CEF options panel with a synthetic WebSocket host | extracted panel |
 
 Committed gate outputs live in `engine-rust/docs/gates/`.

@@ -5,6 +5,16 @@
 //! from retail 1.23.10.13515 (`$default`/Brood War profile).  The fixture is
 //! static data, not a screenshot-derived correction: keys, card positions and
 //! icons are the ones the game sends to the CEF panel.
+//!
+//! The same data is rebuilt from the player's install by [`from_install`]
+//! (FACT, 2026-11-03: identical to the fixture, 220 actions and 88 units):
+//! `Actions` / `Units` from `hotkeypanel.js`; each action's default key is
+//! the first character of `stat_txt.tbl` entry `id - 1` and its label the
+//! rest of that entry without the format bytes.  25 entries hold only the
+//! key; their labels are sent by the native client and ship in no data file
+//! (searched: CASC text, both executables, the dumps), so they are the
+//! [`NATIVE_LABELS`] table below, as captured.  This lets a build without
+//! the developer fixtures (a release package) show the full panel.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -19,7 +29,7 @@ pub struct KeyBind {
     pub code: u16,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ActionDef {
     pub label: String,
     pub icon: String,
@@ -29,7 +39,7 @@ pub struct ActionDef {
     pub default_code: u16,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct CardAction {
     pub id: u16,
     pub x: u8,
@@ -37,13 +47,13 @@ pub struct CardAction {
     pub icon: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct CardDef {
     pub label: String,
     pub actions: Vec<CardAction>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct UnitDef {
     pub id: u16,
     pub kind: String,
@@ -52,7 +62,7 @@ pub struct UnitDef {
     pub cards: Vec<CardDef>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 struct RawData {
     actions: HashMap<String, ActionDef>,
     units: HashMap<String, Vec<UnitDef>>,
@@ -65,12 +75,308 @@ pub struct HotkeyData {
 }
 
 static DATA: OnceLock<HotkeyData> = OnceLock::new();
+static INSTALL: OnceLock<RawData> = OnceLock::new();
+
+/// Labels of the actions whose `stat_txt` entry is only the hotkey (the
+/// native client's `OnActionsDiscovered` text, enUS capture).
+pub const NATIVE_LABELS: &[(u16, &str)] = &[
+    (339, "Tank Mode"),
+    (345, "Decloak"),
+    (373, "Unburrow"),
+    (374, "Infest Terran Command Center"),
+    (629, "Place Nydus Canal Exit"),
+    (664, "Move"),
+    (665, "Stop"),
+    (666, "Attack"),
+    (667, "Patrol"),
+    (668, "Hold Position"),
+    (670, "Land"),
+    (671, "Liftoff"),
+    (672, "Set Rally Point"),
+    (673, "Recharge Shields"),
+    (674, "Select Larva"),
+    (675, "Gather"),
+    (676, "Return Cargo"),
+    (677, "Repair"),
+    (678, "Build Structure"),
+    (679, "Build Advanced Structure"),
+    (680, "Basic Mutation"),
+    (681, "Advanced Mutation"),
+    (683, "Load"),
+    (684, "Unload All"),
+    (685, "Nuclear Strike"),
+];
+
+/// The subset of JavaScript literals `hotkeypanel.js` uses for its tables.
+#[derive(Clone, Debug, PartialEq)]
+enum Js {
+    Obj(Vec<(String, Js)>),
+    Arr(Vec<Js>),
+    Str(String),
+    Num(i64),
+    Bool(bool),
+    /// `i[N]`: a reference to action N.
+    Ref(u16),
+}
+
+impl Js {
+    fn field(&self, key: &str) -> Option<&Js> {
+        match self {
+            Js::Obj(v) => v.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+    fn str(&self) -> Option<&str> {
+        match self {
+            Js::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+    fn num(&self) -> Option<i64> {
+        match self {
+            Js::Num(n) => Some(*n),
+            _ => None,
+        }
+    }
+    fn arr(&self) -> Option<&[Js]> {
+        match self {
+            Js::Arr(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+struct JsParser<'a> {
+    b: &'a [u8],
+    i: usize,
+    depth: usize,
+}
+
+impl JsParser<'_> {
+    fn ws(&mut self) {
+        while self.b.get(self.i).is_some_and(|c| c.is_ascii_whitespace()) {
+            self.i += 1;
+        }
+    }
+    fn eat(&mut self, c: u8) -> bool {
+        self.ws();
+        let hit = self.b.get(self.i) == Some(&c);
+        self.i += hit as usize;
+        hit
+    }
+    fn digits(&mut self) -> Option<i64> {
+        let start = self.i;
+        if self.b.get(self.i) == Some(&b'-') {
+            self.i += 1;
+        }
+        while self.b.get(self.i).is_some_and(u8::is_ascii_digit) {
+            self.i += 1;
+        }
+        std::str::from_utf8(&self.b[start..self.i])
+            .ok()?
+            .parse()
+            .ok()
+    }
+    fn value(&mut self) -> Option<Js> {
+        self.depth += 1;
+        if self.depth > 32 {
+            return None;
+        }
+        self.ws();
+        let v = match *self.b.get(self.i)? {
+            b'{' => {
+                self.i += 1;
+                let mut out = Vec::new();
+                while !self.eat(b'}') {
+                    self.ws();
+                    let quoted = self.eat(b'"');
+                    let start = self.i;
+                    while self
+                        .b
+                        .get(self.i)
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$')
+                    {
+                        self.i += 1;
+                    }
+                    let key = std::str::from_utf8(&self.b[start..self.i])
+                        .ok()?
+                        .to_string();
+                    if (quoted && !self.eat(b'"')) || key.is_empty() || !self.eat(b':') {
+                        return None;
+                    }
+                    out.push((key, self.value()?));
+                    self.eat(b',');
+                }
+                Js::Obj(out)
+            }
+            b'[' => {
+                self.i += 1;
+                let mut out = Vec::new();
+                while !self.eat(b']') {
+                    out.push(self.value()?);
+                    self.eat(b',');
+                }
+                Js::Arr(out)
+            }
+            b'"' => {
+                let start = self.i + 1;
+                let len = self.b.get(start..)?.iter().position(|&c| c == b'"')?;
+                self.i = start + len + 1;
+                Js::Str(
+                    std::str::from_utf8(&self.b[start..start + len])
+                        .ok()?
+                        .to_string(),
+                )
+            }
+            b'!' => {
+                let v = *self.b.get(self.i + 1)? == b'0';
+                self.i += 2;
+                Js::Bool(v)
+            }
+            b'i' if self.b.get(self.i + 1) == Some(&b'[') => {
+                self.i += 2;
+                let n = self.digits()?;
+                if !self.eat(b']') {
+                    return None;
+                }
+                Js::Ref(u16::try_from(n).ok()?)
+            }
+            _ => Js::Num(self.digits()?),
+        };
+        self.depth -= 1;
+        Some(v)
+    }
+}
+
+/// The literal assigned to `name` (`e.Actions=`, `e.Units=`) in the bundle.
+fn js_table(js: &str, name: &str) -> Option<Js> {
+    let at = js.find(name)? + name.len();
+    JsParser {
+        b: js.as_bytes(),
+        i: at,
+        depth: 0,
+    }
+    .value()
+}
+
+/// Rebuild the panel data from `webui/dist/hotkeypanel/hotkeypanel.js` and
+/// `rez/stat_txt.tbl` of an install (see the module docs).
+fn from_install(js: &str, stat_txt: &crate::tables::StringTable) -> Option<RawData> {
+    let table = js_table(js, "e.Actions=")?;
+    let units_js = js_table(js, "e.Units=")?;
+    let Js::Obj(defs) = &table else {
+        return None;
+    };
+    let def = |id: u16| {
+        defs.iter()
+            .find(|(k, _)| k.parse() == Ok(id))
+            .map(|(_, v)| v)
+    };
+    let mut actions = HashMap::new();
+    let mut units = HashMap::new();
+    let Js::Obj(races) = &units_js else {
+        return None;
+    };
+    for (race, list) in races {
+        let mut out = Vec::new();
+        for u in list.arr()? {
+            let loc_key = u.field("locKey")?.str()?.to_string();
+            let id = loc_key
+                .rsplit_once('_')
+                .and_then(|(_, n)| n.parse().ok())
+                .unwrap_or(0);
+            let mut cards = Vec::new();
+            for c in u.field("actionCards")?.arr()? {
+                let mut acts = Vec::new();
+                for r in c.field("actions")?.arr()? {
+                    let Js::Ref(aid) = r else {
+                        return None;
+                    };
+                    let a = def(*aid)?;
+                    let (x, y) = (a.field("x")?.num()? as u8, a.field("y")?.num()? as u8);
+                    let icon = a.field("icon")?.str()?.to_string();
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        actions.entry(aid.to_string())
+                    {
+                        e.insert(action_def(*aid, stat_txt, (x, y), &icon)?);
+                    }
+                    acts.push(CardAction {
+                        id: *aid,
+                        x,
+                        y,
+                        icon,
+                    });
+                }
+                cards.push(CardDef {
+                    label: c.field("label")?.str()?.to_string(),
+                    actions: acts,
+                });
+            }
+            out.push(UnitDef {
+                id,
+                kind: u.field("type")?.str()?.to_string(),
+                loc_key,
+                icon: u.field("icon")?.str()?.to_string(),
+                cards,
+            });
+        }
+        units.insert(race.clone(), out);
+    }
+    Some(RawData { actions, units })
+}
+
+/// One action: key and label from `stat_txt` entry `id - 1`.
+fn action_def(
+    id: u16,
+    stat_txt: &crate::tables::StringTable,
+    (x, y): (u8, u8),
+    icon: &str,
+) -> Option<ActionDef> {
+    let text = stat_txt.get(id.checked_sub(1)?)?;
+    let mut chars = text.chars();
+    let key = chars.next()?.to_ascii_lowercase();
+    let rest: String = chars.collect();
+    let rest = rest
+        .strip_prefix(|c: char| ('\u{1}'..='\u{5}').contains(&c))
+        .unwrap_or(&rest);
+    let label: String = rest
+        .chars()
+        .filter(|c| !('\u{1}'..='\u{8}').contains(c))
+        .collect();
+    let label = if label.is_empty() {
+        NATIVE_LABELS.iter().find(|(n, _)| *n == id)?.1.to_string()
+    } else {
+        label
+    };
+    Some(ActionDef {
+        label,
+        icon: icon.to_string(),
+        x,
+        y,
+        default_text: key.to_string(),
+        default_code: key as u16,
+    })
+}
 
 impl HotkeyData {
+    /// Use the panel data rebuilt from an install (`hotkeypanel.js` text and
+    /// `stat_txt.tbl`); call before the first [`HotkeyData::get`].  Returns
+    /// whether the install data parsed.
+    pub fn use_install(js: &str, stat_txt: &crate::tables::StringTable) -> bool {
+        match from_install(js, stat_txt) {
+            Some(raw) => {
+                let _ = INSTALL.set(raw);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn get() -> &'static Self {
         DATA.get_or_init(|| {
-            let raw: RawData =
-                serde_json::from_slice(embedded!("fixtures/hotkeys.json")).unwrap_or_default();
+            let raw: RawData = INSTALL.get().cloned().unwrap_or_else(|| {
+                serde_json::from_slice(embedded!("fixtures/hotkeys.json")).unwrap_or_default()
+            });
             let mut actions = HashMap::with_capacity(raw.actions.len());
             for (id, action) in raw.actions {
                 let Ok(id) = id.parse::<u16>() else {
@@ -298,6 +604,45 @@ pub fn load_bindings(path: &std::path::Path) -> Option<Vec<Option<KeyBind>>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn js_tables_parse_refs_strings_and_numbers() {
+        let js = r#"x;var i=e.Actions={7:{id:7,x:2,y:1,icon:"a.png"}};e.Units={terran:[{locKey:"FIRST_UNIT_STRING_7",type:"ground",icon:"u.png",n:!0,actionCards:[{label:"general",actions:[i[7]]}]}]};"#;
+        let mut strings = vec![String::new(); 7];
+        strings[6] = "m\u{1}\u{3}M\u{1}ove it".to_string();
+        let tbl = crate::tables::StringTable::from_strings(strings);
+        let raw = super::from_install(js, &tbl).expect("parses");
+        let a = &raw.actions["7"];
+        assert_eq!(
+            (a.label.as_str(), a.default_text.as_str(), a.default_code),
+            ("Move it", "m", 109)
+        );
+        let u = &raw.units["terran"][0];
+        assert_eq!(
+            (u.id, u.kind.as_str(), u.cards[0].actions[0].x),
+            (7, "ground", 2)
+        );
+        assert!(super::from_install("e.Actions={1:", &tbl).is_none());
+    }
+
+    /// Install-derived data equals the captured fixture (cache-gated).
+    #[test]
+    fn install_rebuild_matches_the_captured_fixture() {
+        let fixture: super::RawData =
+            serde_json::from_slice(embedded!("fixtures/hotkeys.json")).unwrap_or_default();
+        let js = crate::retail::RetailInstall::from_env()
+            .and_then(|i| i.read("webui/dist/hotkeypanel/hotkeypanel.js"))
+            .and_then(|b| String::from_utf8(b).ok());
+        let (Some(js), false) = (js, fixture.actions.is_empty()) else {
+            eprintln!("skip: no retail install or no fixture");
+            return;
+        };
+        let tbl = crate::tables::StringTable::parse(embedded!("fixtures/stat_txt.tbl")).unwrap();
+        let raw = super::from_install(&js, &tbl).expect("rebuild");
+        assert_eq!(raw.actions.len(), 220);
+        assert_eq!(raw.units.values().map(Vec::len).sum::<usize>(), 88);
+        assert_eq!(raw, fixture);
+    }
+
     use super::HotkeyData;
     use crate::menu::HotkeyRace;
     use std::collections::HashSet;

@@ -32,6 +32,20 @@ pub struct TriggerCondition {
     pub amount_modifier: u8,
 }
 
+/// How long a Transmission talks (ms).  INFERENCE from the public CHK
+/// trigger spec (staredit.net `TRIG`): `time` holds the WAV length, the
+/// second group field the modifier amount and `num` the modifier (7 set to,
+/// 8 add, 9 subtract).  Falsifier: a retail transmission whose portrait
+/// stops talking at a different moment.
+pub fn transmission_ms(action: &TriggerAction) -> u32 {
+    match action.num {
+        7 => action.group2,
+        8 => action.time.saturating_add(action.group2),
+        9 => action.time.saturating_sub(action.group2),
+        _ => action.time,
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TriggerAction {
     pub location: u32,
@@ -102,6 +116,8 @@ pub struct TriggerSystem {
     /// action instead of silently dropping it.
     pub display_messages: Vec<(usize, u32)>,
     pub mission_objectives: Vec<Option<u32>>,
+    /// `(player, unit type, text id, duration ms)` of each Transmission
+    /// (see [`transmission_ms`]).
     pub transmissions: Vec<(usize, u16, u32, u32)>,
     pub sounds: Vec<(usize, u32)>,
     pub center_views: Vec<(usize, u32)>,
@@ -1096,8 +1112,12 @@ impl TriggerSystem {
                 }
             }
             7 => {
-                self.transmissions
-                    .push((player, action.extra, action.text_id, action.time));
+                self.transmissions.push((
+                    player,
+                    action.extra,
+                    action.text_id,
+                    transmission_ms(action),
+                ));
             }
             8 => {
                 self.sounds.push((player, action.sound_id));
@@ -1251,6 +1271,21 @@ impl TriggerSystem {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transmission_duration_applies_the_modifier() {
+        let a = |num, time, group2| TriggerAction {
+            num,
+            time,
+            group2,
+            ..Default::default()
+        };
+        assert_eq!(super::transmission_ms(&a(7, 2000, 500)), 500);
+        assert_eq!(super::transmission_ms(&a(8, 2000, 500)), 2500);
+        assert_eq!(super::transmission_ms(&a(9, 2000, 500)), 1500);
+        assert_eq!(super::transmission_ms(&a(9, 200, 500)), 0);
+        assert_eq!(super::transmission_ms(&a(0, 2000, 500)), 2000);
+    }
+
     use super::*;
 
     fn record(kind: u8, action: u8, enabled: usize) -> Vec<u8> {

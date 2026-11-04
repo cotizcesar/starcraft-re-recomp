@@ -112,6 +112,60 @@ pub struct RetailInstall {
     handles: std::cell::RefCell<HashMap<u16, File>>,
 }
 
+/// `galaxycraft` directory under the platform's per-user cache: derived
+/// retail assets, saves, replays and profiles live there.  `XDG_CACHE_HOME`
+/// wins on every platform; otherwise `%LOCALAPPDATA%` (Windows),
+/// `~/Library/Caches` (macOS) or `~/.cache`, and the temp directory as a
+/// last resort.
+pub fn user_cache_root() -> PathBuf {
+    cache_root_from(&|k| std::env::var(k).ok())
+}
+
+fn cache_root_from(var: &dyn Fn(&str) -> Option<String>) -> PathBuf {
+    let base = var("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| {
+        if cfg!(windows) {
+            var("LOCALAPPDATA").map(PathBuf::from)
+        } else if cfg!(target_os = "macos") {
+            var("HOME").map(|h| PathBuf::from(h).join("Library/Caches"))
+        } else {
+            var("HOME").map(|h| PathBuf::from(h).join(".cache"))
+        }
+    });
+    base.unwrap_or_else(std::env::temp_dir).join("galaxycraft")
+}
+
+/// Where a retail install usually lives on this platform (Battle.net's
+/// default folder, Wine prefixes on Linux).
+fn default_install_candidates(var: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if cfg!(windows) {
+        for k in ["ProgramFiles(x86)", "ProgramFiles"] {
+            if let Some(p) = var(k) {
+                out.push(PathBuf::from(p).join("StarCraft"));
+            }
+        }
+        out.push(PathBuf::from(r"C:\Program Files (x86)\StarCraft"));
+    } else if cfg!(target_os = "macos") {
+        out.push(PathBuf::from("/Applications/StarCraft"));
+        if let Some(home) = var("HOME") {
+            out.push(PathBuf::from(home).join("Applications/StarCraft"));
+        }
+    } else {
+        out.push(PathBuf::from("/opt/StarCraft"));
+        out.push(PathBuf::from("/usr/local/games/StarCraft"));
+    }
+    if let Some(home) = var("HOME") {
+        let home = PathBuf::from(home);
+        out.extend([
+            home.join("Games/battlenet/drive_c/Program Files (x86)/StarCraft"),
+            home.join(".wine/drive_c/Program Files (x86)/StarCraft"),
+            home.join(".wine/drive_c/Program Files/StarCraft"),
+            home.join("StarCraft"),
+        ]);
+    }
+    out
+}
+
 impl RetailInstall {
     /// Open `root`, which must contain `StarCraft.exe`'s `Data/` directory.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -176,20 +230,7 @@ impl RetailInstall {
                 }
             }
         }
-        let mut candidates = vec![
-            PathBuf::from("/opt/StarCraft"),
-            PathBuf::from("/usr/local/games/StarCraft"),
-        ];
-        if let Ok(home) = std::env::var("HOME") {
-            let home = PathBuf::from(home);
-            candidates.extend([
-                home.join("Games/battlenet/drive_c/Program Files (x86)/StarCraft"),
-                home.join(".wine/drive_c/Program Files (x86)/StarCraft"),
-                home.join(".wine/drive_c/Program Files/StarCraft"),
-                home.join("StarCraft"),
-            ]);
-        }
-        for path in candidates {
+        for path in default_install_candidates(&|k| std::env::var(k).ok()) {
             if path.join("Data").join("data").is_dir() {
                 if let Ok(install) = Self::open(&path) {
                     return Some(install);
@@ -488,17 +529,19 @@ impl RetailInstall {
         Ok(data)
     }
 
+    /// Command-card button sets read from the install's 32-bit client
+    /// (`x86/StarCraft.exe`, read-only; see [`crate::button_sets::parse_exe`]).
+    pub fn button_sets(&self) -> Option<Vec<Vec<crate::button_sets::Button>>> {
+        crate::button_sets::parse_exe(&fs::read(self.root.join("x86").join("StarCraft.exe")).ok()?)
+    }
+
     /// Default per-install cache directory.
     pub fn default_cache_dir(&self) -> PathBuf {
         if let Ok(path) = std::env::var("GALAXYCRAFT_CACHE") {
             return PathBuf::from(path);
         }
-        let base = std::env::var("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".cache")))
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
         let tag = &self.build_key[..self.build_key.len().min(8)];
-        base.join("galaxycraft").join(format!("retail-{tag}"))
+        user_cache_root().join(format!("retail-{tag}"))
     }
 
     /// Materialise once, guarded by a completion marker.
@@ -1917,4 +1960,54 @@ fn pcx_palette(bytes: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     Some(bytes[bytes.len() - 768..].to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn cache_root_follows_the_platform_convention() {
+        let xdg = super::cache_root_from(&env(&[("XDG_CACHE_HOME", "/x"), ("HOME", "/h")]));
+        assert_eq!(xdg, PathBuf::from("/x/galaxycraft"));
+        let plain = super::cache_root_from(&env(&[("HOME", "/h"), ("LOCALAPPDATA", "/l")]));
+        let expect = if cfg!(windows) {
+            "/l/galaxycraft"
+        } else if cfg!(target_os = "macos") {
+            "/h/Library/Caches/galaxycraft"
+        } else {
+            "/h/.cache/galaxycraft"
+        };
+        assert_eq!(plain, PathBuf::from(expect));
+        let none = super::cache_root_from(&env(&[]));
+        assert_eq!(none, std::env::temp_dir().join("galaxycraft"));
+    }
+
+    #[test]
+    fn install_candidates_cover_the_platform_defaults() {
+        let c = super::default_install_candidates(&env(&[
+            ("HOME", "/h"),
+            ("ProgramFiles(x86)", r"D:\Apps"),
+        ]));
+        assert!(c.contains(&PathBuf::from(
+            "/h/.wine/drive_c/Program Files (x86)/StarCraft"
+        )));
+        if cfg!(windows) {
+            assert!(c.contains(&PathBuf::from(r"D:\Apps").join("StarCraft")));
+            assert!(c.contains(&PathBuf::from(r"C:\Program Files (x86)\StarCraft")));
+        } else if cfg!(target_os = "macos") {
+            assert!(c.contains(&PathBuf::from("/Applications/StarCraft")));
+        } else {
+            assert!(c.contains(&PathBuf::from("/opt/StarCraft")));
+        }
+    }
 }

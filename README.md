@@ -48,10 +48,15 @@ player's own legal StarCraft installation at runtime and never modifies it
 
 ## Quick start
 
-Requirements: Rust (stable, 2021 edition), a C compiler (for the vendored
+**Players:** download a release package (Linux AppImage or Flatpak, Windows
+zip, macOS app; see [`engine-rust/packaging/README.md`](engine-rust/packaging/README.md)).
+It finds your StarCraft: Remastered install in the platform's default folder,
+or takes `--install DIR` / `SC_INSTALL`. No game data is included.
+
+**Developers:** Rust (stable, 2021 edition), a C compiler (for the vendored
 PKWARE DCL decoder) and, to play, your own StarCraft: Remastered
-installation. On Linux the client uses X11 and ALSA; both are loaded at
-runtime.
+installation. Audio is ALSA on Linux, WinMM on Windows and CoreAudio on
+macOS, all loaded at run time; video needs `ffmpeg`.
 
 ```bash
 git clone https://github.com/cotizcesar/starcraft-re-recomp.git
@@ -145,6 +150,7 @@ copyright notice and the license text. The software comes with no warranty.
 |---|---|---|
 | Engine, client, tools, scripts and documentation | MIT | [`LICENSE`](LICENSE) |
 | Vendored PKWARE DCL decoder (from StormLib, © Ladislav Zezula) | MIT | [`engine-rust/third_party/pklib/LICENSE`](engine-rust/third_party/pklib/LICENSE) |
+| FFmpeg, optionally bundled in the AppImage and Windows zip | LGPL (shipped as `ffmpeg-LICENSE.txt`) | [`NOTICE.md`](NOTICE.md) |
 | Rust dependencies (crates.io) | Their own permissive licenses (MIT, Apache-2.0, BSD-3-Clause, ISC, Zlib, Unicode-3.0), all MIT-compatible | `engine-rust/Cargo.lock` |
 | StarCraft game data (art, audio, maps, tables, executables) | **Not covered.** Owned by Blizzard Entertainment and not distributed here | your own install |
 

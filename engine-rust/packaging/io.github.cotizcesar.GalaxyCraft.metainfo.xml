@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.cotizcesar.GalaxyCraft</id>
+  <name>GalaxyCraft</name>
+  <summary>Reconstructed StarCraft 1.23 engine</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.cotizcesar">
+    <name>cotizcesar</name>
+  </developer>
+  <description>
+    <p>
+      A deterministic Rust reconstruction of the StarCraft 1.23 engine with a
+      playable client: campaign, skirmish, saves, replays and LAN games.
+    </p>
+    <p>
+      No game data is included. GalaxyCraft reads the art, sound, maps and
+      rules from your own StarCraft: Remastered installation (found
+      automatically, or pass --install or set SC_INSTALL).
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.cotizcesar.GalaxyCraft.desktop</launchable>
+  <url type="homepage">https://github.com/cotizcesar/starcraft-re-recomp</url>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-fantasy">moderate</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="0.1.0" date="2026-11-03"/>
+  </releases>
+</component>

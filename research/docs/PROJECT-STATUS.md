@@ -2,7 +2,11 @@
 
 > Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
-Last update: 2026-11-03 (in-game: the 8 screenshots of
+Last update: 2026-11-03 (entry 76: creep from the retail art and the
+client's CRT pick rule, full-motion HUD portraits, Windows build verified
+under Wine, AppImage/Flatpak/Windows packages pixel-identical to the
+developer build, macOS app and release workflow written but not run yet.
+Earlier: in-game: the 8 screenshots of
 (8)The Hunters rebuilt from melee rules, 2.46–3.27 raw mean after
 round 3 (853 px view stretch, console anchoring, glue panes, capture
 state; session log entry 75) vs 20–28 at the start; creep, vision, bars and circles ported from the

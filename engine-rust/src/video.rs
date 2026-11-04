@@ -19,10 +19,10 @@
 //!   the CASC paths the game actually loads.
 //! * [`decode_first_frame`] shells out to the system `ffmpeg` (when present)
 //!   to decode the poster frame to `RGB24`.  The client composites that frame
-//!   on the title intro and on briefing pages whose script names a video,
-//!   so the decoded cinematics are used on the retail title/briefing screens.
-//!   Full-motion scrubbing outside those screens remains out of scope and is
-//!   recorded as the remaining limit in `docs/EVIDENCE.md`.
+//!   on the title intro and on briefing pages whose script names a video;
+//!   [`decode_frames`] decodes whole clips for full-motion playback (menu
+//!   layers, campaign disks, HUD portraits via `crate::portrait`), and
+//!   `crate::cinematic` streams the intro and campaign movies.
 //!
 //! REA provenance: the path inventory comes from `sc_list --suffix .webm`
 //! against 1.23.10.13515 (52,498 CASC paths; 2,578 `.webm` hits, 2,016
@@ -33,6 +33,80 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+/// An input file for one ffmpeg run, in its own temporary directory that is
+/// removed when the guard drops.  Each call gets a fresh directory (process
+/// id + counter), so concurrent decodes on different threads never share a
+/// file, and no directory outlives the decode (the old fixed per-process
+/// directories were never removed and piled up in the temp folder).
+struct ScratchInput {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl ScratchInput {
+    fn new(bytes: &[u8], name: &str) -> Option<Self> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("galaxycraft-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        let guard = Self {
+            path: dir.join(name),
+            dir,
+        };
+        std::fs::write(&guard.path, bytes).ok()?;
+        Some(guard)
+    }
+}
+
+impl Drop for ScratchInput {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// The `ffmpeg` executable used to decode video: `GALAXYCRAFT_FFMPEG`, else
+/// one shipped next to the client (release packages may bundle it), else the
+/// usual Homebrew folders on macOS (an app started from Finder does not
+/// inherit the shell's `PATH`), else `ffmpeg` from `PATH`.
+pub fn ffmpeg_path() -> PathBuf {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        resolve_ffmpeg(
+            std::env::var_os("GALAXYCRAFT_FFMPEG").map(PathBuf::from),
+            exe_dir.as_deref(),
+            &|p| p.is_file(),
+        )
+    })
+    .clone()
+}
+
+fn resolve_ffmpeg(
+    explicit: Option<PathBuf>,
+    exe_dir: Option<&Path>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> PathBuf {
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let mut candidates: Vec<PathBuf> = explicit.into_iter().collect();
+    if let Some(dir) = exe_dir {
+        candidates.push(dir.join(name));
+    }
+    if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+        candidates.push(PathBuf::from("/usr/local/bin/ffmpeg"));
+    }
+    candidates
+        .into_iter()
+        .find(|p| exists(p))
+        .unwrap_or_else(|| PathBuf::from(name))
+}
 
 /// The publisher logo the retail client plays before the title movie.
 ///
@@ -737,15 +811,10 @@ pub fn decode_frames(
     if count == 0 || info.pixel_width == 0 || info.pixel_height == 0 {
         return Vec::new();
     }
-    let dir = std::env::temp_dir().join(format!("galaxycraft-frames-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let src = dir.join("frames_in.webm");
-    if std::fs::write(&src, webm).is_err() {
+    let Some(src) = ScratchInput::new(webm, "frames_in.webm") else {
         return Vec::new();
-    }
-    let frames = decode_frames_from_path(&src, start, count, fps, max_width);
-    let _ = std::fs::remove_file(&src);
-    frames
+    };
+    decode_frames_from_path(&src.path, start, count, fps, max_width)
 }
 
 /// Same as [`decode_frames`], reading the video straight from disk.
@@ -781,7 +850,7 @@ pub fn decode_frames_from_info(
     }
     let w = info.pixel_width.min(max_width).max(1);
     let h = (((info.pixel_height as u64 * w as u64) / info.pixel_width as u64) as u32).max(1);
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-y",
             "-v",
@@ -856,12 +925,7 @@ pub fn decode_frame_at(
     if info.pixel_width == 0 || info.pixel_height == 0 {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("galaxycraft-video-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let src = dir.join("poster_in.webm");
-    if std::fs::write(&src, webm).is_err() {
-        return None;
-    }
+    let src = ScratchInput::new(webm, "poster_in.webm")?;
     let w = info.pixel_width.min(max_width);
     let h = if info.pixel_width == 0 {
         info.pixel_height.min(max_width)
@@ -876,7 +940,7 @@ pub fn decode_frame_at(
             .map(|ms| ((ms / 10).clamp(1000, 15_000)) as f32 / 1000.0)
             .unwrap_or(1.0)
     });
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-y",
             "-v",
@@ -884,7 +948,7 @@ pub fn decode_frame_at(
             "-ss",
             &format!("{seek:.1}"),
             "-i",
-            &src.to_string_lossy(),
+            &src.path.to_string_lossy(),
             "-vframes",
             "1",
             "-s",
@@ -899,7 +963,7 @@ pub fn decode_frame_at(
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    let _ = std::fs::remove_file(&src);
+    drop(src);
     if !out.status.success() {
         return None;
     }
@@ -926,7 +990,7 @@ pub fn decode_audio_pcm(path: &Path) -> Option<Vec<i16>> {
     if !path.exists() {
         return None;
     }
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-y",
             "-v",
@@ -975,7 +1039,7 @@ pub fn decode_rgba_frames_from_path(
     }
     let w = info.pixel_width.min(max_width).clamp(1, 4096);
     let h = (((info.pixel_height as u64 * w as u64) / info.pixel_width as u64) as u32).max(1);
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-v",
             "error",
@@ -1036,7 +1100,7 @@ pub fn decode_frame_at_path(
     }
     let w = info.pixel_width.min(max_width).max(1);
     let h = (((info.pixel_height as u64 * w as u64) / info.pixel_width as u64) as u32).max(1);
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-y",
             "-v",
@@ -1082,16 +1146,13 @@ pub fn decode_still(bytes: &[u8], ext: &str, w: u32, h: u32) -> Option<PosterFra
     if bytes.is_empty() || w == 0 || h == 0 {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("galaxycraft-still-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let src = dir.join(format!("still.{ext}"));
-    std::fs::write(&src, bytes).ok()?;
-    let out = Command::new("ffmpeg")
+    let src = ScratchInput::new(bytes, &format!("still.{ext}"))?;
+    let out = Command::new(ffmpeg_path())
         .args([
             "-v",
             "error",
             "-i",
-            &src.to_string_lossy(),
+            &src.path.to_string_lossy(),
             "-frames:v",
             "1",
             "-vf",
@@ -1106,7 +1167,7 @@ pub fn decode_still(bytes: &[u8], ext: &str, w: u32, h: u32) -> Option<PosterFra
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    let _ = std::fs::remove_file(&src);
+    drop(src);
     if !out.status.success() || out.stdout.len() < (w as usize) * (h as usize) * 3 {
         return None;
     }
@@ -1124,16 +1185,13 @@ pub fn decode_still_rgba(bytes: &[u8], ext: &str, w: u32, h: u32) -> Option<Rgba
     if bytes.is_empty() || w == 0 || h == 0 {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("galaxycraft-still-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let src = dir.join(format!("still.{ext}"));
-    std::fs::write(&src, bytes).ok()?;
-    let out = Command::new("ffmpeg")
+    let src = ScratchInput::new(bytes, &format!("still.{ext}"))?;
+    let out = Command::new(ffmpeg_path())
         .args([
             "-v",
             "error",
             "-i",
-            &src.to_string_lossy(),
+            &src.path.to_string_lossy(),
             "-frames:v",
             "1",
             "-vf",
@@ -1148,7 +1206,7 @@ pub fn decode_still_rgba(bytes: &[u8], ext: &str, w: u32, h: u32) -> Option<Rgba
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    let _ = std::fs::remove_file(&src);
+    drop(src);
     if !out.status.success() || out.stdout.len() < (w as usize) * (h as usize) * 4 {
         return None;
     }
@@ -1190,13 +1248,10 @@ pub fn decode_rgba_frame_at(
     if info.pixel_width == 0 || info.pixel_height == 0 {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("galaxycraft-alpha-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let src = dir.join("alpha_in.webm");
-    std::fs::write(&src, webm).ok()?;
+    let src = ScratchInput::new(webm, "alpha_in.webm")?;
     let w = info.pixel_width.min(max_width);
     let h = (((info.pixel_height as u64 * w as u64) / info.pixel_width as u64) as u32).max(1);
-    let out = Command::new("ffmpeg")
+    let out = Command::new(ffmpeg_path())
         .args([
             "-v",
             "error",
@@ -1205,7 +1260,7 @@ pub fn decode_rgba_frame_at(
             "-ss",
             &format!("{seek:.2}"),
             "-i",
-            &src.to_string_lossy(),
+            &src.path.to_string_lossy(),
             "-frames:v",
             "1",
             "-vf",
@@ -1220,7 +1275,7 @@ pub fn decode_rgba_frame_at(
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    let _ = std::fs::remove_file(&src);
+    drop(src);
     if !out.status.success() || out.stdout.len() < (w as usize) * (h as usize) * 4 {
         return None;
     }
@@ -1248,6 +1303,46 @@ pub fn manifest_path(cache: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scratch_inputs_are_private_and_removed_on_drop() {
+        let a = super::ScratchInput::new(b"one", "in.webm").expect("scratch");
+        let b = super::ScratchInput::new(b"two", "in.webm").expect("scratch");
+        assert_ne!(a.dir, b.dir, "every decode gets its own directory");
+        assert_eq!(std::fs::read(&a.path).unwrap(), b"one");
+        let dir = a.dir.clone();
+        drop(a);
+        assert!(!dir.exists(), "directory removed with the guard");
+        assert_eq!(std::fs::read(&b.path).unwrap(), b"two");
+    }
+
+    #[test]
+    fn ffmpeg_resolution_prefers_explicit_then_bundled_then_path() {
+        use std::path::{Path, PathBuf};
+        let name = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        let dir = Path::new("/app/bin");
+        let bundled = dir.join(name);
+        let all = |_: &Path| true;
+        let only_bundled = |p: &Path| p == bundled;
+        let none = |_: &Path| false;
+        let explicit = Some(PathBuf::from("/x/ffmpeg"));
+        assert_eq!(
+            super::resolve_ffmpeg(explicit, Some(dir), &all),
+            PathBuf::from("/x/ffmpeg")
+        );
+        assert_eq!(
+            super::resolve_ffmpeg(None, Some(dir), &only_bundled),
+            bundled
+        );
+        assert_eq!(
+            super::resolve_ffmpeg(None, Some(dir), &none),
+            PathBuf::from(name)
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -20,7 +20,8 @@ starcraft-re-recomp/
   CHANGELOG.md                   # notable changes per date
   engine-rust/ (+ AGENTS.md)     # THE engine (Rust, playable) + crate rules
     docs/                        # product docs; docs/gates/ = committed gate outputs
-  scripts/                       # harnesses: LAN, headless renders, visual gates, progress.py
+    packaging/                   # desktop/AppStream/icon, Flatpak manifest, macOS Info.plist
+  scripts/                       # harnesses: LAN, headless renders, visual gates, progress.py, package_*.sh
   research/                      # reverse engineering: evidence, manifests, Ghidra tools, docs
     docs/                        # PROJECT-STATUS.md = detailed live state; session-log.md = log
     manifests/                   # inventory + SHA-256 of the reference install
