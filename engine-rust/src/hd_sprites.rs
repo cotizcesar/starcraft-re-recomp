@@ -290,7 +290,25 @@ pub fn draw_frame(
     team: Option<Rgb>,
     clip: (i32, i32, i32, i32),
 ) {
-    draw_frame_mode(fb, img, frame, cx, cy, s, flip, team, None, clip);
+    draw_frame_mode(fb, img, frame, cx, cy, s, flip, team, None, clip, None);
+}
+
+/// [`draw_frame`] plus the point lights of `env` (`crate::hd_lights`),
+/// added on top of the directional model as the retail deferred blit does.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_frame_lit(
+    fb: &mut Framebuffer,
+    img: &HdImage,
+    frame: usize,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    flip: bool,
+    team: Option<Rgb>,
+    clip: (i32, i32, i32, i32),
+    env: &crate::hd_lights::LightEnv,
+) {
+    draw_frame_mode(fb, img, frame, cx, cy, s, flip, team, None, clip, Some(env));
 }
 
 /// [`draw_frame`] as a shadow: translucent black at `alpha` times the
@@ -318,6 +336,7 @@ pub fn draw_shadow(
         None,
         Some((alpha, Rgb::new(0, 0, 0))),
         clip,
+        None,
     );
 }
 
@@ -345,6 +364,7 @@ pub fn draw_flat(
         None,
         Some((1.0, colour)),
         clip,
+        None,
     );
 }
 
@@ -360,6 +380,7 @@ fn draw_frame_mode(
     team: Option<Rgb>,
     flat: Option<(f32, Rgb)>,
     clip: (i32, i32, i32, i32),
+    env: Option<&crate::hd_lights::LightEnv>,
 ) {
     let Some(f) = img.header.frames.get(frame).copied() else {
         return;
@@ -437,6 +458,8 @@ fn draw_frame_mode(
                 let ao = sample_raw(&lit.ao_depth, u, v)[1];
                 let sp = sample_raw(&lit.specular, u, v);
                 let alpha = c[3].min(1.0);
+                // Unlit (team-tinted) colour, for the point lights below.
+                let base = [r, g, b].map(|v| (v / (alpha * 255.0).max(1e-6)).clamp(0.0, 1.0));
                 [r, g, b] = shade(
                     [r, g, b],
                     (n[0], n[3]),
@@ -445,6 +468,29 @@ fn draw_frame_mode(
                     alpha,
                     flip,
                 );
+                // Point lights (`main.lit`), as the retail deferred blit.
+                if let Some(env) = env.filter(|e| !e.lights.is_empty()) {
+                    let ad = sample_raw(&lit.ao_depth, u, v);
+                    let mut nx = n[0] * 2.0 - 1.0;
+                    if flip {
+                        nx = -nx;
+                    }
+                    let ny = n[3] * 2.0 - 1.0;
+                    let nz = (1.0 - nx * nx - ny * ny).max(0.1).sqrt();
+                    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                    let add = env.shade(&crate::hd_lights::Fragment {
+                        x: x as f32 + 0.5,
+                        y: y as f32 + 0.5,
+                        colour: base,
+                        normal: [nx / len, ny / len, nz / len],
+                        depth: ad[3],
+                        ao: ad[1],
+                        specular: [sp[0], sp[1], sp[2]],
+                    });
+                    r += add[0] * 255.0 * alpha;
+                    g += add[1] * 255.0 * alpha;
+                    b += add[2] * 255.0 * alpha;
+                }
                 // Emissive glow is added unlit, per channel (`EMISSIVE_K`).
                 if let Some(em) = lit.emissive.as_ref() {
                     let e = sample_raw(em, u, v);

@@ -4073,3 +4073,75 @@ what needs the user); marked the other two historical with the current gate
 Hunters references 2.44–3.27 raw).  `PROGRESS.md` quoted 2.46 as the low
 end; the committed raw gate says 2.44 (134905), corrected.  The game PDB
 question stays open: whether the dumps carry symbols was never checked.
+
+## 2026-11-04 (80) — Live session: sprite point lights recovered
+
+The user ran the retail 64-bit client and played Protoss on (8)The Hunters
+(bottom-left start); screenshot + read-only capture of 485 RW regions
+(905 MB, `heap_capture.py`, local `work/heap_lights_20261104/`).
+
+**Lights.**  The shader (`deferred_blit.glsl`) reads per-sprite point lights
+from a buffer filled by the executable.  A shape search (8 floats: x, y, z,
+radius, r, g, b, intensity) found the GPU staging array (131 035 records,
+3 copies) and a 36-byte CPU list of the frame's lights: 10 bluish (radius
+176, 0.15), 1 cyan (240, 0.28), flickering green (160).  The 10 bluish ones
+fit player 6's 10 mineral fields at scale exactly 4.0 (4x px) with the
+camera at (0, 3488); per-type residuals pointed at per-image data.  Colours
+are bytes / 255 — not a byte table in the executable (min1/min3 colours
+absent), but `anim/main.lit`, which an earlier note had dismissed as "no
+names": `u32 999, 0, 0`, offsets by `images.dat` id from byte 12 (the frame
+counts match 130/130 GRPs only with that index; a first reading at byte 4
+was off by two and mapped the Nexus to the photon cannon), 20-byte records
+`{x, y, rgba, radius, intensity}` per frame.  min01/02/03 = the three live
+mineral colours; the cyan is `pneGlow` (181) and the green `GeySmok1..5`.
+Placement `centre + frame.xy + record.xy − box/2` gives one camera for all
+11 lights within ±2 px (client snapping, ≤ 1 game px).  196 images carry
+lights.  The Nexus glow comes from the `Built` animation, which the client
+never drew; added.  Gate (raw): 5 Protoss/Terran in-game frames improve by
+0.02–0.03, the other 46 screens identical; 8/8 in-game references 2.44–3.25.
+
+**Profiles.**  Brood War slot order is now FACT from the in-memory
+`MenuEntry` race bytes (the blocks run Terran, Zerg, Protoss, BW Terran, BW
+Zerg, BW Protoss).  A finished custom game left every `.spc`/`.mpc`
+unchanged (no statistics).  The client was closed afterwards, so the
+message-pump trampoline resolution and the mission start/abort test wait
+for the next run.
+
+**Verification.**  `cargo test` 441 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51 (raw and calibrated);
+walkthrough PASS (145 steps); `progress.py --check` OK (98 %).
+
+## 2026-11-04 (81) — Live session: pump names, record-on-start, text timing
+
+**Message pump (FACT).**  The 64-bit client's import directory is zeroed;
+every IAT slot points to `movabs rax, key; jmp` + a chain of
+`xor/add/sub/imul rax` (with `r10`) ending in `jmp rax`.  Emulating only
+those instructions from `/proc/<pid>/mem` resolved 484 of 488 slots, 476
+named from the mapped DLLs' export tables (`research/tools/iat_trampolines.py`,
+read-only).  `PeekMessageW` RVA `0xaadcf0`, `TranslateMessage` `0xaadd00`,
+`DispatchMessageW` `0xaadcf8`, `PostQuitMessage` `0xaadc70`; no `GetMessage*`
+import exists.  The 64-bit pump (RVA `0x607880`, 339 B, `.pdata`) has the
+32-bit `FUN_00946500` shape, so the 32-bit slot names are FACT.  The image
+was at `0x6ffffb1d0000` this run (not the dump's base): found by matching
+the PE TimeDateStamp.
+
+**Profiles (FACT).**  Brood War slot order from the `MenuEntry` race bytes
+(entry 80).  Profile REA started Brood War Protoss mission 1 and quit:
+`REA.spc` `+0x3c` 0 → 32, the started mission — progress is recorded on
+start.  LinKa starting an older mission left its `.spc` untouched.  New
+open item: the locked-campaign prompt only shows while a campaign was never
+started (`0x006eaac0`), which the client does not mirror yet.
+
+**Text timing (measured, one sample).**  A recorder took a screenshot every
+~0.95 s while the user played.  Escape from Aiur showed no trigger text in
+its first ~100 s, as the engine predicts.  1 Wasteland: TIP (Display Text,
+"always display") 9.5-11.2 s on screen — the 7 s guess is falsified, now
+10.4 s; SCV transmission (4 920 ms) 6.7-8.5 s, consistent with the 7 s
+floor.  TIP → SCV: engine 180 ticks (7.5 s at Fastest), retail 5.7-7.3 s,
+within the capture jitter.  The first recorder window (20 min) expired
+before the user played; that run was discarded, not counted.
+
+**Verification.**  `cargo test` 442 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51 (unchanged from entry 80);
+walkthrough PASS (145 steps); `progress.py --check` OK (97 %, one new open
+item).

@@ -2,7 +2,10 @@
 
 > Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
-Last update: 2026-11-04 (entry 78: trigger transmissions show text and
+Last update: 2026-11-04 (entry 80: retail sprite point lights from
+`anim/main.lit`, verified against a live capture; Built overlays; Brood War
+`.spc` slot order confirmed from the menu table; 98 %.
+Entry 78: trigger transmissions show text and
 play the map voice-over; LAN lobby up to 8 players and automatic reconnect
 with backoff (protocol 2); RE: message pump `0x946500` located, `0x8aee30`
 shown to be protector-obfuscated, extracted→origin manifest (2 923 files,

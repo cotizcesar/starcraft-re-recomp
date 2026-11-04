@@ -12,10 +12,27 @@
 
 use std::path::{Path, PathBuf};
 
-/// How long a Display Text Message stays on screen when the trigger gives
-/// no duration.  INFERENCE (classic client behaviour, not measured here);
-/// falsifier: time a retail Display Text line from appearance to fade.
-pub const TEXT_MS: u64 = 7_000;
+/// How long a Display Text Message stays on screen.  Measured on the retail
+/// client (2026-11-04, 1 Wasteland, screenshots every ~0.95 s): the opening
+/// `TIP` stayed 9.5-11.2 s; this is the midpoint.  The earlier 7 s guess is
+/// falsified.  INFERENCE for other texts (one sample); falsifier: a longer
+/// or shorter retail Display Text.
+pub const TEXT_MS: u64 = 10_400;
+/// Shortest time a Transmission's text stays (it stays at least as long as
+/// the transmission itself).  Measured: the `TERRAN SCV` transmission
+/// (4 920 ms) stayed 6.7-8.5 s, consistent with this floor; INFERENCE (one
+/// sample).
+pub const TRANSMISSION_MIN_MS: u64 = 7_000;
+
+/// On-screen lifetime of a trigger text: Display Text (`transmission_ms`
+/// 0) or a Transmission of `transmission_ms`.
+pub fn text_life_ms(transmission_ms: u32) -> u64 {
+    if transmission_ms == 0 {
+        TEXT_MS
+    } else {
+        (transmission_ms as u64).max(TRANSMISSION_MIN_MS)
+    }
+}
 /// Lines visible at once above the console (oldest scroll away first).
 pub const MAX_LINES: usize = 8;
 
@@ -135,6 +152,19 @@ mod tests {
         );
         assert_eq!(find_map_wav(&chk, "staredit\\wav\\c.wav", false), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn text_lifetimes_follow_the_retail_measurement() {
+        // 1 Wasteland: TIP (Display Text) 9.5-11.2 s, the 4 920 ms SCV
+        // transmission 6.7-8.5 s.
+        assert!((9_500..=11_200).contains(&text_life_ms(0)));
+        assert!((6_700..=8_500).contains(&text_life_ms(4_920)));
+        assert_eq!(
+            text_life_ms(20_000),
+            20_000,
+            "long transmissions keep their length"
+        );
     }
 
     #[test]
