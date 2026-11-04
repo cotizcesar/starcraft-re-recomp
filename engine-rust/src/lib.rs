@@ -38,6 +38,7 @@ pub mod economy;
 #[rustfmt::skip]
 pub mod handlers;
 pub mod hd_anim;
+pub mod hd_lights;
 pub mod hd_sprites;
 pub mod hotkey_data;
 pub mod ids;

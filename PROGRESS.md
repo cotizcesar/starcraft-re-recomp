@@ -23,17 +23,18 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 17 | 18 | 94 % |
-| [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 6 | 100 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 18 | 18 | 100 % |
+| [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **68** | **70** | **97 %** |
+| **Overall (weighted)** | **100** | **69** | **71** | **97 %** |
 
 _Last updated: 2026-11-04_
 <!-- progress:summary:end -->
 
-**Currently working on:** in-game visual parity against the retail captures,
-then the physical two-machine LAN acceptance test.
+**Currently working on:** the physical two-machine LAN acceptance test (needs
+two machines), then the INFERENCES that need the retail client running
+(`research/docs/unresolved-questions.md`).
 
 **Out of scope (not counted):** Battle.net / online services, ladder, the map
 or campaign editor, and patches other than 1.23.10.13515.
@@ -87,7 +88,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Resolutions from 16:9 up to 4K and ultrawide — `research/docs/graphics-remastered.md`
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`
 - [x] Plays from the player's own install, with no retail files in the repository — `NOTICE.md`, `sc_assets`
-- [ ] In-game frame parity with the retail captures (raw mean difference currently 2.44–3.27 on the eight (8)The Hunters references; open: building/mineral lighting, which needs the client's point-light inputs) — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, session log 2026-11-03 (75)
+- [x] In-game frame parity with the retail captures: the eight (8)The Hunters references at raw mean 2.44–3.25, all under the gate; building/mineral lighting from the retail point-light table (`anim/main.lit`) checked against a live capture — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, `research/docs/hd-lighting.md`, retail test `shipped_point_light_table_matches_the_live_client_lights`, session log 2026-11-04 (80)
 - [x] Pixel-exact creep from the retail art and rule: cv5 group-1 tiles picked per tile by the client's CRT `rand` (64-bit `0x64fb30`), `tileset/<era>.grp` edge frames at their offsets, SD and HD (variants are per-session in retail) — `tests/render.rs`, `src/render.rs` creep tests, session log 2026-11-03 (76)
 - [x] Full-motion WebM outside the title and briefing screens: HUD portraits (weighted idle clips, talking while the unit or a trigger transmission speaks), campaign act movies — `src/portrait.rs`, `tests/portraits.rs`, `engine-rust/docs/gates/package-parity.txt`
 - [x] Trigger transmissions show their text and play the map WAV (the portrait already talks) — `src/transmission.rs`, `TriggerCue` in `src/trigger.rs`, retail test `campaign_transmissions_resolve_to_text_and_playable_map_audio`, `engine-rust/docs/gates/transmission.txt`, session log 2026-11-04 (78)
@@ -105,6 +106,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Hotkey profile on disk (`GCHK` v1 with SHA-256) — `src/bin/sc_view.rs`
 - [x] Per-profile campaign progress on disk (`GCPR`) — `src/campaign_progress.rs` (10 tests)
 - [x] Victory unlocks the next mission, verified end to end — `research/docs/session-log.md` 2026-11-03 (72)
+- [ ] Locked-campaign prompt follows retail: progress is recorded when a mission starts, and the prompt only shows while the campaign was never started (`0x006eaac0`, live `.spc` diff 2026-11-04) — `research/docs/profile-format.md` #9
 - [x] Full player profile persistence (Registry IDs, settings, statistics) — `GCPF` `profiles.bin`, retail `.spc` import — `src/profile.rs` (11 tests), `scripts/menu_walkthrough.py` (`profile_persistence_check`, `campaign_win_check`), `research/docs/profile-format.md`, `research/docs/session-log.md` 2026-11-03 (77)
 
 ## LAN multiplayer

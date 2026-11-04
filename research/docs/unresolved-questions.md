@@ -19,6 +19,16 @@ where it is recorded; open items carry the experiment that settles them.
    `0x6bbdfa` (`architecture.md` §2).
 5. `0x8aee30` — **analysed**: protector-obfuscated body (`architecture.md` §1).
 6. Multiplayer/Battle.net — out of scope (LAN only; `PROGRESS.md`).
+7. Building/mineral point lights — **recovered** 2026-11-04 from a live
+   capture and `anim/main.lit` (`hd-lighting.md`).
+8. Brood War `.spc` slot order — **FACT** from the `MenuEntry` race bytes
+   (`profile-format.md` #8).
+9. Message-pump slot names — **FACT**, resolved in the live 64-bit client
+   (`architecture.md` §2, `tools/iat_trampolines.py`).
+10. Campaign progress is recorded on mission start — **FACT** (live `.spc`
+    diff, `profile-format.md` #9).  Consequence not yet mirrored by the
+    client: the locked-campaign prompt (`0x006eaac0`) only appears while
+    the campaign was never started (progress 0); see `PROGRESS.md`.
 
 ## Open
 
@@ -32,18 +42,14 @@ where it is recorded; open items carry the experiment that settles them.
    blocking. (P3.)
 4. INFERENCES that need the retail client running (each also recorded where
    it is used):
-   - Brood War campaign slot order in `.spc` (`profile-format.md` #8): win
-     a Brood War mission, re-read `+0x34..+0x40`.
-   - Retail records campaign progress on mission start (`profile-format.md`
-     #9): start and abort a new mission, re-read the `.spc`.
-   - Message-pump slot names (`architecture.md` §2): resolve the trampoline
-     behind IAT slot `0xd3063c` in a live process.
-   - Trigger text lifetime `TEXT_MS` and the "always display" flag `0x04`
-     (`src/transmission.rs`, `src/trigger.rs`): time a retail Display Text
-     line; play a flagged message with subtitles off.
+   - Trigger text lifetimes: measured once (2026-11-04, Wasteland: TIP
+     9.5-11.2 s, SCV transmission 6.7-8.5 s) and applied
+     (`transmission::text_life_ms`); more samples would turn them into a
+     rule.  The "always display" flag `0x04` is still untested: play a
+     flagged message with subtitles off.
    - Transmission duration modifiers (`trigger::transmission_ms`).
-   - Building/mineral point lights for in-game parity (`PROGRESS.md`,
-     in-game frame parity): read the light inputs from a running game.
+   - The per-sprite lighting mix and lighting scale uniforms
+     (`hd-lighting.md` #10).
 5. "Matrix A–F": the original definition is not in the repository; it was
    read as the six columns of the tool × capability matrix
    (`rea-capabilities.md`).  Confirm with the project owner.

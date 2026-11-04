@@ -166,6 +166,60 @@ fn all_shipped_mpq_maps_are_read_from_the_install() {
 }
 
 #[test]
+fn shipped_point_light_table_matches_the_live_client_lights() {
+    let Some(install) = install() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    use galaxycraft::hd_lights::{LitRecord, LitTable};
+    let bytes = install.read("anim/main.lit").expect("anim/main.lit");
+    let table = LitTable::parse(&bytes).expect("parses");
+    // 200 entries carry data; 4 (380-382, 998) only positions without
+    // colour, radius or intensity, which are not lights.
+    assert_eq!(table.lit_images(), 196, "images with at least one light");
+    // Values the running client used (2026-11-04 memory capture): radius
+    // x 4 = 176 / 240 / 160 HD px, intensity / 100, colour / 255.
+    let rec = |x, y, rgb, radius, intensity| LitRecord {
+        x,
+        y,
+        rgb,
+        radius,
+        intensity,
+    };
+    assert_eq!(
+        table.get(347, 0),
+        Some(rec(117, 95, [12, 43, 58], 44, 15)),
+        "min01"
+    );
+    assert_eq!(
+        table.get(349, 0),
+        Some(rec(119, 103, [13, 45, 59], 44, 15)),
+        "min02"
+    );
+    assert_eq!(
+        table.get(351, 0),
+        Some(rec(123, 105, [12, 44, 60], 44, 15)),
+        "min03"
+    );
+    assert_eq!(
+        table.get(181, 0),
+        Some(rec(227, 181, [0, 80, 128], 60, 28)),
+        "pneGlow"
+    );
+    assert_eq!(
+        table.get(179, 0),
+        None,
+        "the Nexus body itself has no light"
+    );
+    let smoke = table.get(430, 0).expect("GeySmok1");
+    assert_eq!(
+        (smoke.radius, smoke.rgb[1] > smoke.rgb[0]),
+        (40, true),
+        "green smoke"
+    );
+}
+
+#[test]
 fn campaign_transmissions_resolve_to_text_and_playable_map_audio() {
     let Some(install) = install() else {
         eprintln!("skipping: set SC_INSTALL to a StarCraft installation");

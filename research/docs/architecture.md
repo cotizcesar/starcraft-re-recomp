@@ -74,10 +74,18 @@ trace (out of scope: the client reimplements settings in `menu.rs` /
   name.  Found by the structural signature (two `call [IAT]` with the same
   stack `MSG` pointer, `.text` scan of 8 619 IAT calls → 2 candidates);
   the slots belong to run `0xd30550`, which the WndProc uses for 54 of its
-  56 IAT calls (= user32).  Slot names are INFERENCE from the call shape
-  (5-arg + `PM_REMOVE`, `WM_QUIT` test); falsifier: resolve the trampoline
-  behind `0xd3063c` in a live process (`/proc/<pid>/mem`) to its user32
-  export.  Tools: `research/tools/ImportRefs.java` (0 named imports — the
+  56 IAT calls (= user32).  **Slot names confirmed live (2026-11-04)**: in
+  the running 64-bit client the IAT trampolines (`movabs rax, key` +
+  `xor/add/sub/imul rax` chain + `jmp rax`) were emulated from
+  `/proc/<pid>/mem` and named from the mapped DLLs' exports
+  (`research/tools/iat_trampolines.py`, 476 of 488 slots): `PeekMessageW`
+  RVA `0xaadcf0`, `TranslateMessage` `0xaadd00`, `DispatchMessageW`
+  `0xaadcf8`, `PostQuitMessage` `0xaadc70`; **no `GetMessage*` is imported**.
+  The 64-bit twin of `FUN_00946500` is RVA `0x607880` (339 B, `.pdata`):
+  `PeekMessageW(&msg@[rsp+50h], …, [rsp+20h]=1)`, `cmp [rsp+58h], 0x12`
+  (WM_QUIT), optional filter `call rax`, `TranslateMessage`,
+  `DispatchMessageW`, `PostQuitMessage` — the same shape, so the 32-bit
+  slot names are FACT by the 32/64 correspondence (H2).  Tools: `research/tools/ImportRefs.java` (0 named imports — the
   negative), `FunctionProfile.java`, `GhidraDecompileBatch.java`.
 
 ## 3. Orders + iscript (system present, identification pending)

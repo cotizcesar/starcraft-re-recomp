@@ -24,7 +24,10 @@
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-/// The six retail campaigns, in `MenuEntry` table order.
+/// The six retail campaigns (the in-memory `MenuEntry` blocks run Terran,
+/// Zerg, Protoss, Brood War Terran, Zerg, Protoss; race bytes 1/0/2).  The
+/// `.spc` progress slot of a campaign is its race (+3 for Brood War),
+/// see `crate::profile`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Campaign {
     Terran,

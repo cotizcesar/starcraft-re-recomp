@@ -298,6 +298,25 @@ fn hotkey_save_path() -> Option<PathBuf> {
     save_dirs().0.parent().map(|p| p.join("hotkeys.bin"))
 }
 
+/// One placed piece of a unit's HD art (see `App::hd_unit_parts`).
+struct HdPart {
+    /// `images.dat` id (the `main.lit` index).
+    image_id: u16,
+    img: std::rc::Rc<galaxycraft::hd_sprites::HdImage>,
+    frame: usize,
+    x: f32,
+    y: f32,
+    below: bool,
+}
+
+/// A unit's main image, Init overlays and geyser smoke, placed on screen.
+struct HdParts {
+    main: HdPart,
+    flip: bool,
+    layers: Vec<HdPart>,
+    smoke: Option<HdPart>,
+}
+
 struct ReplayPlayer {
     save: SaveFile,
     idx: usize,
@@ -954,6 +973,8 @@ struct App {
     hd_terrain: Option<galaxycraft::render::HdTerrain>,
     /// 4x HD sprites, fetched from the install on first use.
     hd_sprites: galaxycraft::hd_sprites::HdSprites,
+    /// Point lights per image frame (`anim/main.lit`), from the install.
+    hd_lights: Option<galaxycraft::hd_lights::LitTable>,
     /// Lobby slot the local player takes in a melee game (retail assigns
     /// one start location per slot); `None` = first human slot.
     melee_slot: Option<usize>,
@@ -4561,6 +4582,10 @@ fn main() {
         menu_race,
         hd_terrain: None,
         hd_sprites: Default::default(),
+        hd_lights: install_handle
+            .as_ref()
+            .and_then(|inst| inst.read("anim/main.lit"))
+            .and_then(|b| galaxycraft::hd_lights::LitTable::parse(&b)),
         melee_slot: None,
         local_team_color: None,
         creep_variants: Default::default(),
@@ -5495,7 +5520,7 @@ impl App {
                         continue;
                     }
                     if let Some(raw) = self.scenario.string(string) {
-                        let life = (ms as u64).max(galaxycraft::transmission::TEXT_MS);
+                        let life = galaxycraft::transmission::text_life_ms(ms);
                         self.trigger_text.push(raw, now, life);
                         done.0 += galaxycraft::transmission::clean_lines(raw).len();
                     }
@@ -10776,8 +10801,9 @@ impl App {
                 );
             }
             blit_scaled_keyed(&world_fb, fb_full, scale, self.content_x0);
+            let env = self.hd_light_env(&hd_units, (cx, cy, cw, ch), scale);
             for &i in &hd_units {
-                self.draw_unit_hd(fb_full, i, (cx, cy, cw, ch), scale);
+                self.draw_unit_hd(fb_full, i, (cx, cy, cw, ch), scale, &env);
             }
             if self.fog {
                 galaxycraft::render::draw_fog_smooth(
@@ -10833,37 +10859,45 @@ impl App {
     /// Overlays the unit's Init animation attaches (`imgul` shadows below,
     /// `imgol` glows above), from the retail iscript: image id, offset and
     /// whether it is drawn under the main image.
-    fn hd_unit_layers(&self, type_id: u16) -> Vec<(u16, i8, i8, bool)> {
+    /// A finished building also gets the overlays of its `Built`
+    /// animation (iscript entry 16): the Nexus glow `pneGlow` (image 181),
+    /// whose point light the retail client draws (2026-11-04 capture).
+    fn hd_unit_layers(&self, type_id: u16, built: bool) -> Vec<(u16, i8, i8, bool)> {
+        const INIT: usize = 0;
+        const BUILT: usize = 16;
         let ty = self.data.unit(type_id);
         let Some(script) = self.data.unit_iscript_id(ty) else {
             return Vec::new();
         };
-        let Some(mut st) = self.data.iscript.start_animation(script, 0, 0) else {
-            return Vec::new();
-        };
-        let mut ctx = galaxycraft::iscript::AnimContext::default();
-        let mut out = Vec::new();
-        for _ in 0..4 {
-            for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
-                if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e {
-                    out.push((id, x, y, below));
+        let mut out: Vec<(u16, i8, i8, bool)> = Vec::new();
+        let anims: &[usize] = if built { &[INIT, BUILT] } else { &[INIT] };
+        for &anim in anims {
+            let Some(mut st) = self.data.iscript.start_animation(script, anim, 0) else {
+                continue;
+            };
+            let mut ctx = galaxycraft::iscript::AnimContext::default();
+            for _ in 0..4 {
+                for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
+                    if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e {
+                        if !out.iter().any(|o| o.0 == id) {
+                            out.push((id, x, y, below));
+                        }
+                    }
                 }
-            }
-            if st.ended {
-                break;
+                if st.ended {
+                    break;
+                }
             }
         }
         out
     }
 
-    /// Draw one unit from its HD sprite at screen resolution.  Directional
-    /// images store 17 facings (north..south through east); the western ones
-    /// are the mirrored frames, as in the SD GRPs.
-    fn draw_unit_hd(&self, fb: &mut Framebuffer, i: usize, content: (i32, i32, i32, i32), s: f32) {
+    /// Screen placement of a unit's HD art: the main image, the overlays its
+    /// Init animation attaches and the geyser smoke.  Shared by drawing and
+    /// by the point-light pass, so lights sit exactly on what is drawn.
+    fn hd_unit_parts(&self, i: usize, content: (i32, i32, i32, i32), s: f32) -> Option<HdParts> {
         let u = &self.world.units[i];
-        let Some(img) = self.hd_unit_image(u.type_id) else {
-            return;
-        };
+        let img = self.hd_unit_image(u.type_id)?;
         // Recorded capture pose (render only), else the unit's own state.
         let (ux, uy, facing) =
             self.unit_poses
@@ -10881,9 +10915,141 @@ impl App {
         } else {
             (0, false)
         };
-        let (cx, cy, cw, ch) = content;
+        let (cx, cy, _, _) = content;
         let sx = cx as f32 + (ux - self.camera.0) as f32 * s;
         let sy = cy as f32 + (uy - self.camera.1) as f32 * s;
+        let ty = self.data.unit(u.type_id);
+        let image_id = self
+            .data
+            .flingy(ty.flingy)
+            .and_then(|f| self.data.sprite(f.sprite))
+            .map(|sp| sp.image)?;
+        let install = self.install.as_ref();
+        let fetch = |id: u16| {
+            self.hd_sprites
+                .image(self.data.hd_anim_id(id), |path| install?.read(path))
+        };
+        let layers = self
+            .hd_unit_layers(u.type_id, u.is_completed_building(&self.data))
+            .into_iter()
+            .filter_map(|(id, ox, oy, below)| {
+                let li = fetch(id)?;
+                let lf = frame.min(li.header.frames.len().saturating_sub(1));
+                Some(HdPart {
+                    image_id: id,
+                    img: li,
+                    frame: lf,
+                    x: sx + ox as f32 * s,
+                    y: sy + oy as f32 * s,
+                    below,
+                })
+            })
+            .collect();
+        // Geyser smoke (`creategasoverlays`): image 430 + overlay at the
+        // geyser's LO offset, above it.
+        let smoke =
+            self.geyser_smoke
+                .filter(|g| g.0 == u.id)
+                .and_then(|(_, image, sframe, dx, dy)| {
+                    Some(HdPart {
+                        image_id: image,
+                        img: fetch(image)?,
+                        frame: sframe,
+                        x: sx + dx * s,
+                        y: sy + dy * s,
+                        below: false,
+                    })
+                });
+        Some(HdParts {
+            main: HdPart {
+                image_id,
+                img,
+                frame,
+                x: sx,
+                y: sy,
+                below: false,
+            },
+            flip,
+            layers,
+            smoke,
+        })
+    }
+
+    /// Point lights (`anim/main.lit`) of every visible unit's lit parts,
+    /// placed on screen for the deferred-blit term.
+    fn hd_light_env(
+        &self,
+        units: &[usize],
+        content: (i32, i32, i32, i32),
+        s: f32,
+    ) -> galaxycraft::hd_lights::LightEnv {
+        let (cx, cy, cw, ch) = content;
+        let mut env =
+            galaxycraft::hd_lights::LightEnv::new((cx as f32, cy as f32, cw as f32, ch as f32), s);
+        let Some(table) = self.hd_lights.as_ref() else {
+            return env;
+        };
+        for &i in units {
+            let Some(parts) = self.hd_unit_parts(i, content, s) else {
+                continue;
+            };
+            // Drawn like the sprites: main image and overlays mirror with the
+            // unit, the smoke never does.
+            let lit = std::iter::once((&parts.main, parts.flip))
+                .chain(
+                    parts
+                        .layers
+                        .iter()
+                        .filter(|p| !p.below)
+                        .map(|p| (p, parts.flip)),
+                )
+                .chain(parts.smoke.iter().map(|p| (p, false)));
+            for (p, flip) in lit {
+                let Some(rec) = table.get(p.image_id, p.frame) else {
+                    continue;
+                };
+                let Some(f) = p.img.header.frames.get(p.frame) else {
+                    continue;
+                };
+                env.lights.push(galaxycraft::hd_lights::place(
+                    rec,
+                    f.x,
+                    f.y,
+                    p.img.header.frame_w,
+                    p.img.header.frame_h,
+                    p.x,
+                    p.y,
+                    s,
+                    flip,
+                ));
+            }
+        }
+        env
+    }
+
+    /// Draw one unit from its HD sprite at screen resolution.  Directional
+    /// images store 17 facings (north..south through east); the western ones
+    /// are the mirrored frames, as in the SD GRPs.
+    fn draw_unit_hd(
+        &self,
+        fb: &mut Framebuffer,
+        i: usize,
+        content: (i32, i32, i32, i32),
+        s: f32,
+        env: &galaxycraft::hd_lights::LightEnv,
+    ) {
+        let u = &self.world.units[i];
+        let Some(parts) = self.hd_unit_parts(i, content, s) else {
+            return;
+        };
+        let (img, frame, flip, sx, sy) = (
+            parts.main.img.clone(),
+            parts.main.frame,
+            parts.flip,
+            parts.main.x,
+            parts.main.y,
+        );
+        let (cx, cy, cw, ch) = content;
         let team = match self.local_team_color {
             Some(c) if u.owner as usize == self.local_player => c,
             _ => {
@@ -10892,34 +11058,25 @@ impl App {
             }
         };
         let clip = (cx, cy, cx + cw, cy + ch);
-        let layers = self.hd_unit_layers(u.type_id);
         let install = self.install.as_ref();
         let layer = |below: bool, fb: &mut Framebuffer| {
-            for &(id, ox, oy, b) in layers.iter().filter(|l| l.3 == below) {
-                let _ = b;
-                if let Some(li) = self
-                    .hd_sprites
-                    .image(self.data.hd_anim_id(id), |path| install?.read(path))
-                {
-                    let lf = frame.min(li.header.frames.len().saturating_sub(1));
-                    let (lx, ly) = (sx + ox as f32 * s, sy + oy as f32 * s);
-                    if below {
-                        galaxycraft::hd_sprites::draw_shadow(
-                            fb,
-                            &li,
-                            lf,
-                            lx,
-                            ly,
-                            s,
-                            flip,
-                            HD_SHADOW_ALPHA,
-                            clip,
-                        );
-                    } else {
-                        galaxycraft::hd_sprites::draw_frame(
-                            fb, &li, lf, lx, ly, s, flip, None, clip,
-                        );
-                    }
+            for p in parts.layers.iter().filter(|l| l.below == below) {
+                if below {
+                    galaxycraft::hd_sprites::draw_shadow(
+                        fb,
+                        &p.img,
+                        p.frame,
+                        p.x,
+                        p.y,
+                        s,
+                        flip,
+                        HD_SHADOW_ALPHA,
+                        clip,
+                    );
+                } else {
+                    galaxycraft::hd_sprites::draw_frame_lit(
+                        fb, &p.img, p.frame, p.x, p.y, s, flip, None, clip, env,
+                    );
                 }
             }
         };
@@ -10949,29 +11106,23 @@ impl App {
             );
         }
         layer(true, fb);
-        galaxycraft::hd_sprites::draw_frame(fb, &img, frame, sx, sy, s, flip, Some(team), clip);
+        galaxycraft::hd_sprites::draw_frame_lit(
+            fb,
+            &img,
+            frame,
+            sx,
+            sy,
+            s,
+            flip,
+            Some(team),
+            clip,
+            env,
+        );
         layer(false, fb);
-        // Geyser smoke (`creategasoverlays`): image 430 + overlay at the
-        // geyser's LO offset, above it.
-        if let Some((gid, image, sframe, dx, dy)) = self.geyser_smoke {
-            if gid == u.id {
-                if let Some(smoke) = self
-                    .hd_sprites
-                    .image(self.data.hd_anim_id(image), |path| install?.read(path))
-                {
-                    galaxycraft::hd_sprites::draw_frame(
-                        fb,
-                        &smoke,
-                        sframe,
-                        sx + dx * s,
-                        sy + dy * s,
-                        s,
-                        false,
-                        None,
-                        clip,
-                    );
-                }
-            }
+        if let Some(p) = &parts.smoke {
+            galaxycraft::hd_sprites::draw_frame_lit(
+                fb, &p.img, p.frame, p.x, p.y, s, false, None, clip, env,
+            );
         }
         if let Some((ci, vpos, bar)) = circle {
             // Retail `draw_health_bars`: centred `vpos + circle_h / 2 + 8`

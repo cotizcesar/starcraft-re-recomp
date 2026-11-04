@@ -4,6 +4,20 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-04 — Retail point lights for sprites
+
+### Added
+- Sprite point lights from the shipped `anim/main.lit` (196 lit images:
+  minerals, the Nexus glow, geyser smoke, ...), placed per frame and shaded
+  with the retail deferred-blit term; table and placement checked against a
+  read-only capture of the running client (`research/docs/hd-lighting.md`).
+
+### Fixed
+- Finished buildings now draw their `Built` overlays (the Nexus glow was
+  missing).
+- Trigger text lifetimes follow a retail measurement: Display Text ~10.4 s
+  (was 7 s), Transmission text at least 7 s or the transmission's length.
+
 ## 2026-11-04 — Transmissions, multi-player LAN lobby, reconnect, RE closure
 
 ### Added
