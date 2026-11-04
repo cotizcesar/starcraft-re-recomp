@@ -211,6 +211,85 @@ impl Default for GameOptions {
     }
 }
 
+/// Key/value codec of [`GameOptions`] for the profile store
+/// (`crate::profile`).  Keys are the field names, values `f32` (bools 0/1,
+/// modes their index), so new options load from old files with their
+/// default and unknown keys are ignored.  The exhaustive destructure makes a
+/// field missing from this list a compile error.
+macro_rules! settings_fields {
+    ($( $kind:ident $field:ident ),* $(,)?) => {
+        impl GameOptions {
+            pub fn to_pairs(&self) -> Vec<(&'static str, f32)> {
+                let GameOptions { $( $field ),* } = self;
+                vec![$( (stringify!($field), settings_fields!(@get $kind *$field)) ),*]
+            }
+
+            /// Apply one stored value; `false` for an unknown key.  Values
+            /// are clamped to the range the UI can produce.
+            pub fn set_pair(&mut self, key: &str, value: f32) -> bool {
+                if !value.is_finite() {
+                    return false;
+                }
+                match key {
+                    $( stringify!($field) => {
+                        self.$field = settings_fields!(@set $kind value);
+                        true
+                    } )*
+                    _ => false,
+                }
+            }
+        }
+    };
+    (@get speed $e:expr) => { $e };
+    (@get unit $e:expr) => { $e };
+    (@get bool $e:expr) => { if $e { 1.0 } else { 0.0 } };
+    (@get mode3 $e:expr) => { $e as f32 };
+    (@get mode2 $e:expr) => { $e as f32 };
+    (@set speed $v:expr) => { $v.clamp(0.1, 3.0) };
+    (@set unit $v:expr) => { $v.clamp(0.0, 1.0) };
+    (@set bool $v:expr) => { $v != 0.0 };
+    (@set mode3 $v:expr) => { $v.clamp(0.0, 2.0) as u8 };
+    (@set mode2 $v:expr) => { $v.clamp(0.0, 1.0) as u8 };
+}
+
+settings_fields! {
+    speed game_speed,
+    unit key_scroll,
+    unit mouse_scroll,
+    unit mouse_sensitivity,
+    unit music_volume,
+    unit sfx_volume,
+    bool use_mouse_sensitivity,
+    bool mouse_scaling,
+    bool hardware_cursor,
+    bool unit_speech,
+    bool unit_acks,
+    bool sound_background,
+    bool building_sounds,
+    bool cinematic_subtitles,
+    bool original_voice_overs,
+    bool original_1998_campaign,
+    bool video_fps_cap,
+    bool video_vsync,
+    bool video_hd,
+    bool video_environment,
+    bool video_lighting,
+    bool video_smooth_turning,
+    bool video_shadow_stacking,
+    bool video_pillarbox,
+    bool game_timer,
+    bool game_color_cycling,
+    bool game_language_filter,
+    bool game_bonus_skins,
+    bool game_friend_notifications,
+    mode3 portraits,
+    mode2 minimap_position,
+    bool network_prefer_6112,
+    bool fog,
+    bool subtitles,
+    bool tips_at_startup,
+}
+
 /// Episode numbers as retail presents them (screenshots + campaign order).
 /// Original I Terran, II Zerg, III Protoss; Brood War IV Protoss, V Terran,
 /// VI Zerg.

@@ -24,10 +24,10 @@ percentages**; other documents link here instead of restating numbers.
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
 | [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 16 | 18 | 89 % |
-| [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 5 | 6 | 83 % |
+| [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 6 | 100 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 6 | 9 | 67 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 8 | 14 | 57 % |
-| **Overall (weighted)** | **100** | **58** | **70** | **87 %** |
+| **Overall (weighted)** | **100** | **59** | **70** | **88 %** |
 
 _Last updated: 2026-11-03_
 <!-- progress:summary:end -->
@@ -105,7 +105,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Hotkey profile on disk (`GCHK` v1 with SHA-256) — `src/bin/sc_view.rs`
 - [x] Per-profile campaign progress on disk (`GCPR`) — `src/campaign_progress.rs` (10 tests)
 - [x] Victory unlocks the next mission, verified end to end — `research/docs/session-log.md` 2026-11-03 (72)
-- [ ] Full player profile persistence (Registry IDs, settings, statistics)
+- [x] Full player profile persistence (Registry IDs, settings, statistics) — `GCPF` `profiles.bin`, retail `.spc` import — `src/profile.rs` (11 tests), `scripts/menu_walkthrough.py` (`profile_persistence_check`, `campaign_win_check`), `research/docs/profile-format.md`, `research/docs/session-log.md` 2026-11-03 (77)
 
 ## LAN multiplayer
 
