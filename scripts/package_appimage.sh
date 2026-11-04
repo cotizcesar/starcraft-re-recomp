@@ -42,7 +42,6 @@ if [ -n "${FFMPEG:-}" ]; then
 fi
 cp "$pack/$app_id.desktop" "$appdir/"
 cp "$pack/$app_id.svg" "$appdir/"
-ln -sf "$app_id.svg" "$appdir/.DirIcon"
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
 # Prefer a bundled ffmpeg; keep the system one as the fallback.
