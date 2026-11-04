@@ -239,9 +239,59 @@ fn save_dirs() -> (PathBuf, PathBuf) {
     (base.join("saves"), base.join("replays"))
 }
 
-/// Per-profile campaign progress (`GCPR`), next to `hotkeys.bin`.
+/// Pre-`GCPF` per-profile campaign progress (`GCPR`); read once to migrate.
 fn progress_save_path() -> Option<PathBuf> {
     save_dirs().0.parent().map(|p| p.join("campaign.bin"))
+}
+
+/// Registry IDs, settings, statistics and campaign progress (`GCPF`), next
+/// to `hotkeys.bin`.
+fn profile_save_path() -> Option<PathBuf> {
+    save_dirs().0.parent().map(|p| p.join("profiles.bin"))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `profiles.bin`; without one, the reference Registry (`REA`, `LinKa`, the
+/// IDs of the retail captures) with any `campaign.bin` progress migrated.
+/// `from_disk = false` (headless shots, scripts) always gives the reference
+/// Registry, so captures never depend on the player's files.
+fn load_profile_store(from_disk: bool) -> galaxycraft::profile::ProfileStore {
+    if let Some(store) = profile_save_path()
+        .filter(|_| from_disk)
+        .and_then(|p| galaxycraft::profile::ProfileStore::load(&p))
+    {
+        return store;
+    }
+    let now = unix_now();
+    let mut store = galaxycraft::profile::ProfileStore::default();
+    for name in ["REA", "LinKa"] {
+        let _ = store.create(name, now);
+    }
+    store.active = Some(0);
+    if let Some(book) = progress_save_path()
+        .filter(|_| from_disk)
+        .and_then(|p| galaxycraft::campaign_progress::ProgressBook::load(&p))
+    {
+        store.import_progress_book(&book, now);
+    }
+    store
+}
+
+/// Registry list geometry (1440-high design space): first row top, pitch
+/// and visible rows; shared by `draw_registry` and the click handler.
+const REGISTRY_ROW_TOP: f32 = 316.0;
+const REGISTRY_ROW_PITCH: f32 = 57.0;
+const REGISTRY_ROWS: usize = 7;
+
+/// First visible Registry row: the window that keeps `sel` on screen.
+fn registry_top(sel: usize) -> usize {
+    sel.saturating_sub(REGISTRY_ROWS - 1)
 }
 
 fn hotkey_save_path() -> Option<PathBuf> {
@@ -840,7 +890,16 @@ struct App {
     briefing_last: Instant,
     menu_screen: MenuScreen,
     game_options: GameOptions,
-    profiles: Vec<String>,
+    /// Registry IDs (with their statistics and campaign progress) and the
+    /// persisted settings (`profiles.bin`, `GCPF`).  `game_options` is the
+    /// live copy of the settings; `sync_profiles` writes both back.
+    profile_store: galaxycraft::profile::ProfileStore,
+    /// Last bytes written (or loaded), so unchanged state is never rewritten.
+    profile_saved: Vec<u8>,
+    /// Off for headless shots, `--start-screen` fixtures and menu scripts
+    /// without an explicit `GALAXYCRAFT_SAVES`: they seed reference state
+    /// that must not reach the player's file.
+    persist_profiles: bool,
     profile_sel: usize,
     /// Entry currently under the pointer (or keyboard-highlighted); `None`
     /// is the retail idle state (no hover animation, no highlighted label).
@@ -862,10 +921,6 @@ struct App {
     mission_drag: Option<f32>,
     /// Locked campaign whose `glupokcancel` prompt is open.
     campaign_prompt: Option<galaxycraft::campaign_progress::Campaign>,
-    /// Profile chosen in the Registry and every profile's campaign progress
-    /// (`~/.cache/galaxycraft/campaign.bin`, `GCPR`).
-    active_profile: String,
-    progress_book: galaxycraft::campaign_progress::ProgressBook,
     lobby_races: Vec<LobbyRace>,
     game_menu_sel: usize,
     #[allow(dead_code)]
@@ -3757,7 +3812,7 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 if let (Some(c), Ok(n)) = (campaign, next.parse()) {
                     let mut p = app.progress();
                     p.next[c.index()] = n;
-                    app.progress_book.set(&app.active_profile.clone(), p);
+                    app.set_progress(p);
                 }
             }
         } else if step == "fixture:lan-peer" {
@@ -3853,6 +3908,12 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 o.sfx_volume
             ),
             MenuScreen::Lobby { .. } => format!("races={:?}", app.lobby_races),
+            MenuScreen::Registry => format!(
+                "ids={:?} sel={} active={}",
+                app.profile_store.names(),
+                app.profile_sel,
+                app.active_name()
+            ),
             MenuScreen::Hotkeys { race } => format!(
                 "race={race:?} sel={:?} action={:?} key={:?} reset={} error={}",
                 app.hotkey_sel,
@@ -3872,13 +3933,15 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 app.mission_list.len,
                 app.mission_list.sel,
                 app.mission_list.top,
-                app.active_profile,
+                app.active_name(),
                 app.progress().next,
                 app.game_result
             ),
             MenuScreen::Episode => format!(
                 "hover={:?} prompt={:?} profile={}",
-                app.episode_hover, app.campaign_prompt, app.active_profile
+                app.episode_hover,
+                app.campaign_prompt,
+                app.active_name()
             ),
             MenuScreen::Lan => format!(
                 "lan_sel={} entries={} status={}",
@@ -3897,6 +3960,7 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
         eprintln!("walk.tsv write failed: {e}");
     }
     print!("{log}");
+    app.flush_profiles();
 }
 
 fn main() {
@@ -3926,6 +3990,9 @@ fn main() {
     // `--replay FILE`: open a `.gcrep`/`.gcsave` straight into the player
     // (the Replays menu does the same, this is the scriptable entry point).
     let mut replay_path: Option<PathBuf> = None;
+    // `--import-characters DIR`: add the Registry IDs (and campaign progress)
+    // of a retail `Characters` directory; the directory is only read.
+    let mut import_characters: Option<PathBuf> = None;
     let mut no_intro = false;
     let mut no_fog = false;
     let mut i = 0;
@@ -4007,6 +4074,10 @@ fn main() {
             }
             "--replay" => {
                 replay_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--import-characters" => {
+                import_characters = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
             "--shot-map" => {
@@ -4270,6 +4341,21 @@ fn main() {
         }
     }
     let hotkey_baseline = hotkey_bindings.clone();
+    // Interactive sessions persist; a menu script only into an explicit
+    // `GALAXYCRAFT_SAVES` (the walkthrough's temporary directory); shots and
+    // `--start-screen` fixtures never touch the player's files.
+    let persist_profiles = shot.is_none()
+        && start_screen.is_none()
+        && (menu_script.is_none() || std::env::var_os("GALAXYCRAFT_SAVES").is_some());
+    let mut profile_store = load_profile_store(persist_profiles);
+    if let Some(dir) = &import_characters {
+        let added = profile_store.import_retail_dir(dir);
+        eprintln!(
+            "imported {added} retail Registry ID(s) from {}",
+            dir.display()
+        );
+    }
+    let profile_saved = profile_store.to_bytes();
     let mut app = App {
         data,
         scenario,
@@ -4325,8 +4411,10 @@ fn main() {
         briefing_player_key: None,
         briefing_last: Instant::now(),
         menu_screen: MenuScreen::Main,
-        game_options: GameOptions::default(),
-        profiles: vec!["REA".to_string(), "LinKa".to_string()],
+        game_options: profile_store.settings.clone(),
+        profile_store,
+        profile_saved,
+        persist_profiles,
         profile_sel: 0,
         main_cursor: None,
         gametype_hover: None,
@@ -4336,10 +4424,6 @@ fn main() {
         mission_list: galaxycraft::campaign_progress::MissionList::default(),
         mission_drag: None,
         campaign_prompt: None,
-        active_profile: "REA".to_string(),
-        progress_book: progress_save_path()
-            .and_then(|p| galaxycraft::campaign_progress::ProgressBook::load(&p))
-            .unwrap_or_default(),
         lobby_races: vec![LobbyRace::Random; 8],
         game_menu_sel: 6,
         credits_scroll: 0,
@@ -4726,7 +4810,7 @@ fn main() {
                     // Live profile LinKa: history up to `9. New Gettysburg`.
                     let mut p = app.progress();
                     p.next[terran.index()] = 10;
-                    app.progress_book.set(&app.active_profile.clone(), p);
+                    app.set_progress(p);
                 }
                 app.enter_campaign(terran);
                 // 131132 was wheel-scrolled to the last page with the
@@ -5101,6 +5185,7 @@ fn main() {
             fps_last = now;
         }
     }
+    app.flush_profiles();
 }
 
 /// Clear the whole menu frame, including the ultrawide pillarbox bars that
@@ -6756,17 +6841,115 @@ impl App {
     fn set_reference_progress(&mut self) {
         let mut p = galaxycraft::campaign_progress::Progress::default();
         p.next[galaxycraft::campaign_progress::Campaign::Terran.index()] = 9;
-        self.progress_book.set(&self.active_profile.clone(), p);
+        self.set_progress(p);
+    }
+
+    /// Index of the profile in use: the one chosen in the Registry, else the
+    /// first ID (the selection was deleted or never made).
+    fn active_index(&self) -> Option<usize> {
+        self.profile_store
+            .active
+            .filter(|&i| i < self.profile_store.profiles.len())
+            .or_else(|| (!self.profile_store.profiles.is_empty()).then_some(0))
+    }
+
+    /// Name of the profile in use (`Player` when the Registry is empty).
+    fn active_name(&self) -> String {
+        self.active_index()
+            .map(|i| self.profile_store.profiles[i].name.clone())
+            .unwrap_or_else(|| "Player".into())
     }
 
     /// Progress of the profile chosen in the Registry.
     fn progress(&self) -> galaxycraft::campaign_progress::Progress {
-        self.progress_book.get(&self.active_profile)
+        self.active_index()
+            .map(|i| self.profile_store.profiles[i].progress)
+            .unwrap_or_default()
     }
 
+    fn set_progress(&mut self, progress: galaxycraft::campaign_progress::Progress) {
+        if let Some(i) = self.active_index() {
+            self.profile_store.profiles[i].progress = progress;
+        }
+    }
+
+    /// Registry `Ok`: the highlighted ID becomes the profile in use.
     fn capture_active_profile(&mut self) {
-        if let Some(name) = self.profiles.get(self.profile_sel) {
-            self.active_profile = name.clone();
+        if self.profile_sel < self.profile_store.profiles.len() {
+            self.profile_store.active = Some(self.profile_sel);
+        }
+    }
+
+    /// Registry `New ID`: add the first free `Player<n>` and highlight it.
+    fn registry_new_id(&mut self) {
+        let name = self.profile_store.next_free_name("Player");
+        if let Ok(i) = self.profile_store.create(&name, unix_now()) {
+            self.profile_sel = i;
+        }
+        self.play("ui_click");
+    }
+
+    /// Registry `Delete`: remove the highlighted ID (the last one stays).
+    fn registry_delete(&mut self) {
+        if self.profile_store.profiles.len() > 1 {
+            let sel = self.profile_sel.min(self.profile_store.profiles.len() - 1);
+            self.profile_store.delete(sel);
+            self.profile_sel = sel.min(self.profile_store.profiles.len() - 1);
+        }
+        self.play("ui_click");
+    }
+
+    /// Add the finished game to the active profile's statistics (and, on a
+    /// campaign win, advance its progress).  Replays are not games played.
+    fn record_game_result(&mut self, won: bool) {
+        if self.replay.is_some() {
+            return;
+        }
+        let Some(i) = self.active_index() else {
+            return;
+        };
+        if let Some(player) = self.world.players.get(self.local_player) {
+            let game = galaxycraft::profile::GameRecord::from_player(player, won, self.world.tick);
+            self.profile_store.profiles[i].stats.record(&game);
+        }
+        if won {
+            if let Some(mission) = self.map_mission(self.map_index) {
+                self.profile_store.profiles[i].progress.record_win(mission);
+            }
+        }
+        self.sync_profiles();
+    }
+
+    /// Write `profiles.bin` when IDs, statistics, progress or settings
+    /// changed.  Settings are taken once the Options dialog is closed, so a
+    /// slider drag is one write, not one per frame.
+    fn sync_profiles(&mut self) {
+        if !matches!(self.menu_screen, MenuScreen::Options { .. }) {
+            self.flush_profiles();
+        }
+    }
+
+    /// Write `profiles.bin` now if anything changed (also on exit, even with
+    /// the Options dialog still open).
+    fn flush_profiles(&mut self) {
+        if !self.persist_profiles {
+            return;
+        }
+        self.profile_store.settings = self.game_options.clone();
+        let bytes = self.profile_store.to_bytes();
+        if bytes == self.profile_saved {
+            return;
+        }
+        let Some(path) = profile_save_path() else {
+            return;
+        };
+        match self.profile_store.save(&path) {
+            Ok(()) => self.profile_saved = bytes,
+            Err(e) => {
+                eprintln!("profiles not saved to {}: {e}", path.display());
+                // Do not retry every frame; the next change tries again.
+                self.profile_saved = bytes;
+            }
         }
     }
 
@@ -7032,6 +7215,7 @@ impl App {
                         }
                         Key::R => {
                             self.menu_screen = MenuScreen::Registry;
+                            self.profile_sel = self.active_index().unwrap_or(0);
                             self.play("ui_click");
                         }
                         Key::Escape => self.quit = true,
@@ -7070,20 +7254,18 @@ impl App {
                             self.profile_sel = 0;
                             self.play("ui_click");
                         } else if hit(0.1813, 0.694, 0.3672, 0.743) {
-                            self.profiles
-                                .push(format!("Player{}", self.profiles.len() + 1));
-                            self.play("ui_click");
+                            self.registry_new_id();
                         } else if hit(0.3867, 0.694, 0.5469, 0.743) {
-                            if self.profiles.len() > 1 {
-                                self.profiles
-                                    .remove(self.profile_sel.min(self.profiles.len() - 1));
-                                self.profile_sel = 0;
-                            }
-                            self.play("ui_click");
+                            self.registry_delete();
                         } else if hit(0.195, 0.229, 0.5469, 0.523) {
-                            let rel = (my - cy) as f32 / ch as f32;
-                            let idx = ((rel - 0.229) / 0.049).floor().max(0.0) as usize;
-                            if idx < self.profiles.len() {
+                            // Same rows as `draw_registry` (1440-high space).
+                            let y = (my - cy) as f32 * 1440.0 / ch as f32;
+                            let row = ((y - REGISTRY_ROW_TOP) / REGISTRY_ROW_PITCH).floor();
+                            let idx = registry_top(self.profile_sel) + row.max(0.0) as usize;
+                            if row >= 0.0
+                                && (row as usize) < REGISTRY_ROWS
+                                && idx < self.profile_store.profiles.len()
+                            {
                                 self.profile_sel = idx;
                                 self.play("ui_move");
                             }
@@ -7101,23 +7283,12 @@ impl App {
                             self.play("ui_move");
                         }
                         Key::Down => {
-                            self.profile_sel =
-                                (self.profile_sel + 1).min(self.profiles.len().saturating_sub(1));
+                            self.profile_sel = (self.profile_sel + 1)
+                                .min(self.profile_store.profiles.len().saturating_sub(1));
                             self.play("ui_move");
                         }
-                        Key::N => {
-                            self.profiles
-                                .push(format!("Player{}", self.profiles.len() + 1));
-                            self.play("ui_click");
-                        }
-                        Key::D => {
-                            if self.profiles.len() > 1 {
-                                self.profiles
-                                    .remove(self.profile_sel.min(self.profiles.len() - 1));
-                                self.profile_sel = 0;
-                            }
-                            self.play("ui_click");
-                        }
+                        Key::N => self.registry_new_id(),
+                        Key::D => self.registry_delete(),
                         Key::Enter | Key::Space => {
                             self.capture_active_profile();
                             if self.registry_after_gametype {
@@ -10007,6 +10178,8 @@ impl App {
     }
 
     fn update(&mut self) {
+        // Registry, Options and result changes reach `profiles.bin` here.
+        self.sync_profiles();
         if self.intro {
             // The intro is the retail movie (138 s).  It ends when the player
             // reports the last frame, or on Enter/Esc; the old 5-second timer
@@ -10127,17 +10300,8 @@ impl App {
                 self.game_result = Some(won);
                 if won {
                     self.next_map = self.resolve_next_map();
-                    if let Some(mission) = self.map_mission(self.map_index) {
-                        let mut p = self.progress();
-                        p.record_win(mission);
-                        self.progress_book.set(&self.active_profile.clone(), p);
-                        if let Some(path) = progress_save_path() {
-                            if let Err(e) = self.progress_book.save(&path) {
-                                eprintln!("campaign progress not saved: {e}");
-                            }
-                        }
-                    }
                 }
+                self.record_game_result(won);
                 self.play(if won { "victory" } else { "defeat" });
                 self.result_panel =
                     GlueArt::load_score_panel(&self.assets_root, self.local_race(), won);
@@ -11874,6 +12038,7 @@ impl App {
             },
             galaxycraft::menu::GameTypeFollowup::Registry => {
                 self.registry_after_gametype = true;
+                self.profile_sel = self.active_index().unwrap_or(0);
                 MenuScreen::Registry
             }
         };
@@ -12602,16 +12767,15 @@ impl App {
             true,
         );
         // Profile rows: x 507, baselines 348/405 (57 px pitch); the selected
-        // profile is recoloured, never boxed.
-        let names: Vec<String> = if self.shot_name == "registry" {
-            vec!["REA".to_string(), "LinKa".to_string()]
-        } else {
-            self.profiles.clone()
-        };
-        for (i, name) in names.iter().take(2).enumerate() {
-            let baseline = 348.0 + 57.0 * i as f32;
+        // profile is recoloured, never boxed.  Shots use the reference
+        // Registry (`REA`, `LinKa`), see `load_profile_store`.
+        let names = self.profile_store.names();
+        let first = registry_top(self.profile_sel);
+        for (row, name) in names.iter().enumerate().skip(first).take(REGISTRY_ROWS) {
+            let i = row - first;
+            let baseline = REGISTRY_ROW_TOP + 32.0 + REGISTRY_ROW_PITCH * i as f32;
             let top = (baseline - 32.0) / 3.0;
-            let color = if i == 0 {
+            let color = if row == self.profile_sel {
                 select_green
             } else {
                 Rgb::new(0x5c, 0xed, 0x30)
@@ -13953,11 +14117,7 @@ impl App {
                 .copied()
                 .unwrap_or(LobbyRace::Random);
             let name = if i == 0 {
-                self.profiles
-                    .get(2)
-                    .cloned()
-                    .or_else(|| self.profiles.first().cloned())
-                    .unwrap_or_else(|| "Player".into())
+                self.active_name()
             } else {
                 "Computer".to_string()
             };

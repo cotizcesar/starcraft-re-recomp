@@ -37,3 +37,10 @@ as too invasive (caches/`Arc`/scratch).
 Save mid-mission, quit, load, continue identically (state hash
 equal to the original session's at the same tick); a replay that
 reproduces the same result; profile/campaign persisted to disk.
+
+## Player profiles
+
+Registry IDs, settings, statistics and campaign progress are not part of a
+save: they live in `profiles.bin` (`GCPF`), described with the retail
+`.spc`/`.mpc` evidence in
+[`research/docs/profile-format.md`](../../research/docs/profile-format.md).

@@ -208,8 +208,9 @@ WALK_MENU_AT = "2.0"
 
 # Victory end to end, in two processes sharing a temporary save directory:
 # the first plays Terran "9. New Gettysburg" (history up to it), wins through
-# the real result path and must write campaign.bin; the second starts fresh
-# and must list "10. The Hammer Falls" (14 entries) for the same profile.
+# the real result path and must write profiles.bin (progress + one won game
+# in the statistics); the second starts fresh and must list "10. The Hammer
+# Falls" (14 entries) for the same profile.
 TO_TERRAN_LIST = [
     "move:700:300", "click",            # Single Player
     "move:1103:618", "click",           # Original
@@ -224,24 +225,30 @@ WIN_SCRIPT = ",".join(
 RELOAD_SCRIPT = ",".join(TO_TERRAN_LIST + ["move:1262:666", "click"])
 
 
-def read_progress_book(path: Path) -> dict:
-    """Decode a `GCPR` book: magic, u16 version, u16 count, records
-    `{u8 len, name, 6 x u16}`, SHA-256 trailer."""
+def read_profile_store(path: Path) -> dict:
+    """Decode a `GCPF` store (`engine-rust/src/profile.rs`): magic, u16
+    version, u16 count, u16 active, profiles `{u8 len, name, u64 created,
+    6 x u16 progress, u8 n, n x u64 stats}`, settings, SHA-256 trailer.
+    Returns `{name: {"progress": [...], "stats": [...]}}`."""
     import hashlib
     import struct
     raw = path.read_bytes()
     body, digest = raw[:-32], raw[-32:]
-    if body[:4] != b"GCPR" or hashlib.sha256(body).digest() != digest:
-        fail(f"{path} is not a valid GCPR book")
+    if body[:4] != b"GCPF" or hashlib.sha256(body).digest() != digest:
+        fail(f"{path} is not a valid GCPF store")
     count = struct.unpack_from("<H", body, 6)[0]
-    at, book = 8, {}
+    at, store = 10, {}
     for _ in range(count):
         n = body[at]
         name = body[at + 1:at + 1 + n].decode()
-        at += 1 + n
-        book[name] = list(struct.unpack_from("<6H", body, at))
+        at += 1 + n + 8
+        progress = list(struct.unpack_from("<6H", body, at))
         at += 12
-    return book
+        k = body[at]
+        stats = list(struct.unpack_from(f"<{k}Q", body, at + 1))
+        at += 1 + 8 * k
+        store[name] = {"progress": progress, "stats": stats}
+    return store
 
 
 def campaign_win_check(args) -> None:
@@ -262,19 +269,81 @@ def campaign_win_check(args) -> None:
             win = [r for r in rows if r["action"] == "fixture:win"]
             if not win or "result=Some(true)" not in win[-1]["state"]:
                 fail(f"victory not recorded: {win[-1]['state'] if win else 'no step'}")
-            book_path = saves / "campaign.bin"
-            if not book_path.is_file():
-                fail("winning did not write campaign.bin")
-            book = read_progress_book(book_path)
+            store_path = saves / "profiles.bin"
+            if not store_path.is_file():
+                fail("winning did not write profiles.bin")
+            store = read_profile_store(store_path)
             profile = win[-1]["state"].split("profile=")[1].split()[0]
-            if book.get(profile, [0])[0] != 11:
-                fail(f"Terran progress of {profile} after winning mission 10: {book}")
+            entry = store.get(profile, {"progress": [0], "stats": [0, 0, 0]})
+            if entry["progress"][0] != 11:
+                fail(f"Terran progress of {profile} after winning mission 10: {store}")
+            # stats[0..3] = games, wins, losses.
+            if entry["stats"][:3] != [1, 1, 0]:
+                fail(f"statistics of {profile} after one win: {entry['stats']}")
         else:
             mis = [r["state"] for r in rows if r["screen"] == "Mission"]
             if not any("len=14" in st for st in mis):
                 fail(f"reloaded list does not offer 10. The Hammer Falls: {mis}")
-    print(f"PASS campaign win: New Gettysburg won -> campaign.bin Terran next=11 -> "
-          f"fresh process lists 14 entries ({saves})")
+    print(f"PASS campaign win: New Gettysburg won -> profiles.bin Terran next=11, "
+          f"games/wins/losses 1/1/0 -> fresh process lists 14 entries ({saves})")
+
+
+# Registry IDs and settings across processes (shared temporary save dir):
+# 1. Registry (key R): New ID twice -> Player1, Player2 highlighted; Ok makes
+#    Player2 the profile in use; Options -> Game tab -> Game Timer on -> Ok.
+# 2. A fresh process shows the four IDs with Player2 active and the timer
+#    still on; Delete removes Player2 (the active ID), the highlight moves to
+#    Player1 and Ok makes it the profile in use.
+# 3. A third process shows three IDs with Player1 active.
+REG_NEW = ["move:700:1035", "click"]
+REG_DELETE = ["move:1200:1035", "click"]
+REG_OK = ["move:1869:1178", "click"]
+OPTIONS_GAME_TIMER = [
+    "move:558:1042", "click",           # Options
+    "move:684:670", "click",            # Game tab
+    "move:950:403", "click",            # Game Timer
+    "move:1860:1254", "click",          # Ok -> Main
+]
+PROFILE_SCRIPTS = (
+    ",".join(["key:R"] + REG_NEW + REG_NEW + REG_OK + OPTIONS_GAME_TIMER),
+    ",".join(["key:R"] + REG_DELETE + REG_OK + ["move:558:1042", "click"]),
+    ",".join(["key:R"]),
+)
+
+
+def profile_persistence_check(args) -> None:
+    saves = Path(tempfile.mkdtemp(prefix="gc-prof-"))
+    outdir = Path(tempfile.mkdtemp(prefix="gc-prof-walk-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir),
+               GALAXYCRAFT_SAVES=str(saves))
+    states = []
+    for script in PROFILE_SCRIPTS:
+        proc = subprocess.run(
+            [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
+             "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", script],
+            env=env, text=True, capture_output=True,
+        )
+        if proc.returncode != 0:
+            fail(f"profile check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
+        states.append(parse_tsv(outdir / "walk.tsv"))
+    reg = lambda rows: [r["state"] for r in rows if r["screen"] == "Registry"]
+    opts = lambda rows: [r["state"] for r in rows if r["screen"] == "Options"]
+    four = "ids=[\"REA\", \"LinKa\", \"Player1\", \"Player2\"]"
+    if not any(four in s and "sel=3" in s for s in reg(states[0])):
+        fail(f"New ID x2 did not add Player1/Player2: {reg(states[0])}")
+    first2 = reg(states[1])[0] if reg(states[1]) else ""
+    if four not in first2 or "active=Player2" not in first2 or "sel=3" not in first2:
+        fail(f"fresh process lost the Registry IDs or the active one: {first2}")
+    # flags[8] is game_timer (see the Options state line in sc_view).
+    timer = [s.split("flags=")[1][8] for s in opts(states[1]) if "flags=" in s]
+    if not timer or timer[-1] != "1":
+        fail(f"Game Timer setting not restored: {opts(states[1])}")
+    last = reg(states[2])[0] if reg(states[2]) else ""
+    if ("ids=[\"REA\", \"LinKa\", \"Player1\"]" not in last or "active=Player1" not in last
+            or "sel=2" not in last):
+        fail(f"Delete of the active ID not persisted: {last}")
+    print(f"PASS profiles: 2 new IDs + active + Game Timer survive a restart; "
+          f"deleting the active ID survives another ({saves})")
 
 
 def run_shot(
@@ -461,6 +530,7 @@ def main() -> int:
         if not any(frag in st for st in mis):
             fail(f"mission list state after {what} not observed ({frag}); saw {sorted(set(mis))}")
     campaign_win_check(args)
+    profile_persistence_check(args)
     print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
           "keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls")
 

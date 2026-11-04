@@ -49,6 +49,7 @@ pub mod net;
 pub mod orders;
 pub mod path;
 pub mod portrait;
+pub mod profile;
 pub mod projectile;
 pub mod render;
 pub mod replay;

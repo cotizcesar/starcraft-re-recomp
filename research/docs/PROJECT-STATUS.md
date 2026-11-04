@@ -2,7 +2,11 @@
 
 > Community-facing progress with percentages lives in [PROGRESS.md](../../PROGRESS.md); this file is the detailed internal state.
 
-Last update: 2026-11-03 (entry 76: creep from the retail art and the
+Last update: 2026-11-03 (entry 77: full player profile persistence:
+Registry IDs, settings, statistics and campaign progress in `profiles.bin`
+(`GCPF`), retail `.spc`/`.mpc` format recovered from the 32-bit dump and
+importable, `docs/profile-format.md`; persistence area complete.
+Entry 76: creep from the retail art and the
 client's CRT pick rule, full-motion HUD portraits, Windows build verified
 under Wine, AppImage/Flatpak/Windows packages pixel-identical to the
 developer build, macOS app and release workflow written but not run yet.

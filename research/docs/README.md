@@ -28,6 +28,7 @@ Reading order for a new session. Current canonical docs. Docs under
 | LAN protocol | `lan-protocol.md` |
 | Visual parity vs retail | `gap-audit.md`, `parity-report.md`, `graphics-remastered.md` |
 | Complete Hotkeys data (220 actions, 88 units) | `hotkeys-data.md` |
+| Player profiles: retail `.spc`/`.mpc` RE + the `GCPF` store | `profile-format.md` |
 | In-game heap findings | `heap-ingame-findings.md` |
 | Episode RE + mission modal (1:1, 43/43) | `../analysis/investigations/episode-screen-re.md` (local-only) |
 | RE of the CEF screens (Registry/Collections/Saved/Replays/Lobby, 43/43) | `../analysis/investigations/cef-screens-re.md` (local-only) |

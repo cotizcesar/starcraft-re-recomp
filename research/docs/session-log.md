@@ -3929,3 +3929,60 @@ and renders `ingame --menu-at 0.3` with 0 changed px against the developer
 build.  appimagetool warned that an SVG `.DirIcon` will be refused in a
 future release; the symlink is dropped (the icon comes from the desktop
 entry).
+
+## 2026-11-03 (77) — Full player profile persistence (Registry IDs, settings, statistics)
+
+Goal: close the last open item of the persistence area.  Before: the
+Registry list was the hard-coded `["REA", "LinKa"]` (New ID / Delete were
+lost on exit, only two rows drawn, row 0 always highlighted, click pitch
+70 px vs 57 px drawn), Options were never saved, there were no statistics,
+and only campaign progress persisted (`campaign.bin`, `GCPR`).
+
+**RE (FACT unless marked).**  Retail profiles found in the Wine prefix
+(`drive_c/users/steamuser/Documents/StarCraft/Characters/{REA,LinKa}.spc`,
+`LinKa.mpc`, `CSettings.json`), copied read-only to `/tmp`.  In the 32-bit
+menu dump (`7c0bd733…fcc5`) the magic `0x00112233` has three code sites;
+REA `open_binary` worked but `resolve_containing_procedure` hit
+`resource_constraint` (the known >10 MB limit), so the analysed Ghidra
+project was used headless (`-noanalysis -readOnly`).  Loader `0x00682a80`
+(0x70 + 0x60 blocks, legacy 0x34), default record `0x00683000` (disassembled
+by hand: name at `+0x0c` budget 0x19, `time(NULL)` at `+8`, multiplayer flag
+at `+4`), path `0x00683080` (`Characters\` + `.spc`/`.mpc` by
+`[0x0119f7bc]`), enumeration callback `0x00682580`, block reader
+`0x00688290` (8 KiB chunks, raw or zlib).  Block check = `!crc32(raw)`,
+verified on all six blocks.  Campaign progress = six u32 at `+0x28`
+(Zerg/Terran/Protoss, Brood War at `+12`: `0x007a3940`, `0x006eaac0`);
+`LinKa.spc` Terran = 10 matches the live `9. New Gettysburg` list.
+INFERENCE: Brood War slot order (falsifier: win a BW mission, re-read
+`+0x34..+0x40`); retail records progress on mission start (`0x007a29f0`).
+No statistics in the retail record (bytes past `+0x40` all 0).  Full
+table: `docs/profile-format.md`.
+
+**Implementation.**  `engine-rust/src/profile.rs`: `ProfileStore` →
+`profiles.bin` (`GCPF` v1: IDs in Registry order, active ID, created time,
+progress, 16 u64 statistics, settings as name/f32 pairs; SHA-256, 256 KiB /
+256 IDs caps), retail name rules (1–24 B, case-insensitive unique, no path
+characters), `RetailCharacter` reader/writer, `campaign.bin` migration.
+`GameOptions::to_pairs/set_pair` (menu.rs) use an exhaustive destructure
+so a new option that is not persisted fails to compile.  `sc_view`: one
+store replaces `profiles`/`active_profile`/`progress_book`; `sync_profiles`
+writes on change (Registry, game end, Options closed), `flush_profiles` on
+exit; Registry draws 7 rows following the selection with the same row
+geometry as the hit test; `--import-characters DIR` (progress only moves
+forward).  Shots/`--start-screen` never read or write the player's file;
+menu scripts only into an explicit `GALAXYCRAFT_SAVES`.  Replays are not
+counted as games.
+
+**Verification.**  `cargo test`: 420 passed, 0 failed (`SC_INSTALL` unset,
+fixtures present; 11 new `profile::tests`); `SC_CHARACTERS=/tmp copy`
+imports the real `.spc` files; clippy 0 warnings; `cargo fmt --check`
+clean; `cargo build --bin sc_view` OK.  `menu_walkthrough.py`
+`campaign_win_check`: PASS (profiles.bin Terran next=11, games/wins/losses
+1/1/0, fresh process lists 14 entries); new `profile_persistence_check`:
+PASS (2 New IDs + active + Game Timer survive a restart; Delete of the
+active ID survives another).  Retail import end to end: LinKa picked in
+the Registry opens the 13-entry Terran list.  `ui_visual_diff.py` 51/51
+(Registry 3.19 mean; `docs/gates/ui-visual-diff.txt` refreshed, the
+committed copy predated round 3); shots `registry`, `saved`, `replays`,
+`pause` OK; no `profiles.bin` written to the real cache by any of them.
+`progress.py --check` OK (persistence 6/6, 88 % overall).

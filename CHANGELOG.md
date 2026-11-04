@@ -4,6 +4,23 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-03 — Player profile persistence
+
+### Added
+- `profiles.bin` (`GCPF` v1, SHA-256): Registry IDs in order, the ID in use,
+  per-ID statistics (games, wins, losses, per race, kills, deaths, razings,
+  resources, best score, time played) and campaign progress, plus every
+  Options setting.  The Registry's New ID / Delete / Ok, the end of each game
+  and closing Options now survive a restart; `campaign.bin` is migrated.
+- `sc_view --import-characters DIR` reads retail `Characters\*.spc` records
+  (format recovered from the 32-bit client, see
+  `research/docs/profile-format.md`); progress only ever moves forward.
+
+### Fixed
+- The Registry drew only two IDs and always highlighted the first; it now
+  shows seven rows that follow the selection, and its click rows match the
+  drawn rows (the hit pitch was 70 px against 57 px drawn).
+
 ## 2026-11-03 — Retail creep, full-motion portraits, Windows/macOS and packages
 
 ### Added
