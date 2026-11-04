@@ -185,6 +185,16 @@ impl SoundBank {
     }
 }
 
+/// Decode a map sound (PCM `.wav` or Remastered `.ogg`) into the mixer's
+/// mono 44.1 kHz stream; `None` for anything else.
+pub fn decode_sound(bytes: &[u8]) -> Option<Vec<i16>> {
+    match Wav::parse(bytes) {
+        Some(wav) => Some(wav.to_mono_44k()),
+        None if bytes.starts_with(b"OggS") => decode_ogg(bytes),
+        None => None,
+    }
+}
+
 /// Decode an Ogg Vorbis track (the Remastered `music/*.ogg` set) into the
 /// mixer's mono 44.1 kHz stream.
 ///
@@ -897,6 +907,10 @@ mod tests {
         assert_eq!(wav.channels, 1);
         assert_eq!(wav.samples, vec![0, 1000, -1000, 32767]);
         assert_eq!(wav.to_mono_44k(), wav.samples);
+        // Map sounds go through the same path; other bytes are refused.
+        assert_eq!(decode_sound(&bytes), Some(wav.samples.clone()));
+        assert_eq!(decode_sound(b"OggS-but-not-really"), None);
+        assert_eq!(decode_sound(b"garbage"), None);
     }
 
     #[test]

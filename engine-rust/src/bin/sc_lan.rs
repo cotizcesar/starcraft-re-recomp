@@ -350,12 +350,12 @@ fn run_client(m: &Match<'_>, addr: &str, race: Race) -> Result<(), String> {
     }
     let (mut conn, setup) =
         connect(addr, *map_hash, seed, race).map_err(|e| format!("connect: {e}"))?;
-    let Msg::Setup { races, .. } = setup else {
+    let Msg::Setup { races, you, .. } = setup else {
         return Err("unexpected setup message".to_string());
     };
     let mut world = load_world(chk, vf4, &races)?;
-    let mut lock = Lockstep::new(1, races.len() as u8, ticks_per_turn);
-    println!("client: joined {addr}, races {races:?}");
+    let mut lock = Lockstep::new(you, races.len() as u8, ticks_per_turn);
+    println!("client: joined {addr} as peer {you}, races {races:?}");
     client_loop(&mut lock, &mut world, &mut conn, total_turns)
 }
 

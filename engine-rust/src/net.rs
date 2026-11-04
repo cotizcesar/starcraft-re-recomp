@@ -13,14 +13,14 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::replay::{decode_act, encode_act, RecAct};
 use crate::sim::{Race, World};
 
 /// Bumped whenever the message encoding changes.
-pub const PROTOCOL: u16 = 1;
+pub const PROTOCOL: u16 = 2;
 /// Ticks advanced per network turn. 4 ticks at 24 Hz = 166 ms of input lag.
 pub const DEFAULT_TICKS_PER_TURN: u32 = 4;
 /// Hard cap so a corrupt frame cannot allocate unbounded memory.
@@ -39,9 +39,11 @@ pub enum Msg {
         seed: u64,
         race: Race,
     },
-    /// Host confirms the lobby setup for everyone.
+    /// Host confirms the lobby setup for everyone; `you` is the receiving
+    /// peer's index (protocol 2: clients no longer assume they are peer 1).
     Setup {
         peers: u8,
+        you: u8,
         map_hash: [u8; 32],
         seed: u64,
         races: Vec<Race>,
@@ -126,6 +128,7 @@ impl Msg {
             }
             Msg::Setup {
                 peers,
+                you,
                 map_hash,
                 seed,
                 races,
@@ -133,6 +136,7 @@ impl Msg {
             } => {
                 w_u8(&mut out, 2);
                 w_u8(&mut out, *peers);
+                w_u8(&mut out, *you);
                 out.extend_from_slice(map_hash);
                 w_u64(&mut out, *seed);
                 w_u32(&mut out, races.len() as u32);
@@ -215,6 +219,7 @@ impl Msg {
             },
             2 => {
                 let peers = c.u8()?;
+                let you = c.u8()?;
                 let map_hash = c.take32()?;
                 let seed = c.u64()?;
                 let n = c.u32()? as usize;
@@ -227,6 +232,7 @@ impl Msg {
                 }
                 Msg::Setup {
                     peers,
+                    you,
                     map_hash,
                     seed,
                     races,
@@ -659,6 +665,7 @@ pub fn udp_accept(
         setup.extend_from_slice(
             &Msg::Setup {
                 peers: 2,
+                you: 1,
                 map_hash,
                 seed,
                 races: vec![my_race, race],
@@ -689,6 +696,10 @@ pub struct Lockstep {
     pending: Vec<RecAct>,
     /// Every command committed so far, for reconnect resync and replays.
     log: Vec<crate::replay::RecCmd>,
+    /// Host: each client's commands for the current turn once received, so
+    /// a turn interrupted by a dropped peer resumes without waiting again
+    /// for messages it already read.
+    inbox: Vec<Option<Vec<RecAct>>>,
 }
 
 impl Lockstep {
@@ -700,6 +711,7 @@ impl Lockstep {
             turn: 0,
             pending: Vec::new(),
             log: Vec::new(),
+            inbox: Vec::new(),
         }
     }
 
@@ -738,6 +750,19 @@ impl Lockstep {
             world.step();
         }
         self.turn += 1;
+        self.inbox.clear();
+    }
+
+    /// Forget what a peer sent for the current turn (it rejoined and will
+    /// send the turn again on its new connection).
+    /// `inbox[0]` is the host's own commands, so peer `n` is slot `n`.
+    pub fn forget_peer_turn(&mut self, peer: u8) {
+        if peer == 0 {
+            return;
+        }
+        if let Some(slot) = self.inbox.get_mut(peer as usize) {
+            *slot = None;
+        }
     }
 
     /// The match so far, in the same format a `.gcrep` replay uses.
@@ -788,55 +813,125 @@ impl Lobby {
     }
 
     /// Wait for `peers - 1` clients, agree the setup, and hand back the
-    /// transports in join order (peer 1..N).
+    /// transports in join order (peer 1..N).  The host plays Terran.
     pub fn accept_peers(&self, peers: u8) -> io::Result<(Vec<TcpTransport>, Vec<Race>)> {
-        let mut clients = Vec::new();
-        let mut races = vec![Race::Terran];
-        for expected in 1..peers {
-            let (stream, _) = self.listener.accept()?;
-            let mut t = TcpTransport::new(stream)?;
-            match t.recv()? {
-                Msg::Join {
-                    protocol,
-                    map_hash,
-                    seed,
-                    race,
-                } => {
-                    if protocol != PROTOCOL {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "protocol mismatch",
-                        ));
-                    }
-                    if map_hash != self.map_hash {
-                        return Err(io::Error::other("map mismatch"));
-                    }
-                    if seed != self.seed {
-                        return Err(io::Error::other("seed mismatch"));
-                    }
-                    races.push(race);
-                }
-                other => {
+        let mut queue = JoinQueue::new(peers);
+        while queue.players() < peers {
+            self.poll_join(&mut queue, true)?;
+        }
+        self.start(queue, Race::Terran)
+    }
+
+    /// Accept at most one connection and validate its `Join` (protocol, map,
+    /// seed).  `block = false` returns `Ok(None)` when nobody is waiting, so a
+    /// menu can poll every frame; a full queue accepts nothing.  An invalid
+    /// `Join` is an error for that connection only: the queue is unchanged.
+    pub fn poll_join(&self, queue: &mut JoinQueue, block: bool) -> io::Result<Option<SocketAddr>> {
+        if queue.players() >= queue.capacity {
+            return Ok(None);
+        }
+        let Some((stream, addr)) = self.accept(block)? else {
+            return Ok(None);
+        };
+        let mut t = TcpTransport::new(stream)?;
+        match t.recv()? {
+            Msg::Join {
+                protocol,
+                map_hash,
+                seed,
+                race,
+            } => {
+                if protocol != PROTOCOL {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("expected Join, got {other:?}"),
+                        "protocol mismatch",
                     ));
                 }
+                if map_hash != self.map_hash {
+                    return Err(io::Error::other("map mismatch"));
+                }
+                if seed != self.seed {
+                    return Err(io::Error::other("seed mismatch"));
+                }
+                queue.joined.push((t, race, addr));
+                Ok(Some(addr))
             }
-            let _ = expected;
+            other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected Join, got {other:?}"),
+            )),
+        }
+    }
+
+    /// Close the lobby: tell every joined client the setup (each with its
+    /// own `you`) and hand back the transports (peer 1..N) and races (host
+    /// first).
+    pub fn start(
+        &self,
+        queue: JoinQueue,
+        host_race: Race,
+    ) -> io::Result<(Vec<TcpTransport>, Vec<Race>)> {
+        let mut races = vec![host_race];
+        races.extend(queue.joined.iter().map(|(_, race, _)| *race));
+        let peers = races.len() as u8;
+        let mut clients = Vec::with_capacity(queue.joined.len());
+        for (i, (mut t, _, _)) in queue.joined.into_iter().enumerate() {
+            t.send(&Msg::Setup {
+                peers,
+                you: (i + 1) as u8,
+                map_hash: self.map_hash,
+                seed: self.seed,
+                races: races.clone(),
+                ticks_per_turn: self.ticks_per_turn,
+            })?;
             clients.push(t);
         }
-        let setup = Msg::Setup {
-            peers,
-            map_hash: self.map_hash,
-            seed: self.seed,
-            races: races.clone(),
-            ticks_per_turn: self.ticks_per_turn,
-        };
-        for c in clients.iter_mut() {
-            c.send(&setup)?;
-        }
         Ok((clients, races))
+    }
+
+    fn accept(&self, block: bool) -> io::Result<Option<(TcpStream, SocketAddr)>> {
+        self.listener.set_nonblocking(!block)?;
+        let accepted = self.listener.accept();
+        self.listener.set_nonblocking(false)?;
+        match accepted {
+            Ok((stream, addr)) => {
+                stream.set_nonblocking(false)?;
+                Ok(Some((stream, addr)))
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Clients that joined a lobby and wait for the host to start (2..=8
+/// players including the host).
+pub struct JoinQueue {
+    capacity: u8,
+    joined: Vec<(TcpTransport, Race, SocketAddr)>,
+}
+
+impl JoinQueue {
+    /// `capacity` counts the host; it is clamped to 2..=8.
+    pub fn new(capacity: u8) -> Self {
+        Self {
+            capacity: capacity.clamp(2, 8),
+            joined: Vec::new(),
+        }
+    }
+
+    /// Players in the lobby, the host included.
+    pub fn players(&self) -> u8 {
+        1 + self.joined.len() as u8
+    }
+
+    pub fn capacity(&self) -> u8 {
+        self.capacity
+    }
+
+    /// Address and race of each joined client, in peer order (1..).
+    pub fn members(&self) -> Vec<(SocketAddr, Race)> {
+        self.joined.iter().map(|(_, r, a)| (*a, *r)).collect()
     }
 }
 
@@ -871,71 +966,147 @@ pub fn connect(
     Ok((t, setup))
 }
 
-/// One host turn: collect every peer's commands, broadcast the bundle, and/// compare state hashes. Returns true when a desync was detected.
+/// A client the host lost during a turn (`peer` is 1-based, the index the
+/// client has in the lockstep).
+#[derive(Debug)]
+pub struct PeerFailure {
+    pub peer: u8,
+    pub error: io::Error,
+}
+
+/// One host turn: collect every peer's commands, broadcast the bundle, and
+/// compare state hashes.  Returns true when a desync was detected.  A lost
+/// peer is an error (see [`host_turn_peers`] for which one).
 pub fn host_turn<T: Transport>(
     lock: &mut Lockstep,
     world: &mut World,
     clients: &mut [T],
     local_acts: Vec<RecAct>,
 ) -> io::Result<bool> {
+    host_turn_peers(lock, world, clients, local_acts).map_err(|f| f.error)
+}
+
+/// [`host_turn`] that names the lost peer and can be resumed.
+///
+/// * Collecting: commands already received are kept in the lockstep, so
+///   after a failure (and a rejoin, see [`try_accept_rejoin`]) the same call
+///   only waits for the peers it has not heard from; local commands given
+///   on a retry are appended to the ones the first attempt stored.  A
+///   stale `Sum` from a peer that never got the previous turn's reply is
+///   acknowledged and skipped.
+/// * Once every command is in, the turn is committed for all live peers: a
+///   peer that fails while the bundle or the hashes go round does not stop
+///   the others, and the failure is reported after the commit.
+pub fn host_turn_peers<T: Transport>(
+    lock: &mut Lockstep,
+    world: &mut World,
+    clients: &mut [T],
+    local_acts: Vec<RecAct>,
+) -> Result<bool, PeerFailure> {
     let turn = lock.turn;
-    let mut per_peer: Vec<Vec<RecAct>> = Vec::with_capacity(lock.peers as usize);
-    per_peer.push(local_acts);
+    let fail = |i: usize, error: io::Error| PeerFailure {
+        peer: (i + 1) as u8,
+        error,
+    };
+    if lock.inbox.len() != clients.len() + 1 {
+        lock.inbox = vec![None; clients.len() + 1];
+    }
+    // A retry adds the commands queued since the interrupted attempt.
+    lock.inbox[0]
+        .get_or_insert_with(Vec::new)
+        .extend(local_acts);
     for (i, c) in clients.iter_mut().enumerate() {
-        match c.recv()? {
-            Msg::Turn { turn: t, acts } => {
-                if t != turn {
-                    return Err(io::Error::other(format!(
-                        "peer {} out of order: {t} != {turn}",
-                        i + 1
-                    )));
+        while lock.inbox[i + 1].is_none() {
+            match c.recv().map_err(|e| fail(i, e))? {
+                Msg::Turn { turn: t, acts } if t == turn => lock.inbox[i + 1] = Some(acts),
+                Msg::Turn { turn: t, .. } => {
+                    return Err(fail(
+                        i,
+                        io::Error::other(format!("peer {} out of order: {t} != {turn}", i + 1)),
+                    ));
                 }
-                per_peer.push(acts);
-            }
-            Msg::Bye => return Err(io::Error::other("peer left")),
-            other => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("expected Turn, got {other:?}"),
-                ));
+                Msg::Sum { turn: t, hash } if t < turn => {
+                    c.send(&Msg::Sum { turn: t, hash })
+                        .map_err(|e| fail(i, e))?;
+                }
+                Msg::Bye => return Err(fail(i, io::Error::other("peer left"))),
+                other => {
+                    return Err(fail(
+                        i,
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("expected Turn, got {other:?}"),
+                        ),
+                    ));
+                }
             }
         }
     }
+    let per_peer: Vec<Vec<RecAct>> = lock
+        .inbox
+        .iter()
+        .map(|slot| slot.clone().unwrap_or_default())
+        .collect();
     let bundle = Msg::Bundle {
         turn,
         per_peer: per_peer.clone(),
     };
-    for c in clients.iter_mut() {
-        c.send(&bundle)?;
+    let mut lost: Option<PeerFailure> = None;
+    let mut live = vec![true; clients.len()];
+    for (i, c) in clients.iter_mut().enumerate() {
+        if let Err(e) = c.send(&bundle) {
+            live[i] = false;
+            lost.get_or_insert(fail(i, e));
+        }
     }
     lock.commit(world, &per_peer);
     let mine = crate::replay::state_hash(world);
 
-    // Hash exchange: every peer reports the hash after the same turn.
+    // Hash exchange: every live peer reports the hash after the same turn.
     let mut desync = false;
     for (i, c) in clients.iter_mut().enumerate() {
-        match c.recv()? {
-            Msg::Sum { turn: t, hash } => {
+        if !live[i] {
+            continue;
+        }
+        let reply = match c.recv() {
+            Ok(Msg::Sum { turn: t, hash }) => {
                 if t != turn || hash != mine {
                     desync = true;
-                    c.send(&Msg::Desync {
+                    Msg::Desync {
                         turn,
                         peer: (i + 1) as u8,
-                    })?;
+                    }
                 } else {
-                    c.send(&Msg::Sum { turn, hash: mine })?;
+                    Msg::Sum { turn, hash: mine }
                 }
             }
-            Msg::Bye => return Err(io::Error::other("peer left")),
-            other => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("expected Sum, got {other:?}"),
-                ));
+            Ok(Msg::Bye) => {
+                lost.get_or_insert(fail(i, io::Error::other("peer left")));
+                continue;
             }
+            Ok(other) => {
+                lost.get_or_insert(fail(
+                    i,
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("expected Sum, got {other:?}"),
+                    ),
+                ));
+                continue;
+            }
+            Err(e) => {
+                lost.get_or_insert(fail(i, e));
+                continue;
+            }
+        };
+        if let Err(e) = c.send(&reply) {
+            lost.get_or_insert(fail(i, e));
         }
     }
-    Ok(desync)
+    match lost {
+        Some(f) => Err(f),
+        None => Ok(desync),
+    }
 }
 
 /// One client turn: send local commands, apply the host bundle, report hash.
@@ -1088,18 +1259,44 @@ pub fn discover(sock: &UdpSocket, window: Duration) -> io::Result<Vec<(SocketAdd
 // ---------------------------------------------------------------------------
 
 /// Host side: accept one reconnecting peer on the lobby listener and send it
-/// the command log up to the current turn.
+/// the command log up to the current turn (blocking).
 pub fn accept_rejoin(lobby: &Lobby, lock: &Lockstep) -> io::Result<TcpTransport> {
-    let (stream, _) = lobby.listener.accept()?;
+    loop {
+        if let Some((_, t)) = try_accept_rejoin(lobby, lock, true)? {
+            return Ok(t);
+        }
+    }
+}
+
+/// [`accept_rejoin`] for a game loop: `block = false` returns `Ok(None)` when
+/// nobody is reconnecting.  On success returns the peer index the client
+/// claims (its `Rejoin`) and its new transport; the host forgets what that
+/// peer sent for the current turn, which it will send again.
+pub fn try_accept_rejoin(
+    lobby: &Lobby,
+    lock: &Lockstep,
+    block: bool,
+) -> io::Result<Option<(u8, TcpTransport)>> {
+    let Some((stream, _)) = lobby.accept(block)? else {
+        return Ok(None);
+    };
     let mut t = TcpTransport::new(stream)?;
-    match t.recv()? {
-        Msg::Rejoin { map_hash, seed, .. } => {
+    let peer = match t.recv()? {
+        Msg::Rejoin {
+            peer,
+            map_hash,
+            seed,
+        } => {
             if map_hash != lobby.map_hash {
                 return Err(io::Error::other("rejoin map mismatch"));
             }
             if seed != lobby.seed {
                 return Err(io::Error::other("rejoin seed mismatch"));
             }
+            if peer == 0 || peer >= lock.peers {
+                return Err(io::Error::other(format!("rejoin from unknown peer {peer}")));
+            }
+            peer
         }
         other => {
             return Err(io::Error::new(
@@ -1107,13 +1304,17 @@ pub fn accept_rejoin(lobby: &Lobby, lock: &Lockstep) -> io::Result<TcpTransport>
                 format!("expected Rejoin, got {other:?}"),
             ));
         }
-    }
+    };
     t.send(&Msg::Resync {
         turn: lock.turn,
         log: lock.recording().to_bytes(),
     })?;
-    Ok(t)
+    Ok(Some((peer, t)))
 }
+
+/// How long one reconnect attempt waits for the host to answer the TCP
+/// handshake.
+pub const REJOIN_CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Client side: ask to rejoin and receive the log. The caller rebuilds the
 /// world from its own map copy and calls [`apply_resync`].
@@ -1123,7 +1324,11 @@ pub fn request_resync(
     seed: u64,
     peer: u8,
 ) -> io::Result<(TcpTransport, u32, crate::replay::Recording)> {
-    let stream = TcpStream::connect(addr)?;
+    let target = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no address"))?;
+    let stream = TcpStream::connect_timeout(&target, REJOIN_CONNECT_TIMEOUT)?;
     let mut t = TcpTransport::new(stream)?;
     t.send(&Msg::Rejoin {
         peer,
@@ -1140,6 +1345,97 @@ pub fn request_resync(
             io::ErrorKind::InvalidData,
             format!("expected Resync, got {other:?}"),
         )),
+    }
+}
+
+/// Exponential reconnect schedule: attempt `n` (0-based) waits
+/// `min(base * 2^n, max)` after the previous failure, for at most
+/// `attempts` attempts.  Pure (the caller passes the clock), so a game loop
+/// can poll [`Backoff::due`] every frame instead of sleeping.
+#[derive(Clone, Debug)]
+pub struct Backoff {
+    base: Duration,
+    max: Duration,
+    attempts: u32,
+    failures: u32,
+    next_at: Instant,
+}
+
+impl Backoff {
+    /// Defaults for a dropped LAN peer: 250 ms doubling to 4 s, 8 attempts
+    /// (about 17 s in all).
+    pub fn lan(now: Instant) -> Self {
+        Self::new(Duration::from_millis(250), Duration::from_secs(4), 8, now)
+    }
+
+    /// The first attempt is due immediately.
+    pub fn new(base: Duration, max: Duration, attempts: u32, now: Instant) -> Self {
+        Self {
+            base,
+            max,
+            attempts: attempts.max(1),
+            failures: 0,
+            next_at: now,
+        }
+    }
+
+    /// Wait before attempt `n + 1` after `n + 1` failures.
+    pub fn delay(&self, failures: u32) -> Duration {
+        let factor = 1u32
+            .checked_shl(failures.saturating_sub(1))
+            .unwrap_or(u32::MAX);
+        self.base.saturating_mul(factor).min(self.max)
+    }
+
+    pub fn due(&self, now: Instant) -> bool {
+        !self.exhausted() && now >= self.next_at
+    }
+
+    /// Record a failed attempt at `now`; `false` once no attempt is left.
+    pub fn fail(&mut self, now: Instant) -> bool {
+        self.failures += 1;
+        self.next_at = now + self.delay(self.failures);
+        !self.exhausted()
+    }
+
+    pub fn exhausted(&self) -> bool {
+        self.failures >= self.attempts
+    }
+
+    pub fn failures(&self) -> u32 {
+        self.failures
+    }
+
+    pub fn next_at(&self) -> Instant {
+        self.next_at
+    }
+}
+
+/// Blocking [`request_resync`] retried on the [`Backoff`] schedule (tools and
+/// tests; the client polls the same schedule from its frame loop).
+pub fn rejoin_with_backoff(
+    addr: &str,
+    map_hash: [u8; 32],
+    seed: u64,
+    peer: u8,
+    backoff: &mut Backoff,
+) -> io::Result<(TcpTransport, u32, crate::replay::Recording)> {
+    loop {
+        let now = Instant::now();
+        if now < backoff.next_at() {
+            std::thread::sleep(backoff.next_at() - now);
+        }
+        match request_resync(addr, map_hash, seed, peer) {
+            Ok(done) => return Ok(done),
+            Err(e) => {
+                if !backoff.fail(Instant::now()) {
+                    return Err(io::Error::new(
+                        e.kind(),
+                        format!("gave up after {} attempts: {e}", backoff.failures()),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -1166,6 +1462,41 @@ mod tests {
     use crate::sim::Order;
 
     #[test]
+    fn backoff_doubles_to_its_cap_and_gives_up() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut b = Backoff::new(ms(250), Duration::from_secs(4), 8, t0);
+        assert!(b.due(t0), "the first attempt is immediate");
+        let delays: Vec<Duration> = (1..=8).map(|n| b.delay(n)).collect();
+        assert_eq!(
+            delays,
+            [250, 500, 1000, 2000, 4000, 4000, 4000, 4000]
+                .map(ms)
+                .to_vec()
+        );
+        assert!(b.fail(t0));
+        assert!(!b.due(t0 + ms(249)));
+        assert!(b.due(t0 + ms(250)));
+        for _ in 2..8 {
+            assert!(b.fail(t0));
+        }
+        assert!(!b.fail(t0), "the eighth failure is the last");
+        assert!(b.exhausted() && !b.due(t0 + Duration::from_secs(60)));
+        assert_eq!(b.failures(), 8);
+        // Huge failure counts saturate instead of overflowing.
+        assert_eq!(b.delay(200), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn a_lobby_holds_two_to_eight_players() {
+        assert_eq!(JoinQueue::new(1).capacity(), 2);
+        assert_eq!(JoinQueue::new(12).capacity(), 8);
+        let q = JoinQueue::new(4);
+        assert_eq!((q.players(), q.capacity()), (1, 4));
+        assert!(q.members().is_empty());
+    }
+
+    #[test]
     fn every_message_roundtrips() {
         let acts = vec![
             RecAct::Issue {
@@ -1185,10 +1516,11 @@ mod tests {
                 race: Race::Zerg,
             },
             Msg::Setup {
-                peers: 2,
+                peers: 3,
+                you: 2,
                 map_hash: [9u8; 32],
                 seed: 42,
-                races: vec![Race::Terran, Race::Zerg],
+                races: vec![Race::Terran, Race::Zerg, Race::Protoss],
                 ticks_per_turn: 4,
             },
             Msg::Turn {

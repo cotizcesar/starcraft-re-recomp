@@ -504,6 +504,36 @@ impl RetailInstall {
             .ok_or_else(|| RetailError::Missing(format!("{}: scenario.chk", map.path.display())))
     }
 
+    /// The sound files an MPQ map's triggers can name: every `STR` string
+    /// ending in `.wav` that the archive contains, as `(file name, bytes)`
+    /// (lower-cased name, de-duplicated).
+    pub fn map_sounds(&self, map: &RetailMap, chk: &[u8]) -> Vec<(String, Vec<u8>)> {
+        let Ok(scenario) = crate::map::Scenario::parse(chk) else {
+            return Vec::new();
+        };
+        let Ok(archive) = MpqArchive::open(&map.path) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+        for s in &scenario.strings {
+            let s = s.trim();
+            if !s.to_ascii_lowercase().ends_with(".wav") {
+                continue;
+            }
+            let Some(stem) = crate::transmission::wav_stem(s) else {
+                continue;
+            };
+            let name = format!("{stem}.wav");
+            if out.iter().any(|(n, _)| *n == name) {
+                continue;
+            }
+            if let Some(bytes) = archive.read_file(s) {
+                out.push((name, bytes));
+            }
+        }
+        out
+    }
+
     /// Load the rules tables, scripts and string table from CASC.
     pub fn game_data(&self) -> Result<crate::data::GameData> {
         let read = |p: &str| {
@@ -548,7 +578,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v15 (creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v16 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -682,6 +712,14 @@ impl RetailInstall {
                     write_file(&out, &chk)?;
                     report.maps += 1;
                     report.bytes += chk.len() as u64;
+                    // Trigger sounds (Transmission / Play WAV) stored in the
+                    // archive, beside the cached CHK.
+                    for (name, bytes) in self.map_sounds(&map, &chk) {
+                        let dst = crate::transmission::map_wav_dir(&out).join(name);
+                        write_file(&dst, &bytes)?;
+                        report.files += 1;
+                        report.bytes += bytes.len() as u64;
+                    }
                 }
                 Err(e) => return Err(RetailError::Format(format!("{}: {e}", map.path.display()))),
             }
@@ -705,6 +743,30 @@ impl RetailInstall {
                 write_file(&out, &raw)?;
                 report.campaign_maps += 1;
                 report.bytes += raw.len() as u64;
+                // Trigger sounds: the original `.wav` beside the `sd/` CHK and
+                // the Remastered voice-over `.ogg` of `locales/enus/`.
+                let wav_dir = crate::transmission::map_wav_dir(&out);
+                let sd_dir = mission
+                    .chk_path
+                    .strip_suffix("scenario.chk")
+                    .map(|d| format!("{d}wav/"));
+                let enus_dir = format!(
+                    "locales/enus/assets/campaign/{}/{}/staredit/wav/",
+                    episode.key, mission.key
+                );
+                for (dir, ext) in [(sd_dir, ".wav"), (Some(enus_dir), ".ogg")] {
+                    let Some(dir) = dir else { continue };
+                    for src in self.list(&dir, ext) {
+                        let Some(name) = src.rsplit('/').next() else {
+                            continue;
+                        };
+                        if let Ok(bytes) = self.read_by_path(&src) {
+                            write_file(&wav_dir.join(name), &bytes)?;
+                            report.files += 1;
+                            report.bytes += bytes.len() as u64;
+                        }
+                    }
+                }
 
                 let mut briefing_rel = String::new();
                 let mut background_rel = String::new();
@@ -1886,6 +1948,192 @@ fn mpq_decrypt(data: &mut [u8], key: u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Origin manifest: every materialised file back to its CASC / MPQ source
+// ---------------------------------------------------------------------------
+
+/// Where one materialised file came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// Byte-identical to these CASC ROOT paths (its MD5 is their CKey).
+    Casc(Vec<String>),
+    /// A member of an MPQ map archive (archive path relative to the
+    /// install, member name), byte-identical: its `staredit\scenario.chk`
+    /// or a trigger sound.
+    Mpq {
+        archive: String,
+        member: String,
+    },
+    /// Computed from a CASC file (the transformation is named).
+    Derived(String),
+    /// Index written by `materialize` itself (no retail bytes).
+    Generated,
+    Unknown,
+}
+
+/// One row of [`RetailInstall::origin_manifest`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriginRow {
+    /// Path relative to the materialised directory, `/`-separated.
+    pub rel: String,
+    pub size: u64,
+    pub sha256: String,
+    pub origin: Origin,
+}
+
+impl OriginRow {
+    /// `rel  size  sha256  kind  source` (tab-separated).
+    pub fn tsv(&self) -> String {
+        let (kind, source) = match &self.origin {
+            Origin::Casc(paths) => ("casc", paths.join(" | ")),
+            Origin::Mpq { archive, member } => ("mpq", format!("{archive}:{member}")),
+            Origin::Derived(how) => ("derived", how.clone()),
+            Origin::Generated => ("generated", String::new()),
+            Origin::Unknown => ("unknown", String::new()),
+        };
+        format!(
+            "{}\t{}\t{}\t{kind}\t{source}",
+            self.rel, self.size, self.sha256
+        )
+    }
+}
+
+/// Header of [`OriginRow::tsv`].
+pub const ORIGIN_TSV_HEADER: &str = "rel\tsize\tsha256\tkind\tsource";
+
+impl RetailInstall {
+    /// Attribute every file under `dir` (a `materialize` output) to its
+    /// source.  CASC is content-addressed (ROOT path → CKey = MD5 of the
+    /// content), so an MD5 match is proof of origin, not a name guess; MPQ
+    /// maps are matched by the SHA-256 of their extracted `scenario.chk`.
+    pub fn origin_manifest(&self, dir: &Path) -> Result<Vec<OriginRow>> {
+        let mut by_ckey: HashMap<[u8; 16], Vec<String>> = HashMap::new();
+        for (path, ckey) in &self.paths {
+            by_ckey.entry(*ckey).or_default().push(path.clone());
+        }
+        for paths in by_ckey.values_mut() {
+            paths.sort();
+        }
+        let mut maps: HashMap<String, (String, String)> = HashMap::new();
+        for map in self.maps() {
+            if let Ok(chk) = self.read_map(&map) {
+                let rel = map.path.strip_prefix(&self.root).unwrap_or(&map.path);
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                for (name, bytes) in self.map_sounds(&map, &chk) {
+                    maps.entry(sha256_hex(&bytes))
+                        .or_insert_with(|| (rel.clone(), format!("staredit\\wav\\{name}")));
+                }
+                maps.entry(sha256_hex(&chk))
+                    .or_insert_with(|| (rel, "staredit\\scenario.chk".into()));
+            }
+        }
+        let palette = self.read("game/tunit.pcx").and_then(|p| pcx_palette(&p));
+        let mut files = Vec::new();
+        walk(dir, &mut |p| files.push(p.to_path_buf()));
+        files.sort();
+        let mut rows = Vec::new();
+        for path in files {
+            let rel = path
+                .strip_prefix(dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if rel == ".complete" {
+                continue;
+            }
+            let bytes = fs::read(&path)?;
+            let sha = sha256_hex(&bytes);
+            let origin = if let Some(paths) = by_ckey.get(&md5(&bytes)) {
+                Origin::Casc(paths.clone())
+            } else if let Some((archive, member)) = maps.get(&sha) {
+                Origin::Mpq {
+                    archive: archive.clone(),
+                    member: member.clone(),
+                }
+            } else if palette.as_deref() == Some(bytes.as_slice()) {
+                Origin::Derived("game/tunit.pcx: trailing 256-colour PCX palette".into())
+            } else if rel.ends_with("manifest.tsv") || rel == "voices/index.tsv" {
+                Origin::Generated
+            } else {
+                Origin::Unknown
+            };
+            rows.push(OriginRow {
+                rel,
+                size: bytes.len() as u64,
+                sha256: sha,
+                origin,
+            });
+        }
+        Ok(rows)
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// MD5 (RFC 1321): the CASC content key of a file.
+pub fn md5(data: &[u8]) -> [u8; 16] {
+    const S: [u32; 64] = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    ];
+    // K[i] = floor(abs(sin(i + 1)) * 2^32).
+    let k: Vec<u32> = (0..64)
+        .map(|i| ((i as f64 + 1.0).sin().abs() * 4_294_967_296.0) as u32)
+        .collect();
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_le_bytes());
+    let mut h: [u32; 4] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
+    for block in msg.as_chunks::<64>().0 {
+        let m: Vec<u32> = block
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|w| u32::from_le_bytes(*w))
+            .collect();
+        let [mut a, mut b, mut c, mut d] = h;
+        for i in 0..64 {
+            let (f, g) = match i / 16 {
+                0 => ((b & c) | (!b & d), i),
+                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                _ => (c ^ (b | !d), (7 * i) % 16),
+            };
+            let rotated = a
+                .wrapping_add(f)
+                .wrapping_add(k[i])
+                .wrapping_add(m[g])
+                .rotate_left(S[i]);
+            a = d;
+            d = c;
+            c = b;
+            b = b.wrapping_add(rotated);
+        }
+        h = [
+            h[0].wrapping_add(a),
+            h[1].wrapping_add(b),
+            h[2].wrapping_add(c),
+            h[3].wrapping_add(d),
+        ];
+    }
+    let mut out = [0u8; 16];
+    for (i, word) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1965,6 +2213,56 @@ fn pcx_palette(bytes: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn md5_matches_the_rfc_1321_test_suite() {
+        let hex = |d: [u8; 16]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let cases: [(&str, &str); 7] = [
+            ("", "d41d8cd98f00b204e9800998ecf8427e"),
+            ("a", "0cc175b9c0f1b6a831c399e269772661"),
+            ("abc", "900150983cd24fb0d6963f7d28e17f72"),
+            ("message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
+            (
+                "abcdefghijklmnopqrstuvwxyz",
+                "c3fcd3d76192e4007dfb496cca67e13b",
+            ),
+            (
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                "d174ab98d277d9f5a5611c2c9f419d9f",
+            ),
+            (
+                "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                "57edf4a22be3c955ac49da2e2107b67a",
+            ),
+        ];
+        for (input, want) in cases {
+            assert_eq!(hex(super::md5(input.as_bytes())), want, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn origin_rows_render_as_tsv() {
+        use super::{Origin, OriginRow};
+        let row = |origin| OriginRow {
+            rel: "sound/x.wav".into(),
+            size: 3,
+            sha256: "ab".into(),
+            origin,
+        };
+        assert_eq!(
+            row(Origin::Casc(vec!["a/b.wav".into(), "c.wav".into()])).tsv(),
+            "sound/x.wav\t3\tab\tcasc\ta/b.wav | c.wav"
+        );
+        assert_eq!(
+            row(Origin::Mpq {
+                archive: "Maps/(2)Boxer.scm".into(),
+                member: "staredit\\scenario.chk".into()
+            })
+            .tsv(),
+            "sound/x.wav\t3\tab\tmpq\tMaps/(2)Boxer.scm:staredit\\scenario.chk"
+        );
+        assert!(row(Origin::Unknown).tsv().ends_with("\tunknown\t"));
+    }
 
     fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
         move |k: &str| {

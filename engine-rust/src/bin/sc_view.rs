@@ -44,8 +44,8 @@ use galaxycraft::ids::unit as uid;
 use galaxycraft::map::{scenario_file_key, PlayerSlot, Scenario};
 use galaxycraft::menu::{GameMenuItem, GameOptions, HotkeyRace, LobbyRace, MenuScreen, OptionsTab};
 use galaxycraft::net::{
-    announcer, broadcast, client_turn, discover, discovery_socket, host_turn, Announce, Lobby,
-    Lockstep, Msg, TcpTransport, Transport, DEFAULT_TICKS_PER_TURN,
+    announcer, broadcast, client_turn, discover, discovery_socket, Announce, Lobby, Lockstep, Msg,
+    TcpTransport, DEFAULT_TICKS_PER_TURN,
 };
 use galaxycraft::render::{
     asset_root, draw_unit_box, era_name, Framebuffer, Rgb, SpriteBank, Tileset, TILE_PX,
@@ -328,7 +328,24 @@ struct NetSession {
     peers: Vec<TcpTransport>,
     desync: bool,
     last_hash: u64,
+    /// The match setup, to rebuild the world after a reconnect.
+    save: SaveFile,
+    map_hash: [u8; 32],
+    /// Host: the lobby listener stays open for rejoins.
+    lobby: Option<Lobby>,
+    /// Client: where the host listens.
+    host_addr: String,
+    /// Host: a dropped peer and when to stop waiting for it.
+    waiting: Option<(u8, Instant)>,
+    /// Client: reconnect schedule while the host is unreachable.
+    reconnect: Option<galaxycraft::net::Backoff>,
 }
+
+/// How long a host keeps the match paused for a dropped peer.
+const REJOIN_WAIT: Duration = Duration::from_secs(30);
+/// In-match read timeout: longer than [`REJOIN_WAIT`], so peers that stay
+/// connected do not give up on a host that is waiting for someone else.
+const NET_READ_TIMEOUT: Duration = Duration::from_secs(40);
 
 /// Remastered main-menu art layers, decoded from the player's own install.
 ///
@@ -712,8 +729,8 @@ struct LanUi {
     entries: Vec<(std::net::SocketAddr, Announce)>,
     sel: usize,
     status: String,
-    /// Pending client that has said `Join` but not been answered yet.
-    pending: Option<TcpTransport>,
+    /// Clients that joined the hosted lobby (host side).
+    queue: Option<galaxycraft::net::JoinQueue>,
     announce_sock: Option<std::net::UdpSocket>,
     last_announce: Instant,
     /// Map the local player wants to play (index into `maps`).
@@ -727,7 +744,7 @@ impl Default for LanUi {
             entries: Vec::new(),
             sel: 0,
             status: "S: scan   H: host".to_string(),
-            pending: None,
+            queue: None,
             announce_sock: None,
             last_announce: Instant::now() - Duration::from_secs(5),
             map_index: 0,
@@ -975,6 +992,12 @@ struct App {
     /// Trigger Transmission / Talking Portrait records already shown
     /// (indices into the trigger VM's lists).
     trigger_portraits_seen: (usize, usize),
+    /// Trigger cues (Transmission / Play WAV / Display Text) already
+    /// handled: an index into the trigger VM's `cues`.
+    trigger_cues_seen: usize,
+    /// Trigger text above the console and its clock.
+    trigger_text: galaxycraft::transmission::TextLog,
+    trigger_text_epoch: Instant,
     portrait_epoch: Instant,
     /// Colour the local player was given (retail randomizes melee colours);
     /// `None` = the slot's default colour.
@@ -2965,6 +2988,25 @@ fn latest_trigger_portrait(
     (latest, (transmissions.len(), talking.len()))
 }
 
+/// Hosted LAN lobby rows: a header, then one row per seat (the host first,
+/// joined clients in peer order, open seats last).
+fn lan_lobby_lines(queue: &galaxycraft::net::JoinQueue, host_race: Race) -> Vec<String> {
+    let race = |r: Race| format!("{r:?}");
+    let mut out = vec![format!(
+        "Lobby {}/{} players - ENTER starts",
+        queue.players(),
+        queue.capacity()
+    )];
+    out.push(format!("  1. You (host) - {}", race(host_race)));
+    for (i, (addr, r)) in queue.members().iter().enumerate() {
+        out.push(format!("  {}. {} - {}", i + 2, addr.ip(), race(*r)));
+    }
+    for seat in queue.players()..queue.capacity() {
+        out.push(format!("  {}. (open)", seat + 1));
+    }
+    out
+}
+
 /// A small window with `lines` of text, open until it is closed or Escape
 /// is pressed (used when no game data can be found).
 fn show_message_window(lines: &[&str]) {
@@ -3815,13 +3857,46 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     app.set_progress(p);
                 }
             }
-        } else if step == "fixture:lan-peer" {
+        } else if let Some(ms) = step.strip_prefix("wait:") {
+            // Real time passes (network peers can act): keep updating, as
+            // the frame loop would, for `ms` milliseconds.
+            let until = Instant::now() + Duration::from_millis(ms.parse().unwrap_or(0));
+            while Instant::now() < until {
+                app.update();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        } else if let Some(n) = step.strip_prefix("fixture:lan-map:") {
+            // Host on the first retail `(n)` melee map (campaign missions
+            // count computer slots, so the name prefix is the seat count).
+            let want: usize = n.parse().unwrap_or(2);
+            let prefix = format!("({want})");
+            if let Some(i) = (app.campaign_len..app.maps.len())
+                .find(|&i| app.maps[i].name.starts_with(&prefix) && app.maps[i].players >= want)
+            {
+                app.lan.map_index = i;
+            }
+        } else if step == "fixture:lan-peer" || step.starts_with("fixture:lan-peer:") {
             // Walkthrough fixture: inject one discovered peer so the LAN row
             // action (select + join) can be exercised without a second host.
+            // `fixture:lan-peer:PORT` announces a real local host on PORT
+            // with the selected map's hash (end-to-end join tests).
+            let port = step
+                .strip_prefix("fixture:lan-peer:")
+                .and_then(|p| p.parse().ok());
+            let map_hash = port
+                .and_then(|_| app.maps.get(app.lan.map_index))
+                .and_then(|m| std::fs::read(&m.path).ok())
+                .map(|raw| {
+                    let mut h = [0u8; 32];
+                    h.copy_from_slice(&Sha256::digest(&raw));
+                    h
+                })
+                .unwrap_or([0u8; 32]);
+            let port = port.unwrap_or(6112);
             let announce = galaxycraft::net::Announce {
                 name: format!("Peer{}", app.lan.entries.len() + 1),
-                map_hash: [0u8; 32],
-                port: 6112,
+                map_hash,
+                port,
                 players: 1,
                 started: false,
             };
@@ -3944,9 +4019,29 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 app.active_name()
             ),
             MenuScreen::Lan => format!(
-                "lan_sel={} entries={} status={}",
+                "lan_sel={} entries={} lobby={} net={} map={} status={}",
                 app.lan.sel,
                 app.lan.entries.len(),
+                app.lan
+                    .queue
+                    .as_ref()
+                    .map(|q| format!("{}/{}", q.players(), q.capacity()))
+                    .unwrap_or_default(),
+                app.net
+                    .as_ref()
+                    .map(|n| format!(
+                        "turn:{}/peers:{}/waiting:{:?}/reconnect:{:?}/last:{}",
+                        n.lock.turn,
+                        n.lock.peers,
+                        n.waiting.map(|w| w.0),
+                        n.reconnect.as_ref().map(|b| b.failures()),
+                        app.status
+                    ))
+                    .unwrap_or_default(),
+                app.maps
+                    .get(app.lan.map_index)
+                    .map(|m| m.path.display().to_string())
+                    .unwrap_or_default(),
                 app.lan.status
             ),
             _ => String::new(),
@@ -4480,6 +4575,9 @@ fn main() {
         portrait_talk: None,
         portrait_talk_started: false,
         trigger_portraits_seen: (0, 0),
+        trigger_cues_seen: 0,
+        trigger_text: Default::default(),
+        trigger_text_epoch: Instant::now(),
         portrait_epoch: Instant::now(),
         portrait_pick: None,
         unit_poses: Default::default(),
@@ -4638,6 +4736,35 @@ fn main() {
                 app.draw(&mut fb);
             }
             // Plain in-game frame with units selected: no dialog overlays.
+            // Trigger transmission end to end: 1. Wasteland runs until its
+            // first trigger text and sounds, through the client's own cue
+            // handling (text above the console, map WAV resolved + decoded).
+            "ingame-transmission" => {
+                if let Some(index) = app.campaign_map_index(2) {
+                    app.map_index = index;
+                }
+                app.load_map(app.map_index);
+                app.prepare_ingame_shot(&fb);
+                let (mut lines, mut sounds) = (0, Vec::new());
+                for _ in 0..24 * 90 {
+                    app.world.step();
+                    let (l, s) = app.follow_trigger_cues();
+                    lines += l;
+                    sounds.extend(s);
+                    if lines > 0 && !sounds.is_empty() {
+                        break;
+                    }
+                }
+                eprintln!(
+                    "transmission: tick {} map {} text lines {lines} sounds {sounds:?}",
+                    app.world.tick,
+                    app.maps
+                        .get(app.map_index)
+                        .map(|m| m.name.as_str())
+                        .unwrap_or("?")
+                );
+                app.draw(&mut fb);
+            }
             "ingame" => {
                 app.load_map(app.map_index);
                 app.prepare_ingame_shot(&fb);
@@ -5336,6 +5463,69 @@ impl App {
         }
     }
 
+    /// Show and play the trigger cues of the local player that ran since the
+    /// last frame: Transmission and Display Text lines (gated by the
+    /// Subtitles option unless the action says "always display") and the
+    /// map WAV of Transmission / Play WAV.
+    /// Returns `(text lines added, sound files played)`.
+    fn follow_trigger_cues(&mut self) -> (usize, Vec<PathBuf>) {
+        use galaxycraft::trigger::TriggerCue;
+        let mut done = (0, Vec::new());
+        let Some(t) = self.world.triggers.as_ref() else {
+            return done;
+        };
+        let from = if self.trigger_cues_seen > t.cues.len() {
+            0
+        } else {
+            self.trigger_cues_seen
+        };
+        let new: Vec<TriggerCue> = t.cues[from..]
+            .iter()
+            .copied()
+            .filter(|c| c.player() == self.local_player)
+            .collect();
+        self.trigger_cues_seen = t.cues.len();
+        let now = self.trigger_text_epoch.elapsed().as_millis() as u64;
+        for cue in new {
+            match cue {
+                TriggerCue::Text {
+                    string, always, ms, ..
+                } => {
+                    if !(always || self.game_options.subtitles) {
+                        continue;
+                    }
+                    if let Some(raw) = self.scenario.string(string) {
+                        let life = (ms as u64).max(galaxycraft::transmission::TEXT_MS);
+                        self.trigger_text.push(raw, now, life);
+                        done.0 += galaxycraft::transmission::clean_lines(raw).len();
+                    }
+                }
+                TriggerCue::Wav { string, .. } => {
+                    let path = self
+                        .scenario
+                        .string(string)
+                        .zip(self.maps.get(self.map_index))
+                        .and_then(|(raw, map)| {
+                            galaxycraft::transmission::find_map_wav(
+                                &map.path,
+                                raw,
+                                self.game_options.original_voice_overs,
+                            )
+                        });
+                    let samples = path
+                        .as_ref()
+                        .and_then(|p| std::fs::read(p).ok())
+                        .and_then(|bytes| galaxycraft::audio::decode_sound(&bytes));
+                    if let (Some(path), Some(samples)) = (path, samples) {
+                        self.audio.play(Some(&samples));
+                        done.1.push(path);
+                    }
+                }
+            }
+        }
+        done
+    }
+
     /// Unit whose portrait the HUD shows: the one talking for a trigger, else
     /// the first selected unit.
     fn portrait_unit(&self) -> Option<u16> {
@@ -5785,6 +5975,8 @@ impl App {
         world.recorder = Some(Recorder::new());
         self.world = world;
         self.trigger_portraits_seen = (0, 0);
+        self.trigger_cues_seen = 0;
+        self.trigger_text.clear();
         self.replay = None;
         self.save_sel = 0;
         self.map_index = index;
@@ -6032,6 +6224,8 @@ impl App {
         self.console = ConsoleArt::load(&self.assets_root, self.console_race);
         self.world = world;
         self.trigger_portraits_seen = (0, 0);
+        self.trigger_cues_seen = 0;
+        self.trigger_text.clear();
         self.menu = false;
         self.briefing = false;
         self.paused = false;
@@ -6122,7 +6316,8 @@ impl App {
         }
     }
 
-    /// Start hosting: bind the lobby, announce it, and wait for one peer.
+    /// Start hosting: bind the lobby and announce it.  The lobby holds as
+    /// many players as the map has start locations (2..=8).
     fn lan_host(&mut self) {
         let entry = match self.maps.get(self.lan.map_index) {
             Some(e) => e.clone(),
@@ -6139,78 +6334,94 @@ impl App {
         map_hash.copy_from_slice(&Sha256::digest(&raw));
         match Lobby::bind("0.0.0.0:7777", map_hash, galaxycraft::net::WORLD_SEED) {
             Ok(l) => {
+                let queue = galaxycraft::net::JoinQueue::new(entry.players.clamp(2, 8) as u8);
+                self.lan.status = format!(
+                    "hosting {} on :7777 - 1/{} players",
+                    entry.name,
+                    queue.capacity()
+                );
                 self.lan.listener = Some(l);
+                self.lan.queue = Some(queue);
                 self.lan.announce_sock = announcer().ok();
                 self.lan.last_announce = Instant::now() - Duration::from_secs(5);
-                self.lan.pending = None;
-                self.lan.status = format!("hosting {} on :7777 - waiting for a peer", entry.name);
             }
             Err(e) => self.lan.status = format!("cannot host: {e}"),
         }
     }
 
-    /// While hosting: keep announcing and accept the first peer that joins.
+    /// While hosting: keep announcing, take joins without blocking, and
+    /// start when the lobby is full.
     fn lan_poll_host(&mut self) {
-        let Some(lobby) = self.lan.listener.as_ref() else {
+        let (Some(lobby), Some(queue)) = (self.lan.listener.as_ref(), self.lan.queue.as_mut())
+        else {
             return;
         };
-        let me = self.menu_race;
-        let map_hash = lobby.map_hash;
-        let name = self
-            .maps
-            .get(self.lan.map_index)
-            .map(|m| m.name.clone())
-            .unwrap_or_default();
-
         if self.lan.last_announce.elapsed() >= Duration::from_secs(1) {
             if let Some(sock) = self.lan.announce_sock.as_ref() {
                 let a = Announce {
-                    name,
-                    map_hash,
+                    name: self
+                        .maps
+                        .get(self.lan.map_index)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_default(),
+                    map_hash: lobby.map_hash,
                     port: 7777,
-                    players: 2,
+                    players: queue.players(),
                     started: false,
                 };
                 let _ = broadcast(sock, &a);
             }
             self.lan.last_announce = Instant::now();
         }
-
-        // Non-blocking accept so the menu keeps drawing.
-        let _ = lobby.listener.set_nonblocking(true);
-        let accepted = lobby.listener.accept();
-        let _ = lobby.listener.set_nonblocking(false);
-        let Ok((stream, addr)) = accepted else {
-            return;
-        };
-        let Ok(mut t) = TcpTransport::new(stream) else {
-            return;
-        };
-        let _ = t.stream_timeout(Duration::from_millis(750));
-        match t.recv() {
-            Ok(Msg::Join {
-                map_hash: m, race, ..
-            }) if m == map_hash => {
-                let setup = Msg::Setup {
-                    peers: 2,
-                    map_hash,
-                    seed: galaxycraft::net::WORLD_SEED,
-                    races: vec![me, race],
-                    ticks_per_turn: DEFAULT_TICKS_PER_TURN,
-                };
-                if t.send(&setup).is_err() {
-                    self.lan.status = "handshake failed".to_string();
-                    return;
-                }
-                let index = self.lan.map_index;
-                self.lan.listener = None;
-                self.lan.announce_sock = None;
-                if self.start_net_match(NetRole::Host, t, vec![me, race], index) {
-                    self.lan.status = format!("match started with {addr}");
+        match lobby.poll_join(queue, false) {
+            Ok(Some(addr)) => {
+                self.lan.status = format!(
+                    "{addr} joined - {}/{} players (ENTER: start)",
+                    queue.players(),
+                    queue.capacity()
+                );
+                if queue.players() == queue.capacity() {
+                    self.lan_start_hosted();
                 }
             }
-            Ok(_) => self.lan.status = "peer map mismatch".to_string(),
-            Err(e) => self.lan.status = format!("handshake error: {e}"),
+            Ok(None) => {}
+            Err(e) => self.lan.status = format!("join refused: {e}"),
+        }
+    }
+
+    /// Close the hosted lobby and start the match with everyone in it.
+    fn lan_start_hosted(&mut self) {
+        let Some(queue) = self.lan.queue.take() else {
+            return;
+        };
+        if queue.players() < 2 {
+            self.lan.status = "need at least one other player".to_string();
+            self.lan.queue = Some(queue);
+            return;
+        }
+        let Some(lobby) = self.lan.listener.take() else {
+            return;
+        };
+        self.lan.announce_sock = None;
+        let players = queue.players();
+        match lobby.start(queue, self.menu_race) {
+            Ok((clients, races)) => {
+                let index = self.lan.map_index;
+                let map_hash = lobby.map_hash;
+                if self.start_net_match(
+                    NetRole::Host,
+                    clients,
+                    races,
+                    index,
+                    0,
+                    map_hash,
+                    Some(lobby),
+                    String::new(),
+                ) {
+                    self.lan.status = format!("match started with {players} players");
+                }
+            }
+            Err(e) => self.lan.status = format!("start failed: {e}"),
         }
     }
 
@@ -6219,13 +6430,14 @@ impl App {
         let Some((addr, announce)) = self.lan.entries.get(self.lan.sel).cloned() else {
             return;
         };
+        let host_addr = format!("{}:{}", addr.ip(), announce.port);
         match galaxycraft::net::connect(
-            &format!("{}:{}", addr.ip(), announce.port),
+            &host_addr,
             announce.map_hash,
             galaxycraft::net::WORLD_SEED,
             self.menu_race,
         ) {
-            Ok((t, Msg::Setup { races, .. })) => {
+            Ok((t, Msg::Setup { races, you, .. })) => {
                 // The host decides the map and races; find it by hash.
                 let index = self
                     .maps
@@ -6240,8 +6452,17 @@ impl App {
                             .unwrap_or(false)
                     })
                     .unwrap_or(self.lan.map_index);
-                if self.start_net_match(NetRole::Client, t, races, index) {
-                    self.lan.status = format!("joined {addr}");
+                if self.start_net_match(
+                    NetRole::Client,
+                    vec![t],
+                    races,
+                    index,
+                    you,
+                    announce.map_hash,
+                    None,
+                    host_addr,
+                ) {
+                    self.lan.status = format!("joined {addr} as player {}", you + 1);
                 }
             }
             Ok((_, other)) => self.lan.status = format!("unexpected: {other:?}"),
@@ -6250,12 +6471,17 @@ impl App {
     }
 
     /// Build the world for a networked match and switch into lockstep.
+    #[allow(clippy::too_many_arguments)]
     fn start_net_match(
         &mut self,
         role: NetRole,
-        peer: TcpTransport,
+        mut peers: Vec<TcpTransport>,
         races: Vec<Race>,
         map_index: usize,
+        local: u8,
+        map_hash: [u8; 32],
+        lobby: Option<Lobby>,
+        host_addr: String,
     ) -> bool {
         let Some(entry) = self.maps.get(map_index).cloned() else {
             self.lan.status = "no map selected".to_string();
@@ -6268,17 +6494,19 @@ impl App {
                 return false;
             }
         };
-        let local = if role == NetRole::Host { 0 } else { 1 };
         let save = SaveFile {
             map_name: entry.name.clone(),
             map_chk: raw,
             races: races.clone(),
-            local_player: local,
+            local_player: local as usize,
             tick: 0,
             rec: Recording::new(galaxycraft::net::WORLD_SEED, [0u8; 32]),
         };
         if !self.build_from_save(&save) {
             return false;
+        }
+        for p in &mut peers {
+            let _ = p.stream_timeout(NET_READ_TIMEOUT);
         }
         self.map_index = map_index;
         self.menu = false;
@@ -6290,12 +6518,97 @@ impl App {
         self.last_step = Instant::now();
         self.net = Some(NetSession {
             role,
-            lock: Lockstep::new(local as u8, races.len() as u8, DEFAULT_TICKS_PER_TURN),
-            peers: vec![peer],
+            lock: Lockstep::new(local, races.len() as u8, DEFAULT_TICKS_PER_TURN),
+            peers,
             desync: false,
             last_hash: 0,
+            save,
+            map_hash,
+            lobby,
+            host_addr,
+            waiting: None,
+            reconnect: None,
         });
         true
+    }
+
+    /// Host waiting for a dropped peer: accept rejoins (any peer may come
+    /// back) without blocking; give up after [`REJOIN_WAIT`].
+    fn net_wait_for_rejoin(&mut self, net: &mut NetSession) -> bool {
+        let Some((peer, deadline)) = net.waiting else {
+            return true;
+        };
+        let Some(lobby) = net.lobby.as_ref() else {
+            return false;
+        };
+        match galaxycraft::net::try_accept_rejoin(lobby, &net.lock, false) {
+            Ok(Some((back, mut t))) => {
+                let _ = t.stream_timeout(NET_READ_TIMEOUT);
+                net.lock.forget_peer_turn(back);
+                if let Some(slot) = net.peers.get_mut(back as usize - 1) {
+                    *slot = t;
+                }
+                if back == peer {
+                    net.waiting = None;
+                    self.status(format!("player {} rejoined", peer + 1));
+                }
+                self.last_step = Instant::now();
+            }
+            Ok(None) => {}
+            Err(e) => self.status(format!("rejoin refused: {e}")),
+        }
+        if net.waiting.is_some() && Instant::now() >= deadline {
+            self.status(format!("player {} did not return - match ended", peer + 1));
+            return false;
+        }
+        true
+    }
+
+    /// Client that lost the host: reconnect on the backoff schedule, then
+    /// rebuild the world from the host's command log.
+    fn net_reconnect(&mut self, net: &mut NetSession) -> bool {
+        let Some(backoff) = net.reconnect.as_mut() else {
+            return true;
+        };
+        let now = Instant::now();
+        if !backoff.due(now) {
+            return true;
+        }
+        let local = net.lock.local_peer;
+        match galaxycraft::net::request_resync(
+            &net.host_addr,
+            net.map_hash,
+            galaxycraft::net::WORLD_SEED,
+            local,
+        ) {
+            Ok((mut t, turn, rec)) => {
+                if !self.build_from_save(&net.save) {
+                    return false;
+                }
+                let _ = t.stream_timeout(NET_READ_TIMEOUT);
+                let mut lock = Lockstep::new(local, net.lock.peers, net.lock.ticks_per_turn);
+                galaxycraft::net::apply_resync(&mut self.world, &mut lock, turn, &rec);
+                net.lock = lock;
+                net.peers = vec![t];
+                net.reconnect = None;
+                self.accumulator = 0.0;
+                self.last_step = Instant::now();
+                self.status(format!("reconnected at turn {turn}"));
+                true
+            }
+            Err(e) => {
+                if backoff.fail(Instant::now()) {
+                    self.status(format!(
+                        "host unreachable ({e}) - retry {} of 8",
+                        backoff.failures() + 1
+                    ));
+                    true
+                } else {
+                    self.status(format!("LAN disconnected: {e}"));
+                    false
+                }
+            }
+        }
     }
 
     /// One lockstep turn per accumulated `ticks_per_turn`.
@@ -6305,6 +6618,17 @@ impl App {
         };
         if self.game_result.is_some() {
             self.net = Some(net);
+            return;
+        }
+        // A broken link pauses the match until it is repaired.
+        if net.waiting.is_some() || net.reconnect.is_some() {
+            let alive = match net.role {
+                NetRole::Host => self.net_wait_for_rejoin(&mut net),
+                NetRole::Client => self.net_reconnect(&mut net),
+            };
+            if alive {
+                self.net = Some(net);
+            }
             return;
         }
         let now = Instant::now();
@@ -6320,10 +6644,28 @@ impl App {
 
         let acts = net.lock.take_local();
         let res = match net.role {
-            NetRole::Host => host_turn(&mut net.lock, &mut self.world, &mut net.peers, acts),
+            NetRole::Host => galaxycraft::net::host_turn_peers(
+                &mut net.lock,
+                &mut self.world,
+                &mut net.peers,
+                acts,
+            )
+            .map_err(|f| {
+                net.waiting = Some((f.peer, Instant::now() + REJOIN_WAIT));
+                format!(
+                    "player {} dropped ({}) - waiting for it",
+                    f.peer + 1,
+                    f.error
+                )
+            }),
             NetRole::Client => match net.peers.first_mut() {
-                Some(host) => client_turn(&mut net.lock, &mut self.world, host, acts),
-                None => Err(std::io::Error::other("no host transport")),
+                Some(host) => {
+                    client_turn(&mut net.lock, &mut self.world, host, acts).map_err(|e| {
+                        net.reconnect = Some(galaxycraft::net::Backoff::lan(Instant::now()));
+                        format!("lost the host ({e}) - reconnecting")
+                    })
+                }
+                None => Err("no host transport".to_string()),
             },
         };
         match res {
@@ -6336,9 +6678,10 @@ impl App {
                 }
             }
             Err(e) => {
-                self.status(format!("LAN disconnected: {e}"));
-                self.net = None;
-                return;
+                self.status(e);
+                if net.waiting.is_none() && net.reconnect.is_none() {
+                    return;
+                }
             }
         }
         self.selected
@@ -7572,10 +7915,13 @@ impl App {
                         Key::Enter | Key::Space => {
                             if self.lan.listener.is_none() {
                                 self.lan_join();
+                            } else {
+                                self.lan_start_hosted();
                             }
                         }
                         Key::Escape => {
                             self.lan.listener = None;
+                            self.lan.queue = None;
                             self.lan.announce_sock = None;
                             if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
@@ -10277,6 +10623,7 @@ impl App {
             steps += 1;
         }
         self.follow_trigger_portraits();
+        let _ = self.follow_trigger_cues();
         // Drop dead selections.
         self.selected
             .retain(|id| self.world.unit(*id).is_some_and(|u| u.alive));
@@ -10705,6 +11052,27 @@ impl App {
         self.draw_hud_menu_label(fb);
         self.draw_hud_card(fb);
         self.draw_hud_tooltip(fb);
+        // Trigger text (Transmission / Display Text) above the console,
+        // newest at the bottom.
+        let now_ms = self.trigger_text_epoch.elapsed().as_millis() as u64;
+        let lines: Vec<String> = self
+            .trigger_text
+            .visible(now_ms)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        // Bottom line just above the console plates (their top is ~65 % of
+        // the 16:9 content height).
+        let bottom = cy + (ch as f32 * 0.62) as i32;
+        for (i, line) in lines.iter().rev().enumerate() {
+            fb.text(
+                cx + 12,
+                bottom - 14 * i as i32,
+                line,
+                Rgb::new(230, 230, 230),
+                1,
+            );
+        }
         // Status line in the game view.
         if Instant::now() < self.status_until && !self.status.is_empty() {
             fb.text_centered(
@@ -11932,7 +12300,9 @@ impl App {
                 }
             }
             MenuScreen::Lan => {
-                let lines = 2 + if self.lan.listener.is_some() || self.lan.entries.is_empty() {
+                let lines = 2 + if let Some(queue) = &self.lan.queue {
+                    queue.capacity() as usize + 1
+                } else if self.lan.entries.is_empty() {
                     1
                 } else {
                     self.lan.entries.len()
@@ -13753,14 +14123,20 @@ impl App {
             .map(|m| m.name.clone())
             .unwrap_or_else(|| "(no map)".to_string());
         let mut lines = vec![format!("Map: {map}"), self.lan.status.clone()];
-        if self.lan.listener.is_some() {
-            lines.push("Waiting for a peer to join...".to_string());
+        if let Some(queue) = &self.lan.queue {
+            lines.extend(lan_lobby_lines(queue, self.menu_race));
         } else if self.lan.entries.is_empty() {
             lines.push("(no games found)".to_string());
         } else {
             for (i, (addr, a)) in self.lan.entries.iter().enumerate() {
                 let mark = if i == self.lan.sel { "> " } else { "  " };
-                lines.push(format!("{mark}{} - {} [{}]", a.name, addr.ip(), a.port));
+                lines.push(format!(
+                    "{mark}{} - {} [{}] {} player(s)",
+                    a.name,
+                    addr.ip(),
+                    a.port,
+                    a.players
+                ));
             }
         }
         self.draw_menu_panel(
@@ -13768,7 +14144,7 @@ impl App {
             "LAN",
             &lines,
             self.lan.sel,
-            "S: scan   H: host   ENTER: join   UP/DN: select   ESC: back",
+            "S: scan   H: host   ENTER: join / start   UP/DN: select   ESC: back",
         );
     }
 

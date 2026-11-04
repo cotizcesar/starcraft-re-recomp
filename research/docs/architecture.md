@@ -18,11 +18,34 @@ Validated rebase formula (A-H10, 4 routines): `VA_dump32 = VA_rt − 0x79fa0000 
 - Confirmed init: `0xc61f70` (window + GL context, `pm_gles::Context::Init`
   = the remaster's own GL layer), `0x8aee30` (Mouse/Video/Network/Sfx settings
   orchestrator, 317 calls, 0 E8 callers → invoked via
-  pointer/thread), GL loaders (`0xc60b80`/`0xc5fe60`), bzip2, FMOD,
+  pointer/thread; **analysed 2026-11-04**, see below), GL loaders (`0xc60b80`/`0xc5fe60`), bzip2, FMOD,
   CASC streaming, WMV cinematics, DX error decoder (`0x4f3828`).
 - Ubiquitous infra (background noise for xrefs): `0x93ec70` (11 166 callers),
   `0x538810` (5 731), `0xc046b0` 361-case dispatcher (2 941, to be
   identified: assert/log/getString?).
+
+### `0x8aee30`: protector-obfuscated body (2026-11-04)
+
+Why it never decompiled (two REA timeouts, then three headless failures
+with an empty decompiler error even at 1 800 s, 1 GB payload and 10⁶
+instructions): after a normal MSVC prologue (SEH frame `0xce55c0`,
+`__security_cookie` `0xf4e578`, ending at `0x8aee5b`) the body is
+obfuscated.  FACT, from `objdump` of the dump and Ghidra's flow listing:
+zero-effect junk (`shl ah,0`, `xchg bh,bh`, `neg` pairs, `add ebp,imm`),
+opaque branches into the middle of other instructions (17 of 130 in-body
+branch targets, e.g. `jae 0x8aee5d` at `0x8aee63`), 14 branches leaving the
+11 074-byte body, and 47 of its 182 call targets that are not function
+entries (calls used as jumps).  Most of Ghidra's 351 "data references" are
+32-bit immediates (`0x825105c2`, `0xbf652b26`, …), not addresses.  The
+only real strings it touches are `ShadowStacking` (`0xd4937c`, a
+`CSettings.json` key), `disabled` and `guestCancelRaceSelect`
+(`0xd65550`).  Verdict: a protector-transformed function mixing settings
+and front-end code; its exact semantics need deobfuscation or a runtime
+trace (out of scope: the client reimplements settings in `menu.rs` /
+`profile.rs` from the shipped data and `CSettings.json`).  The same
+`rdtsc` + junk pattern surrounds the frame loop at `0x6bbdfa`.  Profile:
+`research/tools/FunctionProfile.java`; outputs (local-only) in
+`research/analysis/functions/2026-11-04/`.
 
 ## 2. Loop and messages (updated: WndProc CONFIRMED)
 
@@ -34,8 +57,28 @@ Validated rebase formula (A-H10, 4 routines): `VA_dump32 = VA_rt − 0x79fa0000 
   message→object thunk. Confirms dispatch through objects, not a monolithic switch.
 - **`0x969f0d` reclassified**: 0 IAT (pure internal logic) → simulation/worker
   step, NOT a message pump. Adjacent: `0xa80e70`.
-- External `GetMessage` pump not located (low priority: the
-  reimplemented client runs its own loop). IAT confirmed at `0xd301xx`.
+- **External message pump LOCATED (2026-11-04):** `FUN_00946500`
+  (309 B), a `PeekMessage` pump, not `GetMessage`:
+  `while (slot[0xd3063c](&msg, hwnd, min, max, 1 /*PM_REMOVE*/))`
+  { `msg.message == 0x12` (WM_QUIT) → forward `0x11` through the OO thunk
+  `0x9468e0`, or keep `wParam` and re-post it with `slot[0xd30620]`
+  (PostQuitMessage) after the loop; optional pre-translate filter
+  `PTR_00f38798`; `slot[0xd30644](&msg)` (TranslateMessage),
+  `slot[0xd30640](&msg)` (DispatchMessage) }.  `MSG` at `[ebp-0x38]`
+  (`.message` `-0x34`, `.wParam` `-0x30`).  Wrapper `FUN_00944f10` =
+  `pump(0,0,0,0)` (17 B), called once per frame at `0x6bbdfa`, followed by
+  `0x93f6c0` (timing) and the state flags at `0x119f5ec`.
+  Why it was missed: the import directory of the dump is zeroed and every
+  IAT slot points into a private 64 KB trampoline block
+  (`0x1d90000`–`0x27c0000`, not in the module image), so no import has a
+  name.  Found by the structural signature (two `call [IAT]` with the same
+  stack `MSG` pointer, `.text` scan of 8 619 IAT calls → 2 candidates);
+  the slots belong to run `0xd30550`, which the WndProc uses for 54 of its
+  56 IAT calls (= user32).  Slot names are INFERENCE from the call shape
+  (5-arg + `PM_REMOVE`, `WM_QUIT` test); falsifier: resolve the trampoline
+  behind `0xd3063c` in a live process (`/proc/<pid>/mem`) to its user32
+  export.  Tools: `research/tools/ImportRefs.java` (0 named imports — the
+  negative), `FunctionProfile.java`, `GhidraDecompileBatch.java`.
 
 ## 3. Orders + iscript (system present, identification pending)
 
@@ -69,6 +112,9 @@ Validated rebase formula (A-H10, 4 routines): `VA_dump32 = VA_rt − 0x79fa0000 
   the dump covers the module image; the parsed map lives in uncaptured
   heap. Decisive experiment: re-dump RW regions from `/proc/pid/maps`
   and repeat the signatures (requires the game running + authorization).
+  **Done 2026-10-28** (`heap-ingame-findings.md`): the RW capture during
+  Terran 8 holds the parsed map (`STR` text, objectives) and three
+  runtime-built handler tables; re-verified on disk 2026-11-04.
 
 ## 5. 32 vs 64 bits (H2 confirmed, high confidence)
 

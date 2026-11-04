@@ -48,18 +48,34 @@ All `unsupported_host` (requires macOS/Xcode). No impact on Linux.
   `open_binary` with a suitable format/architecture).
 - `raw-binary` requires `architecture` + `entry_point`; PE is autodetected.
 
-## Tool × capability matrix (observed)
+## Tool × capability matrix A–F (completed 2026-11-04)
 
-| Capability | REA+Ghidra | rea-dotnet | artifact-graph | CLI (`file`/`objdump`) | Repo readers |
-|---|---|---|---|---|---|
-| PE x86/x64 disassembly | yes (PASS) | no | no | partial (headers/strings) | no |
-| Pseudocode decompilation | yes (Ghidra) | no (never C#) | no | no | `handlers.rs` transcriptions |
-| Xrefs/callers/callees | yes | no | no | no | no |
-| Managed .NET | n/a (no target) | yes (metadata) | no | no | n/a |
-| CASC/BLTE/MPQ/DCL | no | no | partial (`extract_artifact`) | no | yes (`retail.rs`) |
-| DAT/TBL/CHK/iscript/AI | no | no | no | no | yes |
-| GRP/tileset/WAV/Ogg/DDS | no | no | no | no | yes (`render.rs`, `audio.rs`, `dds.rs`) |
-| Dynamic/traces | no (REA is static) | no | no | no | Proton + observation |
+Columns A–F: A = capability, B = REA + Ghidra (MCP), C = rea-dotnet,
+D = artifact-graph, E = CLI (`file`/`objdump`/headless `analyzeHeadless`),
+F = repository readers and scripts.  (The "A–F" label predates the
+repository's first commit and is not defined anywhere in it; reading it as
+these six columns is an INFERENCE.)  Rows 1–8 are the 2026-10-28
+observations; rows 9–15 were added and every B/E/F cell of them observed on
+2026-11-04 (session log entry 78).  C and D were not re-run: there is still
+no .NET target, and CASC is fully covered by F.
+
+| # | A: Capability | B: REA+Ghidra | C: rea-dotnet | D: artifact-graph | E: CLI / headless | F: Repo |
+|---|---|---|---|---|---|---|
+| 1 | PE x86/x64 disassembly | yes (PASS) | no | no | `objdump` linear sweep (headers/strings; desyncs on junk bytes, row 10) | no |
+| 2 | Pseudocode decompilation | yes; images >10 MB: `provider_timeout` / `resource_constraint` | no (never C#) | no | `analyzeHeadless` + `GhidraDecompileBatch.java` (timeout/payload/instruction limits via env) | `handlers.rs` transcriptions |
+| 3 | Xrefs/callers/callees | yes; on the 17 MB dump `resolve_containing_procedure` → `resource_constraint` | no | no | `RefsToAddr.java`, `FunctionProfile.java` | no |
+| 4 | Managed .NET | n/a (no target) | yes (metadata) | no | no | n/a |
+| 5 | CASC/BLTE/MPQ/DCL | no | no | partial (`extract_artifact`) | no | yes (`retail.rs`) |
+| 6 | DAT/TBL/CHK/iscript/AI | no | no | no | no | yes |
+| 7 | GRP/tileset/WAV/Ogg/DDS | no | no | no | no | yes (`render.rs`, `audio.rs`, `dds.rs`) |
+| 8 | Dynamic/traces | no (REA is static here) | no | no | no | Proton + observation; `heap_capture.py` |
+| 9 | Provider capability report | `binary_session`: Ghidra 12.1.4, all analysis groups `available` on the 32-bit dump | — | — | — | — |
+| 10 | Protector-obfuscated code (junk, overlapping branches) | no (`0x8aee30` never returns) | no | no | decompiler fails with an empty error; flow listing + `objdump` show the junk | Python structural scans (branch-target / junk counts) |
+| 11 | Imports of the protected dump (zeroed import dir, IAT → trampolines) | no names | no | no | `ImportRefs.java`: 0 named imports (the negative) | `.text` scan for `call [IAT]` signatures → pump located |
+| 12 | CEF JavaScript bundle (`webui/dist`) | `analyze_javascript_application` completes but its result exceeds the 10 MiB MCP cap, even for one 297 KB panel | no | no | `grep` over the extracted bundle | `sc_assets list` / `path` extract it read-only |
+| 13 | Extracted file → CASC/MPQ origin | no | no | no | no | `sc_assets manifest` (CKey = MD5), `research/manifests/extracted-origin.tsv` |
+| 14 | Sound id → file (`SND_*` / `GLUSND_*`) | no | no | no | no | `sfx::SfxData` + `glusnd_path` (tests) |
+| 15 | Runtime RW memory (map heap) | no | no | no | no | `tools/heap_capture.py` (`/proc/<pid>/mem`, read-only), `heap-ingame-findings.md` |
 
 External requirements: only Ghidra 12.1.4 + JDK 21 (present). Nothing else to
 install for the critical path.

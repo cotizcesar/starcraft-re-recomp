@@ -3986,3 +3986,90 @@ the Registry opens the 13-entry Terran list.  `ui_visual_diff.py` 51/51
 committed copy predated round 3); shots `registry`, `saved`, `replays`,
 `pause` OK; no `profiles.bin` written to the real cache by any of them.
 `progress.py --check` OK (persistence 6/6, 88 % overall).
+
+## 2026-11-04 (78) — Transmissions, multi-player LAN lobby, reconnect with backoff, RE closure
+
+Goal: nine open items (one client, two LAN, six RE).
+
+**Trigger transmissions.**  The VM recorded Transmission (7) only for the
+portrait and dropped Play WAV (8) / Display Text (9) into lists nothing
+read.  Now one ordered `TriggerCue` log (`Text {string, always, ms}`,
+`Wav {string}`); `always` = action flag `0x04` (INFERENCE from the public
+CHK spec).  `src/transmission.rs`: text cleaning (control bytes dropped,
+CRLF split), timed log (8 lines, 7 s or the transmission length — TEXT_MS
+is an INFERENCE), cache layout `X.chk` → `X/wav/`.  Campaign sounds exist
+twice in CASC: `sd/campaign/<ep>/<m>/staredit/wav/*.wav` (original, next
+to the CHK the client loads) and `locales/enus/assets/campaign/.../*.ogg`
+(Remastered voice-over, 1 135 files); both are cached and the Options switch
+picks.  MPQ maps: the WAVs their `STR` strings name.  **Bug found**: the CHK
+`STR` parser ended each string at the next entry's offset; StarEdit stores
+offsets out of order, so Wasteland's sound strings 281/332 came out empty
+(raw bytes: `staredit\wav\ComBeep0.wav`, `T1M01uci.wav`).  Fixed (end at the
+NUL) with a test.  Evidence: retail test on 1. Wasteland (9 text lines and 2
+sounds in 90 s, both `.wav` and `.ogg` decode), `ingame-transmission` shot
+(tick 30: 5 lines, `combeep0.ogg` played), `docs/gates/transmission.txt`.
+
+**LAN.**  Protocol 2: `Setup.you` (clients assumed peer 1).  `JoinQueue` +
+`Lobby::poll_join/start` (accept_peers now built on them); the UI hosts one
+seat per start location, lists seats, starts when full or on ENTER.
+`host_turn_peers` names the lost peer, keeps received commands across a
+retry, finishes the turn for live peers, acks stale `Sum`s;
+`try_accept_rejoin` (non-blocking), `request_resync` with a 1.5 s connect
+timeout, pure `Backoff` (250 ms → 4 s, 8 attempts), `rejoin_with_backoff`.
+UI: host pauses ≤30 s for a rejoin; client retries on the schedule and
+rebuilds from the log.  A first version of `forget_peer_turn` cleared the
+wrong inbox slot (off by one: slot 0 is the host) and deadlocked the 3-peer
+drop test; fixed.  `sc_lan`'s client also used peer 1 blindly; fixed.
+Evidence: `tests/lan.rs` 6/6, five consecutive runs; `scripts/lan_ui_gate.sh`
+→ `docs/gates/lan-lobby-reconnect.txt` (PASS): the real client hosts a (4)
+map, two independent Python protocol-2 clients join (`you=1`, `you=2`), 3/4
+lobby started; host pauses and accepts rejoins (`RESYNC kind=9`); as a
+client of a killed `sc_lan` host it retried at ~0/0.25/0.75/1.75/3.75/7.75 s.
+
+**RE.**  (1) Heap: the 2026-10-28 RW capture is on disk and holds the map
+(re-verified; doc offsets correct, the text has a CRLF).  (2) Message pump:
+the dump's import directory is zeroed and every IAT slot points into a
+private trampoline block (`0x1d90000`–`0x27c0000`), so `ImportRefs.java`
+finds 0 named imports; a `.text` scan of 8 619 `call [IAT]` sites for the
+Peek/Translate/Dispatch signature (same stack `MSG`) gave `FUN_00946500`
+(PeekMessage + `PM_REMOVE`, `WM_QUIT` → PostQuitMessage), wrapper
+`0x944f10`, caller `0x6bbdfa` once per frame; slot names INFERENCE from the
+call shape, run `0xd30550` = user32 (54/56 WndProc IAT calls).  (3)
+`0x8aee30`: decompile fails with an empty error even at 1 800 s / 1 GB /
+10⁶ instructions; the body after the MSVC prologue is protector-obfuscated
+(junk, 17 mid-instruction branch targets, 47 non-entry call targets);
+strings `ShadowStacking`, `disabled`, `guestCancelRaceSelect`.  REA:
+`open_binary` OK, `resolve_containing_procedure` → `resource_constraint`;
+`analyze_javascript_application` completes but exceeds the 10 MiB MCP cap
+even on one 297 KB panel.  (4) Manifest: `RetailInstall::origin_manifest`
+(CKey = MD5, in-tree RFC 1321 implementation with the RFC vectors) → 2 923
+files: 2 596 CASC, 323 MPQ, 1 derived (`unit.pal`), 3 generated, 0 unknown.
+(5) GLUSND: the CEF enum is the engine sound enum (`FIRST_GENERIC_SND:0`,
+`SND_Z_ERROR:1` …); sound id = `sfxdata.dat` row, `SoundFile` = 1-based
+`.tbl` string (`SND_Z/T/P_ERROR` → ZDrErr00/Buzz/PError); all nine
+`GLUSND_*` → `sound/glue/*.wav`, consistent with the 2026-11-02 audio
+correlation.  The old `parse_dat` read 4-byte records; replaced.  (6) A–F:
+the definition is not in the repository (first commit already lists it as
+pending); read as the six columns of the tool × capability matrix
+(INFERENCE), completed with 7 rows observed today.
+
+**Verification.**  `cargo test` 436 passed, 0 failed (with and without
+`SC_INSTALL`); clippy 0 warnings; `cargo fmt --check` clean; menu
+walkthrough PASS (145 steps); `ui_visual_diff.py` 51/51 (identical to the
+committed gate); `progress.py --check` OK (97 %).
+
+## 2026-11-04 (79) — Project review: stale documents restated
+
+A full review against `PROGRESS.md` (97 %, open: in-game lighting parity,
+the two-machine LAN test) found four documents contradicting the state:
+`unresolved-questions.md` and `blockers.md` still said there was no in-game
+dump (it exists since 2026-10-28, with the RW heap capture);
+`parity-report.md` showed the 2026-10-29 numbers (mean 11.19, in-game up to
+20.95) and `gap-audit.md` listed long-closed screens as missing.  Restated
+the first two (closed items with their record; open: the INFERENCES that
+need the retail client, the "A–F" definition to confirm with the owner,
+what needs the user); marked the other two historical with the current gate
+(`ui-visual-diff.txt`: 51/51, mean 2.10, worst 6.99; the eight (8)The
+Hunters references 2.44–3.27 raw).  `PROGRESS.md` quoted 2.46 as the low
+end; the committed raw gate says 2.44 (134905), corrected.  The game PDB
+question stays open: whether the dumps carry symbols was never checked.

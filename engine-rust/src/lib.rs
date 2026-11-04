@@ -61,6 +61,7 @@ pub mod sim;
 pub mod tables;
 pub mod tech;
 pub mod text;
+pub mod transmission;
 pub mod trigger;
 pub mod ui;
 pub mod ui_art;

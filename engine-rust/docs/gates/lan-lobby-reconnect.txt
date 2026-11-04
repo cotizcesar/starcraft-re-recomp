@@ -1,0 +1,38 @@
+# LAN UI gate (2026-11-04T05:44Z), map: (4)Allegro_1.1b.chk
+
+## 1. Lobby with more than two players
+5	key:H	lan_sel=0 entries=0 lobby=1/4 net= status=hosting (4)Allegro_1.1b on :7777 - 1/4 players
+6	wait:3500	lan_sel=0 entries=0 lobby=3/4 net= status=127.0.0.1:44784 joined - 3/4 players (ENTER: start)
+7	key:Enter	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:None/reconnect:None/last: status=match started with 3 players
+8	wait:300	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+SETUP proto=2 kind=2 peers=3 you=2 races=[1, 2, 1]
+SETUP proto=2 kind=2 peers=3 you=1 races=[1, 2, 1]
+
+## 2. Host: dropped peers rejoin
+7	key:Enter	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:None/reconnect:None/last: status=match started with 3 players
+8	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+9	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+10	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+11	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:None/reconnect:None/last:player 2 rejoined status=match started with 3 players
+12	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+13	wait:1000	lan_sel=0 entries=0 lobby= net=turn:0/peers:3/waiting:Some(1)/reconnect:None/last:player 2 dropped (failed to fill whole buffer) - waiting for it status=match started with 3 players
+SETUP proto=2 kind=2 peers=3 you=2 races=[1, 2, 1]
+DROPPED
+RESYNC kind=9 turn=0 log_bytes=82
+SETUP proto=2 kind=2 peers=3 you=1 races=[1, 2, 1]
+DROPPED
+RESYNC kind=9 turn=0 log_bytes=82
+
+## 3. Client: reconnect with backoff after the host dies
+host: listening on 0.0.0.0:7791 (map sha256 02ce17bd6f310b2d8647f9ac02fd9fa7a0825a1d082752b809b02d154bb2136f)
+host: all peers joined, races [Terran, Terran]
+6	key:Enter	lan_sel=0 entries=1 lobby= net=turn:0/peers:2/waiting:None/reconnect:None/last: status=joined 127.0.0.1:6112 as player 2
+7	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(0)/last:lost the host (Broken pipe (os error 32)) - reconnecting status=joined 127.0.0.1:6112 as player 2
+8	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(3)/last:host unreachable (Connection refused (os error 111)) - retry 4 of 8 status=joined 127.0.0.1:6112 as player 2
+9	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(4)/last:host unreachable (Connection refused (os error 111)) - retry 5 of 8 status=joined 127.0.0.1:6112 as player 2
+10	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(4)/last:host unreachable (Connection refused (os error 111)) - retry 5 of 8 status=joined 127.0.0.1:6112 as player 2
+11	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(5)/last:host unreachable (Connection refused (os error 111)) - retry 6 of 8 status=joined 127.0.0.1:6112 as player 2
+12	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(5)/last:host unreachable (Connection refused (os error 111)) - retry 6 of 8 status=joined 127.0.0.1:6112 as player 2
+13	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(5)/last:host unreachable (Connection refused (os error 111)) - retry 6 of 8 status=joined 127.0.0.1:6112 as player 2
+14	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(5)/last:host unreachable (Connection refused (os error 111)) - retry 6 of 8 status=joined 127.0.0.1:6112 as player 2
+15	wait:1000	lan_sel=0 entries=1 lobby= net=turn:5/peers:2/waiting:None/reconnect:Some(6)/last:host unreachable (Connection refused (os error 111)) - retry 7 of 8 status=joined 127.0.0.1:6112 as player 2

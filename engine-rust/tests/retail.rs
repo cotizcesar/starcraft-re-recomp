@@ -166,6 +166,75 @@ fn all_shipped_mpq_maps_are_read_from_the_install() {
 }
 
 #[test]
+fn campaign_transmissions_resolve_to_text_and_playable_map_audio() {
+    let Some(install) = install() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    use galaxycraft::trigger::TriggerCue;
+    let mission = campaign::episodes(&install)
+        .into_iter()
+        .flat_map(|e| e.missions)
+        .find(|m| m.episode == "terran" && m.key == "terran01")
+        .expect("1. Wasteland");
+    let raw = install.read(&mission.chk_path).expect("chk");
+    let scenario = Scenario::parse(&raw).expect("valid CHK");
+    let era = era_name(scenario.era);
+    let vf4 = install.read(&format!("TileSet/{era}.vf4")).expect("vf4");
+    let cv5 = install.read(&format!("TileSet/{era}.cv5")).expect("cv5");
+    let data = install.game_data().expect("retail game data");
+    let mut world = World::from_scenario(
+        Arc::new(data),
+        &scenario,
+        &galaxycraft::map::TileData::new(&cv5, &vf4),
+        &[Race::Terran; 8],
+    );
+    for _ in 0..24 * 90 {
+        world.step();
+    }
+    let cues = world.triggers.as_ref().expect("triggers").cues.clone();
+    let texts: Vec<String> = cues
+        .iter()
+        .filter_map(|c| match *c {
+            TriggerCue::Text { string, .. } => scenario.string(string),
+            _ => None,
+        })
+        .flat_map(galaxycraft::transmission::clean_lines)
+        .collect();
+    let wavs: Vec<&str> = cues
+        .iter()
+        .filter_map(|c| match *c {
+            TriggerCue::Wav { string, .. } => scenario.string(string),
+            _ => None,
+        })
+        .collect();
+    assert!(!texts.is_empty(), "no trigger text in 90 s: {cues:?}");
+    assert!(!wavs.is_empty(), "no trigger sound in 90 s: {cues:?}");
+    let sd_dir = mission
+        .chk_path
+        .strip_suffix("scenario.chk")
+        .expect("sd path");
+    for raw in &wavs {
+        let stem = galaxycraft::transmission::wav_stem(raw).expect("stem");
+        for path in [
+            format!("{sd_dir}wav/{stem}.wav"),
+            format!("locales/enus/assets/campaign/terran/terran01/staredit/wav/{stem}.ogg"),
+        ] {
+            let bytes = install
+                .read(&path)
+                .unwrap_or_else(|| panic!("{raw} -> {path}"));
+            let samples = galaxycraft::audio::decode_sound(&bytes).expect("decodes");
+            assert!(samples.len() > 4_410, "{path}: {} samples", samples.len());
+        }
+    }
+    eprintln!(
+        "Wasteland, 90 s: {} text lines, sounds {wavs:?}",
+        texts.len()
+    );
+    eprintln!("first lines: {:?}", &texts[..texts.len().min(3)]);
+}
+
+#[test]
 fn retail_tables_drive_a_world_from_an_mpq_map() {
     let Some(install) = install() else {
         eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
@@ -226,6 +295,21 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
     }
     let _cleanup = RemoveOnDrop(dir.clone());
     let report = install.materialize(&dir).expect("materialise");
+    // Every extracted file traces back to CASC (by CKey = MD5), an MPQ map
+    // or a named derivation; none is unaccounted for.
+    let origins = install.origin_manifest(&dir).expect("origin manifest");
+    let unknown: Vec<_> = origins
+        .iter()
+        .filter(|r| r.origin == galaxycraft::retail::Origin::Unknown)
+        .map(|r| r.rel.clone())
+        .collect();
+    assert!(unknown.is_empty(), "files without an origin: {unknown:?}");
+    let mpq = origins
+        .iter()
+        .filter(|r| matches!(&r.origin, galaxycraft::retail::Origin::Mpq { member, .. } if member.ends_with("scenario.chk")))
+        .count();
+    assert_eq!(mpq, 323, "one MPQ origin per shipped map");
+    assert!(origins.len() >= report.files, "{} rows", origins.len());
     assert_eq!(report.maps, 323);
     assert_eq!(report.campaign_maps, 68);
     assert!(report.video_files >= 80, "{} videos", report.video_files);

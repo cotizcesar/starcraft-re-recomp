@@ -391,19 +391,18 @@ impl Scenario {
                 let count = u16_at(raw, 0) as usize;
                 let table_end = 2 + count * 2;
                 if raw.len() >= table_end {
+                    // Each offset starts a NUL-terminated string.  StarEdit
+                    // does not keep the offsets in order (and may share
+                    // tails), so a string ends at its NUL, never at the next
+                    // entry's offset.
                     for k in 0..count {
                         let start = u16_at(raw, 2 + k * 2) as usize;
-                        let end = if k + 1 < count {
-                            u16_at(raw, 2 + (k + 1) * 2) as usize
-                        } else {
-                            raw.len()
-                        };
-                        if start <= end && end <= raw.len() {
-                            let bytes = &raw[start..end];
-                            let nul = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-                            strings.push(String::from_utf8_lossy(&bytes[..nul]).into_owned());
-                        } else {
-                            strings.push(String::new());
+                        match raw.get(start..) {
+                            Some(bytes) => {
+                                let nul = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                                strings.push(String::from_utf8_lossy(&bytes[..nul]).into_owned());
+                            }
+                            None => strings.push(String::new()),
                         }
                     }
                 }
@@ -585,6 +584,13 @@ impl Scenario {
                 && !crate::sim::is_resource_type(mu.unit_id)
                 && (mu.owner as usize) < 8
         })
+    }
+
+    /// `STR` string by its 1-based CHK id (trigger text and sound ids); 0 or
+    /// out of range is `None`.
+    pub fn string(&self, id: u32) -> Option<&str> {
+        let index = (id as usize).checked_sub(1)?;
+        self.strings.get(index).map(String::as_str)
     }
 
     /// Mission copy authored in the `STR` section: string 0 is the name,
@@ -1120,6 +1126,38 @@ mod tests {
         push(b"MTXM", &mtxm);
         push(b"MASK", &[1, 1, 1, 1]);
         out
+    }
+
+    #[test]
+    fn str_strings_end_at_their_nul_even_when_offsets_are_out_of_order() {
+        // Three strings; the table lists them out of file order (string 2
+        // is stored after string 3), as StarEdit writes them.  Ending a
+        // string at the next entry's offset made string 2 empty.
+        let mut str_ = Vec::new();
+        str_.extend_from_slice(&3u16.to_le_bytes());
+        let base = 2 + 3 * 2;
+        let one = b"Name\0";
+        let three = b"staredit\\wav\\combeep0.wav\0";
+        let two = b"Jim Raynor: Move out!\0";
+        let o1 = base;
+        let o3 = o1 + one.len();
+        let o2 = o3 + three.len();
+        for o in [o1, o2, o3] {
+            str_.extend_from_slice(&(o as u16).to_le_bytes());
+        }
+        str_.extend_from_slice(one);
+        str_.extend_from_slice(three);
+        str_.extend_from_slice(two);
+        let mut chk = tiny_chk();
+        chk.extend_from_slice(b"STR ");
+        chk.extend_from_slice(&(str_.len() as u32).to_le_bytes());
+        chk.extend_from_slice(&str_);
+        let s = Scenario::parse(&chk).unwrap();
+        assert_eq!(s.string(1), Some("Name"));
+        assert_eq!(s.string(2), Some("Jim Raynor: Move out!"));
+        assert_eq!(s.string(3), Some("staredit\\wav\\combeep0.wav"));
+        assert_eq!(s.string(0), None);
+        assert_eq!(s.string(4), None);
     }
 
     #[test]
