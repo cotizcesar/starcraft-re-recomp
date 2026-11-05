@@ -77,7 +77,12 @@ def main() -> None:
     steps = dict(re.findall(r"^shot (\w+): (.+)$", proc.stderr, re.M))
     load = lambda n: np.asarray(Image.open(out / f"shot-{n}.bmp").convert("RGB")).astype(np.float32)
     settled = load("z")
-    title = lambda a: int((a[180:260, 880:1080, 2] > 200).sum())
+    # Dialog text = the green profile rows ("REA", "LinKa": #daff8c and
+    # #5ced30); the moon behind a moving plate is white, never this green.
+    def title(a):
+        rows = a[300:420, 940:1200]
+        return int(((rows[:, :, 1] > 200) & (rows[:, :, 0] < 230) & (rows[:, :, 2] < 160)
+                    & (rows[:, :, 1] - rows[:, :, 0] > 25)).sum())
     failed = 0
     for name in ["a", "b", "c", "d", "e", "o0", "o1", "o2", "o3"]:
         state = steps.get(name, "?")

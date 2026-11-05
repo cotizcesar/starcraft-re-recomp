@@ -1,17 +1,17 @@
 step	action	screen	sounds	state
 0	move:700:700	Main	ui_move	
-1	click	GameType	ui_click	
+1	click	GameType	ui_click+ui_swish	
 2	move:1103:618	GameType		
-3	key:L	Lan	ui_click	lan_sel=0 entries=0 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
+3	key:L	Lan	ui_click+ui_swish	lan_sel=0 entries=0 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 4	fixture:lan-peer	Lan		lan_sel=0 entries=1 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 5	fixture:lan-peer	Lan		lan_sel=0 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 6	move:1000:763	Lan	ui_move	lan_sel=0 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 7	click	Lan	ui_click	lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 8	move:1000:763	Lan		lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
 9	click	Lan		lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=join failed: Connection refused (os error 111)
-10	key:Escape	GameType	ui_click	
+10	key:Escape	GameType	ui_click+ui_swish	
 11	move:1103:618	GameType		
-12	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
+12	click	Lobby	ui_click+ui_swish	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 13	move:1000:1028	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 14	click	Lobby	ui_click	races=[Random, Random, Random, Random, Random, Random, Random, Random]
 15	move:1122:1039	Lobby	ui_move	races=[Random, Random, Random, Random, Random, Random, Random, Random]
@@ -21,9 +21,9 @@ step	action	screen	sounds	state
 19	move:1122:1046	Lobby	ui_move	races=[Random, Zerg, Random, Random, Random, Random, Random, Random]
 20	click	Lobby	ui_click	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
 21	move:1964:1288	Lobby	ui_move	races=[Terran, Zerg, Random, Random, Random, Random, Random, Random]
-22	click	Main	ui_click	
+22	click	Main	ui_click+ui_swish	
 23	move:558:1042	Main	ui_move	
-24	click	Options	ui_click	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+24	click	Options	ui_click+ui_swish	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 25	move:1100:391	Options	ui_move	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 26	click	Options	ui_click	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 27	move:1000:544	Options	ui_move	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
@@ -65,9 +65,9 @@ step	action	screen	sounds	state
 63	move:700:1254	Options	ui_move	tab=Network speed=0.67 key=0.17 mouse=0.83 sens=0.50 music=0.50 sfx=0.00 flags=0111111011111101101101100011
 64	click	Options	ui_click	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 65	move:1860:1254	Options	ui_move	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
-66	click	Main	ui_click	
+66	click	Main	ui_click+ui_swish	
 67	move:558:1123	Main	ui_move	
-68	click	Collections	ui_click	
+68	click	Collections	ui_click+ui_swish	
 69	move:587:386	Collections	ui_move	
 70	click	Collections	ui_click	
 71	move:963:707	Collections	ui_move	
@@ -75,72 +75,73 @@ step	action	screen	sounds	state
 73	move:1337:1175	Collections	ui_move	
 74	click	Collections	ui_click	
 75	move:2017:1277	Collections	ui_move	
-76	click	Main	ui_click	
+76	click	Main	ui_click+ui_swish	
 77	move:558:1273	Main	ui_move	
-78	click	Credits	ui_click	
-79	move:558:1348	Credits	ui_move	
-80	click	Main	ui_click	
-81	move:558:1192	Main	ui_move	
-82	click	Hotkeys	ui_click	race=Terran sel=None action=None key=None reset=false error=false
-83	move:471:357	Hotkeys	ui_move	race=Terran sel=None action=None key=None reset=false error=false
-84	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
-85	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
-86	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=true error=false
-87	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=true error=false
-88	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
-89	move:1212:352	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
-90	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
-91	key:H	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
-92	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
-93	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
-94	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
-95	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
-96	move:1220:79	Hotkeys	ui_move	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
-97	click	Hotkeys	ui_click	race=Protoss sel=None action=None key=None reset=false error=false
-98	move:471:357	Hotkeys	ui_move	race=Protoss sel=None action=None key=None reset=false error=false
-99	click	Hotkeys	ui_click	race=Protoss sel=Some(64) action=None key=None reset=false error=false
-100	key:Escape	Main	ui_click	
-101	move:700:300	Main	ui_move	
-102	click	GameType	ui_click	
-103	move:1103:618	GameType		
-104	click	Registry	ui_click	ids=["REA", "LinKa"] sel=0 active=REA
-105	move:800:390	Registry		ids=["REA", "LinKa"] sel=0 active=REA
-106	click	Registry	ui_move	ids=["REA", "LinKa"] sel=1 active=REA
-107	move:1869:1178	Registry		ids=["REA", "LinKa"] sel=1 active=REA
-108	click	Episode	ui_click	hover=None prompt=None profile=LinKa
-109	move:660:700	Episode	ui_move	hover=Some(0) prompt=None profile=LinKa
-110	click	Episode	ui_click	hover=None prompt=Some(Zerg) profile=LinKa
-111	move:1535:940	Episode		hover=None prompt=Some(Zerg) profile=LinKa
-112	click	Episode	ui_click	hover=None prompt=None profile=LinKa
-113	fixture:progress:1=10	Episode	ui_move	hover=Some(2) prompt=None profile=LinKa
-114	move:1262:666	Episode	ui_move	hover=Some(1) prompt=None profile=LinKa
-115	click	Mission	ui_click	episode=1 len=13 sel=0 top=0 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-116	move:1794:906	Mission	ui_move	episode=1 len=13 sel=0 top=0 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-117	click	Mission	ui_click	episode=1 len=13 sel=0 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-118	wheel:2	Mission		episode=1 len=13 sel=0 top=3 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-119	key:Down	Mission	ui_move	episode=1 len=13 sel=1 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-120	move:1200:670	Mission	ui_move	episode=1 len=13 sel=1 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-121	click	Mission	ui_click	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-122	move:1794:603	Mission	ui_move	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-123	hold	Mission	ui_click	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-124	move:1794:700	Mission		episode=1 len=13 sel=4 top=3 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-125	move:1794:950	Mission		episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-126	release	Mission		episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-127	move:1477:1015	Mission	ui_move	episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
-128	click	Episode	ui_click	hover=None prompt=None profile=LinKa
-129	move:1332:1134	Episode		hover=None prompt=None profile=LinKa
-130	click	SavedGames	ui_click	
-131	move:600:380	SavedGames		
-132	click	SavedGames		
-133	move:1917:1283	SavedGames	ui_move	
-134	click	Episode	ui_click	hover=None prompt=None profile=LinKa
-135	move:1325:1359	Episode		hover=None prompt=None profile=LinKa
-136	click	Replays	ui_click	
-137	move:700:483	Replays	ui_move	
-138	click	Replays		
-139	move:1964:1288	Replays	ui_move	
-140	click	Episode	ui_click	hover=None prompt=None profile=LinKa
-141	move:1967:1242	Episode		hover=None prompt=None profile=LinKa
-142	click	Registry	ui_click	ids=["REA", "LinKa"] sel=1 active=LinKa
-143	move:1869:1316	Registry		ids=["REA", "LinKa"] sel=1 active=LinKa
-144	click	Main	ui_click	
+78	click	Credits	ui_click+ui_swish	
+79	move:558:1348	Credits		
+80	click	Credits		
+81	key:Escape	Main	ui_click+ui_swish	
+82	move:558:1192	Main	ui_move	
+83	click	Hotkeys	ui_click+ui_swish	race=Terran sel=None action=None key=None reset=false error=false
+84	move:471:357	Hotkeys	ui_move	race=Terran sel=None action=None key=None reset=false error=false
+85	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
+86	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
+87	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=true error=false
+88	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=true error=false
+89	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=None key=None reset=false error=false
+90	move:1212:352	Hotkeys		race=Terran sel=Some(7) action=None key=None reset=false error=false
+91	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+92	key:H	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
+93	move:549:1344	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=false error=true
+94	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
+95	move:1176:846	Hotkeys		race=Terran sel=Some(7) action=Some(664) key=Some('H') reset=true error=true
+96	click	Hotkeys	ui_click	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+97	move:1220:79	Hotkeys	ui_move	race=Terran sel=Some(7) action=Some(664) key=Some('m') reset=false error=false
+98	click	Hotkeys	ui_click	race=Protoss sel=None action=None key=None reset=false error=false
+99	move:471:357	Hotkeys	ui_move	race=Protoss sel=None action=None key=None reset=false error=false
+100	click	Hotkeys	ui_click	race=Protoss sel=Some(64) action=None key=None reset=false error=false
+101	key:Escape	Main	ui_click+ui_swish	
+102	move:700:300	Main	ui_move	
+103	click	GameType	ui_click+ui_swish	
+104	move:1103:618	GameType		
+105	click	Registry	ui_click+ui_swish	ids=["REA", "LinKa"] sel=0 active=REA
+106	move:800:390	Registry		ids=["REA", "LinKa"] sel=0 active=REA
+107	click	Registry	ui_move	ids=["REA", "LinKa"] sel=1 active=REA
+108	move:1869:1178	Registry		ids=["REA", "LinKa"] sel=1 active=REA
+109	click	Episode	ui_click+ui_swish_out+ui_swish	hover=None prompt=None profile=LinKa
+110	move:660:700	Episode	ui_move	hover=Some(0) prompt=None profile=LinKa
+111	click	Episode	ui_click	hover=None prompt=Some(Zerg) profile=LinKa
+112	move:1535:940	Episode		hover=None prompt=Some(Zerg) profile=LinKa
+113	click	Episode	ui_click	hover=None prompt=None profile=LinKa
+114	fixture:progress:1=10	Episode	ui_move	hover=Some(2) prompt=None profile=LinKa
+115	move:1262:666	Episode	ui_move	hover=Some(1) prompt=None profile=LinKa
+116	click	Mission	ui_click+ui_swish	episode=1 len=13 sel=0 top=0 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+117	move:1794:906	Mission	ui_move	episode=1 len=13 sel=0 top=0 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+118	click	Mission	ui_click	episode=1 len=13 sel=0 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+119	wheel:2	Mission		episode=1 len=13 sel=0 top=3 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+120	key:Down	Mission	ui_move	episode=1 len=13 sel=1 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+121	move:1200:670	Mission	ui_move	episode=1 len=13 sel=1 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+122	click	Mission	ui_click	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+123	move:1794:603	Mission	ui_move	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+124	hold	Mission	ui_click	episode=1 len=13 sel=4 top=1 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+125	move:1794:700	Mission		episode=1 len=13 sel=4 top=3 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+126	move:1794:950	Mission		episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+127	release	Mission		episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+128	move:1477:1015	Mission	ui_move	episode=1 len=13 sel=4 top=5 profile=LinKa next=[10, 12, 22, 32, 40, 49] result=None
+129	click	Episode	ui_click+ui_swish	hover=None prompt=None profile=LinKa
+130	move:1332:1134	Episode		hover=None prompt=None profile=LinKa
+131	click	SavedGames	ui_click+ui_swish	
+132	move:600:380	SavedGames		
+133	click	SavedGames		
+134	move:1917:1283	SavedGames	ui_move	
+135	click	Episode	ui_click+ui_swish_out+ui_swish	hover=None prompt=None profile=LinKa
+136	move:1325:1359	Episode		hover=None prompt=None profile=LinKa
+137	click	Replays	ui_click+ui_swish	
+138	move:700:483	Replays	ui_move	
+139	click	Replays		
+140	move:1964:1288	Replays	ui_move	
+141	click	Episode	ui_click+ui_swish_out+ui_swish	hover=None prompt=None profile=LinKa
+142	move:1967:1242	Episode		hover=None prompt=None profile=LinKa
+143	click	Registry	ui_click+ui_swish	ids=["REA", "LinKa"] sel=1 active=LinKa
+144	move:1869:1316	Registry		ids=["REA", "LinKa"] sel=1 active=LinKa
+145	click	Main	ui_click+ui_swish_out+ui_swish	

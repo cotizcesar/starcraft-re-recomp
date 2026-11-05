@@ -129,6 +129,7 @@ pub const SOUND_NAMES: &[&str] = &[
     "ui_click",
     "ui_move",
     "ui_swish",
+    "ui_swish_out",
     "transmission",
     "terran_yes",
     "zerg_yes",

@@ -25,12 +25,11 @@ REF = ROOT / "engine-rust/docs/original_screenshots"
 BIN = ROOT / "engine-rust/target/release/sc_view"
 
 # Menu captures whose clips must be sampled at the same wall-clock second as
-# the reference.  Phases found by sweeping the 10 s FLC loops in 1/16 s steps;
-# `spinner` is the panel's loadingcircle.gif, swept over its 30 frames.
+# the reference.  Phases found by sweeping the 10 s FLC loops in 1/16 s steps.
 PHASES = {
     "menu": (
         2.75,
-        {"single": 2.75, "multi": 1.875, "exit": 3.0, "spinner": 0.435},
+        {"single": 2.75, "multi": 1.875, "exit": 3.0},
     ),
     "menu-hover-single": (
         8.1875,
@@ -39,7 +38,6 @@ PHASES = {
             "multi": 8.75,
             "exit": 6.5,
             "singleon": 8.1875,
-            "spinner": 0.075,
         },
     ),
     "menu-hover-multi": (
@@ -49,10 +47,16 @@ PHASES = {
             "multi": 6.0625,
             "exit": 6.1875,
             "multion": 5.875,
-            "spinner": 0.585,
         },
     ),
-    "gametype": (9.8125, {"spinner": 0.345}),
+    "gametype": (9.8125, {}),
+    # Credits: 131101 was taken while the list scrolled; the panel clock
+    # (2.0 s auto-scroll delay, then 1 CSS px per frame) at 3.2857 s gives
+    # the capture's offset (sweep over 1/59.5 s frames, 2026-11-04).
+    "credits": (3.2857, {}),
+    # Collections is a translucent modal over the live menu (sweep on
+    # 131005, 2026-11-04).
+    "collections": (2.0, {"single": 3.5, "multi": 4.0, "exit": 2.0}),
     "menu-hover-exit": (
         2.75,
         {
@@ -60,7 +64,6 @@ PHASES = {
             "multi": 1.875,
             "exit": 3.0,
             "exiton": 6.4125,
-            "spinner": 0.525,
         },
     ),
     # Campaign screens: the disks, portraits and mouse-over clips are loop

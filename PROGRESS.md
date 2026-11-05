@@ -23,13 +23,13 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 21 | 21 | 100 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 24 | 24 | 100 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **72** | **74** | **97 %** |
+| **Overall (weighted)** | **100** | **75** | **77** | **97 %** |
 
-_Last updated: 2026-11-04_
+_Last updated: 2026-11-05_
 <!-- progress:summary:end -->
 
 **Currently working on:** the physical two-machine LAN acceptance test (needs
@@ -86,7 +86,10 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Pause, victory, defeat and score screens — `sc_view --shot-screen pause|score`
 - [x] Saved Games and Replays screens, replay player (pause, speed, restart) — `engine-rust/docs/replays.md`
 - [x] Resolutions from 16:9 up to 4K and ultrawide: every screen (front end, briefing, game, score) is the 16:9 picture between black bars, pixel-identical to 16:9 — `engine-rust/docs/gates/ultrawide-diff.txt` (31/31), `scripts/ultrawide_diff.py`, `research/docs/graphics-remastered.md`
-- [x] Main menu details: the panel's animated `loadingcircle.gif` spinner, the build footer in the shipped `blizzard-regular` face, no Battle.net tag offline, mouse-over clips that start on hover without decoder starvation (142 → 0 skipped frames), per-button clip order, footer labels that keep their glyphs on hover — `engine-rust/docs/gates/menu-time-diff.txt`, `engine-rust/docs/gates/menu-hover-text.txt`, session log 2026-11-04 (82)
+- [x] Main menu details: the build footer in the shipped `blizzard-regular` face, no Battle.net tag offline, mouse-over clips without decoder starvation (142 → 0 skipped frames), per-button clip order, footer labels that keep their glyphs on hover — `engine-rust/docs/gates/menu-time-diff.txt`, `engine-rust/docs/gates/menu-hover-text.txt`, session log 2026-11-04 (82)
+- [x] Menu animation and movie fixes: clips pause off screen and never fast-forward (98 → 0 skipped frames after a campaign visit), mouse-over loops run on one clock (retail recording), movie audio at the mixer rate (2x speed fixed), films fill the 16:9 box at their 15 fps — `menu_clips_pause_off_screen_and_never_fast_forward`, `movie_audio_decodes_at_the_mixer_rate`, `movies_fill_the_16_9_box`, session log 2026-11-05 (86)
+- [x] Menu frame time at 3440x1440: Options 101 → 15 ms, Replays 45 → 18, Episode 40 → 8, Collections 40 → 16, Registry/Saved 37 → 11, Hotkeys 25 → 13 (static layers cached, exact fast paths, no per-frame art clones) — `engine-rust/docs/gates/menu-draw-time.txt`, 39/51 visual-gate screens bit-identical
+- [x] Collections as a translucent modal over the live menu (131005: 6.39 → 4.38), menu panel introduction instead of the Battle.net spinner, swish-in/out sounds on screen changes — `engine-rust/docs/gates/ui-visual-diff.txt`, `engine-rust/docs/gates/menu-walkthrough-run.txt`
 - [x] Registry and Load Saved Game drawn from the shipped `glulogin`/`gluload` dialogs and `pList` plates (retail mean 3.19 → 1.32 and 6.99 → 1.18), Load Replay information from the selected replay's metadata — `engine-rust/docs/gates/ui-visual-diff.txt`, `menu::LOGIN_DIALOG`/`LOAD_DIALOG` tests
 - [x] Glue screen transitions: the plates of Registry, Saved Games and Load Replay slide in (×0.75 per 1/30 s step) and out (2^n − 1 UI px), text only when settled, measured on a 60 fps retail recording — `engine-rust/docs/gates/glue-swish.txt`, `scripts/glue_swish_check.py`, `menu::swish_*` tests, session log 2026-11-04 (84)
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`

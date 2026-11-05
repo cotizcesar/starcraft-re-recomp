@@ -32,10 +32,10 @@ pub mod campaign;
 pub mod campaign_progress;
 pub mod cinematic;
 pub mod combat;
+pub mod credits;
 pub mod data;
 pub mod dds;
 pub mod economy;
-pub mod gif;
 #[rustfmt::skip]
 pub mod handlers;
 pub mod hd_anim;

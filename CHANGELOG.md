@@ -4,9 +4,40 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Menu playback, movies and frame time
+
+### Fixed
+- Menu animations no longer speed up after visiting another screen: clip
+  clocks pause while a clip is not drawn and never fast-forward through
+  queued frames (98 skipped-frame events -> 0 on a menu/campaign/menu
+  round trip).  Mouse-over loops (the Single Player hologram grid) play
+  their whole loop on one clock, as on the retail recording.
+- Movie soundtracks played twice as fast (decoded at 22 050 Hz, played at
+  44 100 Hz); intros now decode at their authored 15 fps; the SD Blizzard
+  logo fills the 16:9 box like the HD films.
+- Menu frame time at 3440x1440: Options 101 -> 15 ms, Load Replay 45 -> 18,
+  Episode 40 -> 8, Collections 40 -> 16, Registry/Saved Games 37 -> 11,
+  Hotkeys 25 -> 13 (cached static layers, exact fast paths in the rounded
+  CEF primitives, the moon backdrop no longer cloned every frame).
+- Collections is a translucent modal over the live main menu, unselected
+  cells unframed (reference 131005: 6.39 -> 4.38).
+
+### Changed
+- The title-frame panel introduces the game instead of showing the
+  Battle.net loading spinner (no Battle.net here); the GIF decoder that
+  only drew that spinner is removed.
+- Screen changes play the glue swish: `swishin` when a screen appears,
+  `swishout` when a classic list dialog leaves (cache marker v18).
+
 ## 2026-11-04 — Front-end fidelity and ultrawide
 
 ### Added
+- Credits behave like the retail client (recording + shipped
+  `creditspanel.js`): hard cut in, a 2 s hold, then the list scrolls at
+  1 CSS px per frame (89 px/s at 1440p); Up/Down accelerate, the wheel
+  pauses the auto scroll, only Esc/Enter leave.  Text laid out as the CEF
+  page (Eurostile Extended, DirectWrite metrics, synthetic-bold title,
+  black halo, clipped list box) instead of the 8x8 bitmap font.
 - Registry and Load Saved Game drawn from the shipped `glulogin`/`gluload`
   dialogs: the `glue/login`/`glue/load` `pList` plates (bevelled New ID /
   Delete bays) and `FLCBTN` labels in Eurostile Extended with the hotkey

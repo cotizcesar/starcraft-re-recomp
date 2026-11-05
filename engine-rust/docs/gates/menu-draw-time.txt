@@ -1,0 +1,15 @@
+# Menu draw time at 3440x1440 (sc_view --menu-script wait-draw, GC_FPS=1), 2026-11-05
+# Before this change: Options 101.0, Replays 44.8, Episode 40.0, Collections 39.8, Registry/Saved 36.6, Hotkeys 24.7 ms mean
+draw Main: 55 frames, mean 11.5 ms, worst 99.6 ms
+draw Options { tab: Speed }: 48 frames, mean 15.4 ms, worst 24.8 ms
+draw Main: 11 frames, mean 12.0 ms, worst 16.4 ms
+draw Collections: 48 frames, mean 15.7 ms, worst 24.0 ms
+draw Main: 14 frames, mean 6.8 ms, worst 8.0 ms
+draw Hotkeys { race: Terran }: 53 frames, mean 12.6 ms, worst 16.6 ms
+draw Main: 13 frames, mean 9.1 ms, worst 14.2 ms
+draw GameType: 40 frames, mean 14.2 ms, worst 20.8 ms
+draw Registry: 56 frames, mean 10.9 ms, worst 16.3 ms
+draw Episode: 60 frames, mean 9.3 ms, worst 26.2 ms
+draw SavedGames: 57 frames, mean 10.4 ms, worst 13.4 ms
+draw Episode: 26 frames, mean 7.7 ms, worst 11.3 ms
+draw Replays: 44 frames, mean 18.1 ms, worst 20.6 ms

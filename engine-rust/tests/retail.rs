@@ -78,7 +78,7 @@ fn casc_returns_the_documented_retail_files() {
     }
     assert_eq!(install.content_size("arr/units.dat"), Some(19_876));
 
-    // The nine effects the mixer uses are read from the user's CASC storage.
+    // The ten effects the mixer uses are read from the user's CASC storage.
     let sounds: &[(&str, &str)] = &[
         (
             "ui_click",
@@ -91,6 +91,10 @@ fn casc_returns_the_documented_retail_files() {
         (
             "ui_swish",
             "ac1462c2a9b2f2dabad04d61cbbb8dd90f62e1e5f285d77897f82d433c239bee",
+        ),
+        (
+            "ui_swish_out",
+            "e5566d7bceb503af6686b3d5c146055307ccf3d4644a985d5e8aaa7c178a26ca",
         ),
         (
             "transmission",
@@ -417,7 +421,7 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
     assert!(sprites.has(galaxycraft::ids::unit::ZEALOT));
     assert!(sprites.has(galaxycraft::ids::unit::ZERGLING));
     let sounds = SoundBank::load(&dir.join("sound"));
-    assert_eq!(sounds.len(), 9);
+    assert_eq!(sounds.len(), 10);
 
     // Retail console plates, command icons, wireframes and the UI layouts.
     let console = ConsoleArt::load(&dir, Race::Terran).expect("terran console");

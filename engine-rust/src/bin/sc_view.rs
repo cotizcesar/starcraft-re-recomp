@@ -63,7 +63,9 @@ use galaxycraft::voice::{VoiceBank, VoiceCue};
 const HUD_H: i32 = 240;
 /// Intro movie playback: 12 fps at 960 px wide keeps the decoder ahead of
 /// the clock on a laptop CPU while still looking like film, not a slideshow.
-const INTRO_FPS: f32 = 12.0;
+/// The retail intro movies are authored at 15 fps (`smk/*.webm`); decoding
+/// at a lower rate dropped one frame in five.
+const INTRO_FPS: f32 = 15.0;
 const INTRO_WIDTH: u32 = 960;
 const VIEW_W: usize = 1280;
 const VIEW_H: usize = 960;
@@ -461,6 +463,10 @@ struct MenuClip {
     /// `--menu-at` captures pin the first decoded frame instead of advancing
     /// with wall-clock time, so repeated renders are bit-identical.
     frozen: bool,
+    /// When `frame` was last called: the clock pauses while the clip is not
+    /// drawn (another screen is up), so it does not race ahead and then
+    /// fast-forward through the queued frames on return.
+    last_pull: Option<Instant>,
     /// Cached `RgbaFrame::has_alpha`; scanning 1.2M pixels per clip per frame
     /// was part of the menu's frame cost.
     has_alpha: bool,
@@ -622,6 +628,7 @@ impl MenuClip {
             frames,
             start,
             frozen,
+            last_pull: None,
             has_alpha: false,
             alpha_known: false,
         };
@@ -689,31 +696,15 @@ impl MenuClip {
         self.rx = Some(rx);
     }
 
-    /// Mouse-over clips run on their own clock from frame 0 when the pointer
-    /// enters the button.  The worker has pre-decoded the first chunks while
-    /// the clip was hidden, so the first frame is on screen at once.
-    fn start_hover(&mut self) {
-        if self.frozen {
-            return;
-        }
-        if self.decoded == 0 {
-            self.started = Instant::now();
-        } else {
-            self.restart();
-        }
-    }
-
-    /// Rewind a mouse-over clip when the pointer leaves, so the next hover
-    /// starts from a pre-decoded frame 0 instead of a stale clock (which
-    /// starved the buffer and made the overlay freeze, then jump).
-    fn stop_hover(&mut self) {
-        if !self.frozen {
-            self.restart();
-        }
-    }
-
     /// Frame to draw for this instant.
     fn frame(&mut self) -> Option<&galaxycraft::video::RgbaFrame> {
+        if !self.frozen {
+            let now = Instant::now();
+            if let Some(gap) = self.last_pull.map(|t| now - t) {
+                self.started += clip_pause_shift(gap);
+            }
+            self.last_pull = Some(now);
+        }
         let mut want = if self.frozen {
             1
         } else {
@@ -747,19 +738,15 @@ impl MenuClip {
                 }
             }
         }
-        if clip_trace() && !self.frozen && want > self.decoded + 1 {
-            // Diagnostic (`GC_CLIP_TRACE`): the decoder fell behind the
-            // playback clock, so this frame skips ahead.
-            eprintln!(
-                "clip {} starved: want {} decoded {}",
-                self.path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("?"),
-                want,
-                self.decoded
-            );
+        // Never fast-forward: when the clock is ahead of the decoder (a
+        // stall), slide it back so playback resumes at the authored rate.
+        if !self.frozen && self.buffer.is_empty() {
+            if let Some(behind) = clip_lag_shift(want, self.decoded, self.fps) {
+                self.started += behind;
+                want = self.decoded + 1;
+            }
         }
+        let before = self.decoded;
         while self.decoded < want {
             match self.buffer.pop_front() {
                 Some(f) => {
@@ -768,6 +755,18 @@ impl MenuClip {
                 }
                 None => break,
             }
+        }
+        if clip_trace() && !self.frozen && self.decoded > before + 1 {
+            // Diagnostic (`GC_CLIP_TRACE`): more than one authored frame in
+            // a single draw, i.e. visible fast-forward.
+            eprintln!(
+                "clip {} skipped {} frames",
+                self.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?"),
+                self.decoded - before - 1
+            );
         }
         if !self.alpha_known {
             if let Some(f) = self.current.as_ref() {
@@ -853,6 +852,29 @@ fn clip_trace() -> bool {
     *TRACE.get_or_init(|| std::env::var_os("GC_CLIP_TRACE").is_some())
 }
 
+/// A pause between two `frame` calls longer than this is time the clip was
+/// not on screen; its clock skips it.
+const CLIP_PAUSE_GAP: Duration = Duration::from_millis(150);
+/// Frames the clock may run ahead of the decoder before it is re-anchored.
+const CLIP_MAX_LAG: u64 = 2;
+
+/// Clock shift for a gap between two `frame` calls: a pause (the clip was
+/// not drawn) is skipped entirely, ordinary frame gaps are kept.
+fn clip_pause_shift(gap: Duration) -> Duration {
+    if gap > CLIP_PAUSE_GAP {
+        gap
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// Clock shift that brings the clock back to `decoded + 1` when it runs
+/// more than [`CLIP_MAX_LAG`] frames ahead of an empty decoder buffer.
+fn clip_lag_shift(want: u64, decoded: u64, fps: f32) -> Option<Duration> {
+    (want > decoded + CLIP_MAX_LAG)
+        .then(|| Duration::from_secs_f32((want - decoded - 1) as f32 / fps.max(1.0)))
+}
+
 /// Longest wait for the first frame of a frozen (capture) clip.
 const FROZEN_CLIP_WAIT: Duration = Duration::from_secs(60);
 
@@ -928,6 +950,38 @@ impl Default for LanUi {
 }
 
 /// One menu input tick (keys pressed this frame, pointer, left button).
+/// The Credits screen's CEF panel (see `galaxycraft::credits`): scroll
+/// state, animation frames run since it appeared, held arrow keys, pending
+/// wheel notches, the layout for the current box height and the rendered
+/// lines (text coverage and text-shadow alpha, independent of the scroll).
+#[derive(Default)]
+struct CreditsView {
+    scroll: galaxycraft::credits::CreditsScroll,
+    frames: u64,
+    since: Option<Instant>,
+    keys: (bool, bool),
+    wheel: i32,
+    layout: Option<(i32, galaxycraft::credits::CreditsLayout)>,
+    masks: std::collections::HashMap<usize, CreditMask>,
+    /// CSS fallback faces after Eurostile Extended (`BlizzardGlobal`,
+    /// `UDTypos510B_P_H`), read from the install when a line first needs a
+    /// glyph Eurostile lacks.
+    fallback: Option<Vec<galaxycraft::text::UiFont>>,
+    /// The composed backdrop and panel for one framebuffer size.
+    backdrop: Option<((usize, usize), Vec<u32>)>,
+}
+
+/// One rendered credit line: `x`/`top` place its top-left corner relative
+/// to the list box's left edge and the line's baseline.
+struct CreditMask {
+    x: i32,
+    top: i32,
+    w: usize,
+    h: usize,
+    text: Vec<u8>,
+    shadow: Vec<u8>,
+}
+
 struct MenuInput {
     keys: Vec<Key>,
     mouse: Option<(i32, i32)>,
@@ -1003,6 +1057,14 @@ struct App {
     /// Backdrop resampled once to the 16:9 content box (the 3412x1920 art is
     /// 25 MB decoded; bilinear-scaling it every frame is wasted work).
     backdrop_fit: Option<(usize, usize, DdsImage)>,
+    /// `glue/palnl/backgnd.dds` scaled to the content box.
+    moon_fit: Option<Framebuffer>,
+    /// Options plate per (window size, active tab).
+    options_plate: Option<((i32, i32, usize), LayerCache)>,
+    /// Collections chrome per window size.
+    collections_layer: Option<((i32, i32), LayerCache)>,
+    /// Episode screen static layer per (window size, expansion).
+    episode_static: Option<((i32, i32, bool), Framebuffer)>,
     /// F10 mission statistics panel.
     show_stats: bool,
     /// Cached UI scale/origin for this framebuffer (also used by mouse hit
@@ -1113,8 +1175,8 @@ struct App {
     campaign_prompt: Option<galaxycraft::campaign_progress::Campaign>,
     lobby_races: Vec<LobbyRace>,
     game_menu_sel: usize,
-    #[allow(dead_code)]
-    credits_scroll: usize,
+    /// Credits panel (layout, scroll animation, cached line masks).
+    credits_view: CreditsView,
     paused: bool,
     /// `Some(true)` victory, `Some(false)` defeat.
     game_result: Option<bool>,
@@ -1210,8 +1272,6 @@ struct App {
     lan: LanUi,
     /// Remastered menu space layers (loaded once from the install).
     menu_layers: Option<MenuLayers>,
-    /// Button whose mouse-over clip is running (its clock starts on hover).
-    menu_hover_clip: Option<usize>,
     /// Classic-dialog swish in progress and the screen drawn last frame.
     glue_swish: Option<GlueSwish>,
     swish_screen: Option<MenuScreen>,
@@ -1237,9 +1297,6 @@ struct App {
     menu_at: Option<f32>,
     menu_phases: std::collections::HashMap<String, f32>,
     /// `loadingcircle.gif` and its frames resampled for the current size.
-    menu_spinner: Option<galaxycraft::gif::Gif>,
-    menu_spinner_scaled: Option<(i32, Vec<galaxycraft::dds::DdsImage>)>,
-    menu_spinner_started: Instant,
     /// Cached terrain minimap for the Create screen: (map index, 128x128 RGB).
     lobby_preview: Option<(usize, Vec<u32>)>,
     /// Hotkeys browser: hovered/selected unit and the icon rectangles drawn
@@ -1690,6 +1747,164 @@ fn draw_space_backdrop(fb: &mut Framebuffer) {
     }
 }
 
+/// Render one credit line's coverage and text-shadow alpha.  The pen is
+/// centred in the list box (`text-align: center`, sub-pixel x); glyphs
+/// missing from Eurostile Extended come from the CSS fallback faces.  The
+/// `h1` is Chromium's synthetic bold: the outline grows by `px / 32`
+/// (towards the advance, `px / 64` up and down) and every advance by 1 px (measured: "StarCraft" ink 360 px
+/// against 350.4 regular, 9.6 = 8 x 1 + 1.9).  The six `0 0 1px #000`
+/// shadows are one blurred copy (sigma 0.5 CSS px) applied six times.
+fn render_credit_line(
+    ext: &mut galaxycraft::text::UiFont,
+    fallback: &mut [galaxycraft::text::UiFont],
+    line: &galaxycraft::credits::CreditLine,
+    lx: f32,
+    lw: f32,
+    scale: f32,
+) -> CreditMask {
+    let px = line.px;
+    let tracking = if line.bold { 1.0 } else { 0.0 };
+    // Split into runs per face.
+    let mut runs: Vec<(usize, String)> = Vec::new();
+    for ch in line.text.chars() {
+        let face = if ext.has_glyph(ch) {
+            0
+        } else {
+            fallback
+                .iter()
+                .position(|f| f.has_glyph(ch))
+                .map_or(0, |i| i + 1)
+        };
+        match runs.last_mut() {
+            Some((f, t)) if *f == face => t.push(ch),
+            _ => runs.push((face, ch.to_string())),
+        }
+    }
+    let measure = |face: usize,
+                   t: &str,
+                   ext: &galaxycraft::text::UiFont,
+                   fb: &[galaxycraft::text::UiFont]| {
+        let f = if face == 0 { ext } else { &fb[face - 1] };
+        f.measure_cef(t, px, tracking) + tracking
+    };
+    let width: f32 = runs
+        .iter()
+        .map(|(f, t)| measure(*f, t, ext, fallback))
+        .sum();
+    // Glyph origins are whole pixels (no sub-pixel positioning) and the
+    // list sits 1 px left of the CSS box.  Measured on the recording: after
+    // flooring, every line is 1.0 +- 0.4 px left of the CSS centring.
+    let left = (lx - 1.0 + (lw - width) / 2.0).floor();
+    let pad = (px * 0.25).ceil() as i32 + 4;
+    let x0 = left.floor() as i32 - pad;
+    let (w, h) = (
+        (width.ceil() as i32 + 2 * pad) as usize,
+        (px * 1.6) as usize + 2 * pad as usize,
+    );
+    let ascent = (px * 1.05).ceil() as i32 + pad;
+    let pen0 = left - x0 as f32;
+    let draw = |dx: f32,
+                dy: f32,
+                ext: &mut galaxycraft::text::UiFont,
+                fb: &mut [galaxycraft::text::UiFont]| {
+        let mut buf = Framebuffer::new(w, h);
+        buf.clear(Rgb::new(0, 0, 0));
+        let mut pen = pen0 + dx;
+        for (face, t) in &runs {
+            let f = if *face == 0 {
+                &mut *ext
+            } else {
+                &mut fb[*face - 1]
+            };
+            let white = Rgb::new(255, 255, 255);
+            pen = f.draw_cef(
+                &mut buf,
+                pen,
+                ascent as f32 + dy,
+                t,
+                px,
+                tracking,
+                white,
+                white,
+            ) + tracking;
+        }
+        buf.pixels
+            .iter()
+            .map(|p| (p & 0xff) as u8)
+            .collect::<Vec<u8>>()
+    };
+    let mut text = draw(0.0, 0.0, ext, fallback);
+    if line.bold {
+        let r = px / 64.0;
+        // The emboldening widens glyphs towards the advance (right).
+        for (dx, dy) in [
+            (r, 0.0),
+            (2.0 * r, 0.0),
+            (0.0, -r),
+            (0.0, r),
+            (r, -r),
+            (r, r),
+            (2.0 * r, -r),
+            (2.0 * r, r),
+        ] {
+            let more = draw(dx, dy, ext, fallback);
+            for (a, b) in text.iter_mut().zip(more) {
+                *a = (*a).max(b);
+            }
+        }
+    }
+    // Blink blurs a `1px` shadow with sigma = radius / 2 (CSS px).
+    let sigma = 0.5 * scale;
+    let shadow = text_shadow(&text, w, h, sigma);
+    CreditMask {
+        x: x0 - lx.floor() as i32,
+        top: -ascent,
+        w,
+        h,
+        text,
+        shadow,
+    }
+}
+
+/// Six stacked `0 0 1px #000` shadows: blurred coverage `b`, combined alpha
+/// `1 - (1 - b)^6`.
+fn text_shadow(text: &[u8], w: usize, h: usize, sigma: f32) -> Vec<u8> {
+    let r = (sigma * 3.0).ceil().max(1.0) as i32;
+    let kernel: Vec<f32> = (-r..=r)
+        .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let sum: f32 = kernel.iter().sum();
+    let kernel: Vec<f32> = kernel.iter().map(|v| v / sum).collect();
+    let src: Vec<f32> = text.iter().map(|&v| v as f32 / 255.0).collect();
+    let mut tmp = vec![0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (j, k) in kernel.iter().enumerate() {
+                let xx = x as i32 + j as i32 - r;
+                if xx >= 0 && (xx as usize) < w {
+                    acc += src[y * w + xx as usize] * k;
+                }
+            }
+            tmp[y * w + x] = acc;
+        }
+    }
+    let mut out = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (j, k) in kernel.iter().enumerate() {
+                let yy = y as i32 + j as i32 - r;
+                if yy >= 0 && (yy as usize) < h {
+                    acc += tmp[yy as usize * w + x] * k;
+                }
+            }
+            out[y * w + x] = ((1.0 - (1.0 - acc.min(1.0)).powi(6)) * 255.0).round() as u8;
+        }
+    }
+    out
+}
+
 /// Extract the credit list from the shipped web bundle.
 ///
 /// The bundle embeds one large array of `{name:"…",style:N}` objects; the
@@ -1868,6 +2083,17 @@ fn draw_poster_rgba_additive(
             let i10 = row0 + x1 * 4;
             let i01 = row1 + x0 * 4;
             let i11 = row1 + x1 * 4;
+            let a = bilerp(
+                fr.rgba[i00 + 3] as u32,
+                fr.rgba[i10 + 3] as u32,
+                fr.rgba[i01 + 3] as u32,
+                fr.rgba[i11 + 3] as u32,
+                tx,
+                ty,
+            );
+            if a == 0 {
+                continue;
+            }
             let r = bilerp(
                 fr.rgba[i00] as u32,
                 fr.rgba[i10] as u32,
@@ -1892,17 +2118,6 @@ fn draw_poster_rgba_additive(
                 tx,
                 ty,
             );
-            let a = bilerp(
-                fr.rgba[i00 + 3] as u32,
-                fr.rgba[i10 + 3] as u32,
-                fr.rgba[i01 + 3] as u32,
-                fr.rgba[i11 + 3] as u32,
-                tx,
-                ty,
-            );
-            if a == 0 {
-                continue;
-            }
             let keep = (a * (255 - dim8) + 127) / 255;
             let dst = dst_row[ox as usize];
             let ar = (dst >> 16) & 0xff;
@@ -2477,14 +2692,26 @@ fn cef_band(
     let y0 = sb[1].floor().max(0.0) as i32;
     let x1 = (sb[2].ceil() as i32).min(fb.width);
     let y1 = (sb[3].ceil() as i32).min(fb.height);
+    // A pixel whose whole square is inside a clip rect (or with no clips).
+    let square_in_clip = |x: f32, y: f32| {
+        clips.is_empty()
+            || clips
+                .iter()
+                .any(|c| x >= c[0] && x + 1.0 <= c[2] && y >= c[1] && y + 1.0 <= c[3])
+    };
     for y in y0..y1 {
         for x in x0..x1 {
             let d = sdf_round_box(x as f32 + 0.5, y as f32 + 0.5, sb, rs);
             if d > 1.0 || (ts > 0.0 && d < -(ts + 1.0)) {
                 continue;
             }
-            let mut n = 0u32;
-            for j in 0..4 {
+            // Exact shortcut: the distance is 1-Lipschitz, so with the
+            // centre 0.75 px inside the shape (and inside the band's inner
+            // edge) every sample of the pixel is inside: full coverage.
+            let solid =
+                d <= -0.75 && (ts <= 0.0 || d >= -ts + 0.75) && square_in_clip(x as f32, y as f32);
+            let mut n = if solid { 16u32 } else { 0 };
+            for j in 0..if solid { 0 } else { 4 } {
                 for i in 0..4 {
                     let (px, py) = (
                         x as f32 + (i as f32 + 0.5) / 4.0,
@@ -2587,14 +2814,22 @@ const GLUE_BIG_PX: f32 = 47.4;
 /// (unit name), `RC_SMALLTEXT` 25.4 px/em (stat rows), colour (223,223,255).
 /// Face of the in-game HUD text (see `GlueFace::Hud`).
 const HUD_FONT: &str = "font/blizzard-regular.ttf";
-/// Spinner of the main menu's CEF ad panel (`.loadingSpinner`).
-const MENU_SPINNER_GIF: &str = "webui/dist/lib/images/loadingcircle.gif";
-/// Spinner box in 640x480 UI pixels and its centre, measured on reference
-/// 130637: the ring's ink is 57 px across at 1440p and the GIF's ring fills
-/// 614 of its 650 px, so the frame is drawn 60 px (20 UI px) wide, centred
-/// on screen (2305, 505) = UI (515.0, 168.33).
-const MENU_SPINNER_UI: f32 = 20.0;
-const MENU_SPINNER_CENTRE: (f32, f32) = (515.0, 168.33);
+/// Introduction shown in the title-frame panel above Exit.  The retail
+/// client fills that panel with Battle.net news (a loading spinner offline);
+/// this client has no Battle.net, so the panel introduces the game instead
+/// (user request, 2026-11-04).
+const MENU_PANEL_TITLE: &str = "Welcome, Commander";
+const MENU_PANEL_TEXT: &[&str] = &[
+    "GalaxyCraft is a reconstruction of StarCraft: Remastered 1.23, rebuilt \
+     from the evidence of the original game.",
+    "Play the original and Brood War campaigns, custom games against the \
+     computer, replays and LAN matches. No Battle.net connection is needed.",
+    "Every image, sound, film and map comes from your own StarCraft \
+     installation.",
+];
+/// Panel interior in 640x480 UI px (inside the red border of
+/// `titleframe_bg`, control 22 at 413,66 205x205).
+const MENU_PANEL_RECT: (f32, f32, f32, f32) = (421.0, 76.0, 189.0, 186.0);
 /// Retail build footer of the main menu (reference 130637).
 const BUILD_FOOTER: &str = "1.23.10.13515 | enUS | 64-bit";
 /// Footer em size and anchors in 640x480 UI pixels; tuned so the drawn ink
@@ -3560,10 +3795,34 @@ fn draw_options_plate(fb: &mut Framebuffer, s: CefSpace, rows: &[f32; 5], active
     }
 }
 
+/// Columns `[a, b)` of a `rounded_sdf` row where the distance is exactly
+/// `-r` (the row is outside the corner bands and the pixel centre is inside
+/// the straight part): `None` for rows that cross a corner.  Lets the
+/// rounded primitives fill the long middle runs without per-pixel maths.
+fn rounded_flat_span(yy: i32, x: i32, y: i32, w: i32, h: i32, r: f32) -> Option<(i32, i32)> {
+    let (rx, ry) = (w as f32 / 2.0, h as f32 / 2.0);
+    let r = r.min(rx).min(ry).max(0.0);
+    let qy = ((yy as f32 + 0.5 - (y as f32 + ry)).abs() - (ry - r)).max(0.0);
+    if qy > 0.0 {
+        return None;
+    }
+    // qx == 0 for |px - cx| <= rx - r, with px the pixel centre.
+    let m = r.ceil() as i32 + 1;
+    (w > 2 * m).then_some((x + m, x + w - m))
+}
+
 /// Opaque rounded fill (the CEF dialog plates have a 16 px radius at 3x).
 fn rounded_fill(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, r: f32, color: Rgb) {
     for yy in y..y + h {
+        let flat = rounded_flat_span(yy, x, y, w, h, r);
+        if let Some((a, b)) = flat {
+            // d = -r <= 0 on the whole span.
+            fb.rect(a, yy, b - a, 1, color);
+        }
         for xx in x..x + w {
+            if flat.is_some_and(|(a, b)| xx >= a && xx < b) {
+                continue;
+            }
             if rounded_sdf(
                 xx as f32 + 0.5,
                 yy as f32 + 0.5,
@@ -3597,8 +3856,20 @@ fn rounded_band(
     if iw <= 0 || ih <= 0 {
         return;
     }
+    let rb = (r - inset as f32).max(0.0);
     for yy in iy..iy + ih {
+        let flat = rounded_flat_span(yy, ix, iy, iw, ih, rb);
+        if let Some((a, b)) = flat {
+            // d = -r on the span: painted only when the band reaches it.
+            let d = -rb.min(iw as f32 / 2.0).min(ih as f32 / 2.0);
+            if d > -(t as f32) && d <= 0.0 {
+                fb.rect(a, yy, b - a, 1, color);
+            }
+        }
         for xx in ix..ix + iw {
+            if flat.is_some_and(|(a, b)| xx >= a && xx < b) {
+                continue;
+            }
             let d = rounded_sdf(
                 xx as f32 + 0.5,
                 yy as f32 + 0.5,
@@ -3606,7 +3877,7 @@ fn rounded_band(
                 iy as f32,
                 iw as f32,
                 ih as f32,
-                (r - inset as f32).max(0.0),
+                rb,
             );
             if d > -(t as f32) && d <= 0.0 {
                 fb.put(xx, yy, color);
@@ -3617,8 +3888,25 @@ fn rounded_band(
 
 /// Black fill with alpha, clipped to a rounded rectangle.
 fn rounded_fill_alpha(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, r: f32, alpha: u8) {
+    let black = Rgb::new(0, 0, 0);
     for yy in y..y + h {
+        let flat = rounded_flat_span(yy, x, y, w, h, r);
+        if let Some((a, b)) = flat {
+            let re = r.min(w as f32 / 2.0).min(h as f32 / 2.0).max(0.0);
+            let cov = (0.5 + re).clamp(0.0, 1.0);
+            let k = (alpha as f32 * cov) as u8;
+            if yy >= 0 && yy < fb.height {
+                let stride = fb.width as usize;
+                let row = &mut fb.pixels[yy as usize * stride..(yy as usize + 1) * stride];
+                for p in &mut row[a.clamp(0, fb.width) as usize..b.clamp(0, fb.width) as usize] {
+                    *p = Rgb(*p).blend(black, k).0;
+                }
+            }
+        }
         for xx in x..x + w {
+            if flat.is_some_and(|(a, b)| xx >= a && xx < b) {
+                continue;
+            }
             let sdf = rounded_sdf(
                 xx as f32 + 0.5,
                 yy as f32 + 0.5,
@@ -3729,29 +4017,36 @@ fn css_panel3_rounded(
 
 /// Retail CEF button plate: transparent black, #6c0000 border, green text.
 fn dim_screen(fb: &mut Framebuffer, cx: i32, cw: i32, ch: i32, alpha: u8) {
-    for y in 0..ch {
-        for x in 0..cw {
-            let c = fb.get(cx + x, y);
-            fb.put(cx + x, y, c.blend(Rgb::new(0, 0, 0), alpha));
+    let black = Rgb::new(0, 0, 0);
+    let (x0, x1) = (cx.max(0), (cx + cw).min(fb.width));
+    let stride = fb.width as usize;
+    for y in 0..ch.min(fb.height).max(0) {
+        let row = &mut fb.pixels[y as usize * stride..(y as usize + 1) * stride];
+        for p in &mut row[x0.max(0) as usize..x1.max(x0) as usize] {
+            *p = Rgb(*p).blend(black, alpha).0;
         }
     }
 }
 
+/// A movie fills the 16:9 content box, as the retail client draws every
+/// film to its full viewport: the 88 HD films are 1920x1080 already, and the
+/// SD `smk/blizzard.webm` (320x308) is stretched to the box instead of being
+/// shown with square pixels, which squeezed the logo (user report on the
+/// retail client, 2026-11-04; INFERENCE without a retail capture).
 fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     if frame.width == 0 || frame.height == 0 {
         return;
     }
     fb.clear(Rgb::new(0, 0, 0));
-    let (w, h) = (fb.width as f32, fb.height as f32);
-    let scale = (w / frame.width as f32).min(h / frame.height as f32);
-    let dw = (frame.width as f32 * scale).round().max(1.0);
-    let dh = (frame.height as f32 * scale).round().max(1.0);
-    let ox = ((w - dw) / 2.0).round() as i32;
-    let oy = ((h - dh) / 2.0).round() as i32;
-    for y in 0..dh as i32 {
-        let sy = ((y as f32 / scale).min(frame.height as f32 - 1.0)) as usize;
-        for x in 0..dw as i32 {
-            let sx = ((x as f32 / scale).min(frame.width as f32 - 1.0)) as usize;
+    let (ox, oy, dw, dh) = App::content_rect(fb);
+    let (kx, ky) = (
+        dw as f32 / frame.width as f32,
+        dh as f32 / frame.height as f32,
+    );
+    for y in 0..dh {
+        let sy = ((y as f32 / ky) as usize).min(frame.height as usize - 1);
+        for x in 0..dw {
+            let sx = ((x as f32 / kx) as usize).min(frame.width as usize - 1);
             let o = (sy * frame.width as usize + sx) * 3;
             fb.put(
                 ox + x,
@@ -3959,7 +4254,7 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     let _ = std::fs::create_dir_all(&dir);
     let mut log = String::from("step\taction\tscreen\tsounds\tstate\n");
     let mut bank_log = String::from("cue\tloaded_samples\n");
-    for cue in ["ui_move", "ui_click", "ui_swish"] {
+    for cue in ["ui_move", "ui_click", "ui_swish", "ui_swish_out"] {
         let samples = app.sounds.get(cue).map(|s| s.len()).unwrap_or(0);
         bank_log.push_str(&format!("{cue}\t{samples}\n"));
     }
@@ -4030,11 +4325,23 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 mouse_down: false,
                 wheel: 0,
             };
+            let (mut frames, mut draw_ms, mut worst) = (0u32, 0.0f64, 0.0f64);
             while Instant::now() < until {
                 app.handle_menu_input(&held);
                 app.update();
+                let t0 = Instant::now();
                 app.draw_menu(fb);
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                (frames, draw_ms, worst) = (frames + 1, draw_ms + ms, worst.max(ms));
                 std::thread::sleep(Duration::from_millis(16));
+            }
+            if std::env::var_os("GC_FPS").is_some() && frames > 0 {
+                eprintln!(
+                    "draw {:?}: {frames} frames, mean {:.1} ms, worst {:.1} ms",
+                    app.menu_screen,
+                    draw_ms / frames as f64,
+                    worst
+                );
             }
         } else if let Some(ms) = step.strip_prefix("wait:") {
             // Real time passes (network peers can act): keep updating, as
@@ -4602,12 +4909,6 @@ fn main() {
         let bytes = inst.read_by_path("cursor/arrow.dds.grp").ok()?;
         galaxycraft::dds::DdsGrp::parse(&bytes)
     });
-    // Main-menu panel spinner: the CEF ad panel shows `loadingcircle.gif`
-    // while it has no content (always, offline).
-    let menu_spinner = install_handle.as_ref().and_then(|inst| {
-        let bytes = inst.read_by_path(MENU_SPINNER_GIF).ok()?;
-        galaxycraft::gif::decode(&bytes)
-    });
     let mut hotkey_bindings = hotkey_data::HotkeyData::get().default_bindings();
     if let Some(path) = hotkey_save_path() {
         if let Some(saved) = hotkey_data::load_bindings(&path) {
@@ -4663,6 +4964,10 @@ fn main() {
         menu_static: None,
         intro_fit: None,
         backdrop_fit: None,
+        moon_fit: None,
+        options_plate: None,
+        collections_layer: None,
+        episode_static: None,
         video_store,
         intro_poster,
         intro_info,
@@ -4695,7 +5000,7 @@ fn main() {
         campaign_prompt: None,
         lobby_races: vec![LobbyRace::Random; 8],
         game_menu_sel: 6,
-        credits_scroll: 0,
+        credits_view: CreditsView::default(),
         show_stats: false,
         show_leaderboard: false,
         minimap_terrain: true,
@@ -4788,7 +5093,6 @@ fn main() {
         net: None,
         lan: LanUi::default(),
         menu_layers,
-        menu_hover_clip: None,
         glue_swish: None,
         swish_screen: None,
         swish_drawn: std::cell::Cell::new(None),
@@ -4800,9 +5104,6 @@ fn main() {
         collection_sel: 0,
         menu_at,
         menu_phases,
-        menu_spinner,
-        menu_spinner_scaled: None,
-        menu_spinner_started: Instant::now(),
         lobby_preview: None,
         hotkey_hover: None,
         hotkey_sel: None,
@@ -5243,7 +5544,7 @@ fn main() {
             "credits" => {
                 app.intro = false;
                 app.menu = true;
-                app.menu_screen = MenuScreen::Credits;
+                app.open_credits();
                 app.draw_menu(&mut fb);
             }
             "saved" => {
@@ -5501,6 +5802,120 @@ fn main() {
 /// the 16:9 content box never touches.
 fn clear_menu_frame(fb: &mut Framebuffer) {
     fb.clear(Rgb::new(0, 0, 0));
+}
+
+/// Collections plate fill: the CEF `rgba(0,0,0,.5)` (the old 224 hid the
+/// menu that shows through on the retail panel).
+const COLLECTIONS_PLATE_ALPHA: u8 = 128;
+
+/// Greedy word wrap: lines no wider than `max_w` as measured by `measure`
+/// (a single word wider than the line keeps its own line).
+fn wrap_words(text: &str, max_w: i32, mut measure: impl FnMut(&str) -> i32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if !line.is_empty() && measure(&candidate) > max_w {
+            lines.push(std::mem::replace(&mut line, word.to_string()));
+        } else {
+            line = candidate;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// A static translucent layer captured from two renders (over black `B` and
+/// over white `W`): drawing it over any `dst` is, per channel,
+/// `dst * (W - B) / 255 + B`.  Only the rows/columns the layer touches are
+/// kept.
+struct LayerCache {
+    x0: i32,
+    y0: i32,
+    w: i32,
+    /// Per pixel: `B` (0x00RRGGBB) and the per-channel keep factor `W - B`.
+    base: Vec<u32>,
+    keep: Vec<u32>,
+}
+
+impl LayerCache {
+    fn new(over_black: &Framebuffer, over_white: &Framebuffer) -> Self {
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, -1, -1);
+        for y in 0..over_black.height {
+            for x in 0..over_black.width {
+                let i = (y * over_black.width + x) as usize;
+                if over_black.pixels[i] & 0xff_ffff != 0
+                    || over_white.pixels[i] & 0xff_ffff != 0xff_ffff
+                {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        if x1 < 0 {
+            return Self {
+                x0: 0,
+                y0: 0,
+                w: 0,
+                base: Vec::new(),
+                keep: Vec::new(),
+            };
+        }
+        let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+        let mut base = Vec::with_capacity((w * h) as usize);
+        let mut keep = Vec::with_capacity((w * h) as usize);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let i = (y * over_black.width + x) as usize;
+                let (b, wv) = (over_black.pixels[i], over_white.pixels[i]);
+                base.push(b & 0xff_ffff);
+                let ch = |s: u32| ((wv >> s) & 0xff).saturating_sub((b >> s) & 0xff);
+                keep.push((ch(16) << 16) | (ch(8) << 8) | ch(0));
+            }
+        }
+        Self {
+            x0,
+            y0,
+            w,
+            base,
+            keep,
+        }
+    }
+
+    fn apply(&self, fb: &mut Framebuffer) {
+        if self.w == 0 {
+            return;
+        }
+        let stride = fb.width as usize;
+        for (r, (base, keep)) in self
+            .base
+            .chunks(self.w as usize)
+            .zip(self.keep.chunks(self.w as usize))
+            .enumerate()
+        {
+            let y = self.y0 + r as i32;
+            if y < 0 || y >= fb.height {
+                continue;
+            }
+            let row = &mut fb.pixels[y as usize * stride..(y as usize + 1) * stride];
+            for (i, (&b, &k)) in base.iter().zip(keep).enumerate() {
+                let x = self.x0 + i as i32;
+                if x < 0 || x >= fb.width {
+                    continue;
+                }
+                let d = row[x as usize];
+                let ch = |s: u32| {
+                    (((d >> s) & 0xff) * ((k >> s) & 0xff) + 127) / 255 + ((b >> s) & 0xff)
+                };
+                row[x as usize] = (ch(16).min(255) << 16) | (ch(8).min(255) << 8) | ch(0).min(255);
+            }
+        }
+    }
 }
 
 /// Run a screen that lays itself out over the whole frame (briefing pages,
@@ -7702,6 +8117,10 @@ impl App {
                 .map(|(_, y)| -(y.signum() as i32))
                 .unwrap_or(0),
         };
+        if self.menu_screen == MenuScreen::Credits {
+            // Held arrows drive the panel's key scrolling.
+            self.credits_view.keys = (window.is_key_down(Key::Up), window.is_key_down(Key::Down));
+        }
         self.handle_menu_input(&input);
     }
 
@@ -8630,7 +9049,18 @@ impl App {
                     self.mouse_was_down = false;
                 }
             }
-            MenuScreen::Collections | MenuScreen::Credits => {
+            MenuScreen::Credits => {
+                // `creditspanel.js`: wheel ticks scroll the list (and pause
+                // the auto scroll); keyCode 27 / 13 send `Exit`.
+                self.credits_view.wheel += input.wheel;
+                for key in input.keys.iter().copied() {
+                    if matches!(key, Key::Enter | Key::Escape) {
+                        self.menu_screen = MenuScreen::Main;
+                        self.play("ui_click");
+                    }
+                }
+            }
+            MenuScreen::Collections => {
                 let (hit, clicked) = self.menu_pointer(input);
                 if clicked {
                     match hit {
@@ -8969,13 +9399,24 @@ impl App {
     fn advance_glue_swish(&mut self) {
         let current = self.menu_screen.clone();
         let previous = self.swish_screen.replace(current.clone());
-        if self.menu_at.is_some() || !self.menu_phases.is_empty() {
-            self.glue_swish = None;
-            return;
-        }
         let changed = previous
             .as_ref()
             .is_some_and(|p| std::mem::discriminant(p) != std::mem::discriminant(&current));
+        // Transition sounds (user report on the retail client, 2026-11-04:
+        // every screen change "whooshes"): `swishout` when a classic dialog
+        // starts leaving, `swishin` when the next screen shows.
+        let leaving = changed && previous.as_ref().is_some_and(is_glue_list);
+        if leaving {
+            self.play("ui_swish_out");
+        }
+        if self.menu_at.is_some() || !self.menu_phases.is_empty() {
+            // Pinned captures: no motion, the sounds still follow the change.
+            if changed {
+                self.play("ui_swish");
+            }
+            self.glue_swish = None;
+            return;
+        }
         if changed {
             let now = Instant::now();
             self.glue_swish = match previous {
@@ -8983,11 +9424,15 @@ impl App {
                 _ if is_glue_list(&current) => Some(GlueSwish::In { started: now }),
                 _ => None,
             };
+            if !leaving {
+                self.play("ui_swish");
+            }
         }
         self.glue_swish = match self.glue_swish.take() {
             Some(GlueSwish::Out { started, .. })
                 if swish_step(started) >= galaxycraft::menu::swish_out_steps(SWISH_LIST_UI) =>
             {
+                self.play("ui_swish");
                 is_glue_list(&current).then(|| GlueSwish::In {
                     started: Instant::now(),
                 })
@@ -12193,25 +12638,8 @@ impl App {
         // resolution and copy the cached pixels every frame.  Only the clips,
         // entries and profile text are redrawn.
         let t0 = Instant::now();
-        let (w, h) = (fb.width as usize, fb.height as usize);
-        let stale = self
-            .menu_static
-            .as_ref()
-            .map(|(cw, ch, _)| *cw != w || *ch != h)
-            .unwrap_or(true);
-        if stale {
-            let mut cache = Framebuffer::new(w, h);
-            cache.clear(Rgb::new(0, 0, 0));
-            self.draw_menu_backdrop_plain(&mut cache);
-            self.draw_menu_detail_art(&mut cache);
-            self.draw_menu_frame_art(&mut cache, 0, 0);
-            self.menu_static = Some((w, h, cache.pixels));
-        }
-        if let Some((_, _, pixels)) = &self.menu_static {
-            fb.pixels.copy_from_slice(pixels);
-        }
+        self.copy_menu_static(fb);
         let t1 = Instant::now();
-        self.draw_menu_spinner(fb, 0, 0);
         self.draw_menu_clips(fb);
         let t2 = Instant::now();
         self.draw_menu_entries(fb, true);
@@ -12226,6 +12654,29 @@ impl App {
                 (t3 - t2).as_secs_f64() * 1000.0,
                 (t4 - t3).as_secs_f64() * 1000.0
             );
+        }
+    }
+
+    /// Copy the main menu's static layer (backdrop, detail art, title
+    /// frame and panel text), composing it once per window size.
+    fn copy_menu_static(&mut self, fb: &mut Framebuffer) {
+        let (w, h) = (fb.width as usize, fb.height as usize);
+        let stale = self
+            .menu_static
+            .as_ref()
+            .map(|(cw, ch, _)| *cw != w || *ch != h)
+            .unwrap_or(true);
+        if stale {
+            let mut cache = Framebuffer::new(w, h);
+            cache.clear(Rgb::new(0, 0, 0));
+            self.draw_menu_backdrop_plain(&mut cache);
+            self.draw_menu_detail_art(&mut cache);
+            self.draw_menu_frame_art(&mut cache, 0, 0);
+            self.draw_menu_panel_text(&mut cache, 0, 0);
+            self.menu_static = Some((w, h, cache.pixels));
+        }
+        if let Some((_, _, pixels)) = &self.menu_static {
+            fb.pixels.copy_from_slice(pixels);
         }
     }
 
@@ -12274,20 +12725,17 @@ impl App {
         let Some(layers) = &mut self.menu_layers else {
             return;
         };
-        // Hover clock: the entering clip starts at frame 0, the leaving one
-        // rewinds and pre-decodes for the next hover.
-        if self.menu_hover_clip != hover {
-            if let Some(clip) = self.menu_hover_clip.and_then(|i| layers.clip(i, true)) {
-                clip.stop_hover();
-            }
-            if let Some(clip) = hover.and_then(|i| layers.clip(i, true)) {
-                clip.start_hover();
-            }
-            self.menu_hover_clip = hover;
-        }
+        // Every clip runs on one continuous clock, hovered or not: on the
+        // retail recording (2026-11-04) the SingleOn red marker of clip frame
+        // 40 shows 0.12 s after the hover starts, so the mouse-over loop
+        // does not restart on hover.  Hidden mouse-over clips are still
+        // pulled each frame so their decoder keeps pace.
         for (idx, is_hover) in MENU_CLIP_ORDER {
             let (x, y, w, h) = rect(idx, is_hover);
             if is_hover && hover != Some(idx) {
+                if let Some(clip) = layers.clip(idx, true) {
+                    let _ = clip.frame();
+                }
                 continue;
             }
             if let Some(clip) = layers.clip(idx, is_hover) {
@@ -12448,7 +12896,8 @@ impl App {
                 }
                 None
             }
-            MenuScreen::Credits | MenuScreen::Intro { .. } => Some(MenuHit::Skip),
+            // The credits page has no click handler: only Esc / Enter leave.
+            MenuScreen::Intro { .. } => Some(MenuHit::Skip),
             _ => None,
         }
     }
@@ -12510,7 +12959,7 @@ impl App {
                     race: HotkeyRace::Terran,
                 };
             }
-            5 => self.menu_screen = MenuScreen::Credits,
+            5 => self.open_credits(),
             6 => {
                 // Retail `View Intro` replays the title movie (the publisher
                 // logo is only part of the first-launch sequence).
@@ -12906,9 +13355,10 @@ impl App {
     /// sub-screen shift: on 130933 the frame's left arm is at x 2170..2250
     /// of the content box, 142 px left of the shifted art.
     fn draw_menu_backdrop_live(&mut self, fb: &mut Framebuffer) {
-        self.draw_menu_backdrop_plain(fb);
-        self.draw_menu_detail_art(fb);
-        self.draw_menu_frame(fb, 0, 0);
+        // Same static layer as the main menu (backdrop, detail art, frame,
+        // panel text), composed once per size.
+        self.copy_menu_static(fb);
+        self.draw_menu_frame_text(fb);
         self.draw_menu_clips(fb);
         // The live menu labels in their idle faces (nothing hovered); the
         // modal's 149 dim then gives the measured (42,93,22) = 0.416 x
@@ -12967,38 +13417,43 @@ impl App {
         }
     }
 
-    /// Animated `loadingcircle.gif` in the title-frame panel.  It is drawn
-    /// every frame (not in the static cache) and loops every 900 ms; menu
-    /// captures pin it with `--menu-phase spinner=S` or `--menu-at`.
-    fn draw_menu_spinner(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
-        let Some(gif) = &self.menu_spinner else {
+    /// The introduction in the title-frame panel: a pale extended title and
+    /// word-wrapped paragraphs in the build footer's face.
+    fn draw_menu_panel_text(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
+        if std::env::var_os("GC_NO_TEXT").is_some() {
             return;
-        };
-        let (scale, ox, oy) = self.ui_metrics(fb);
-        let size = (MENU_SPINNER_UI * scale).round().max(1.0) as i32;
-        if self.menu_spinner_scaled.as_ref().map(|(s, _)| *s) != Some(size) {
-            let frames = gif
-                .frames
-                .iter()
-                .map(|f| galaxycraft::gif::downsample(&f.image, size as usize, size as usize))
-                .collect();
-            self.menu_spinner_scaled = Some((size, frames));
         }
-        let pinned = self.menu_phases.get("spinner").copied().or(self.menu_at);
-        let elapsed_ms = match pinned {
-            Some(t) => (t.max(0.0) * 1000.0) as u64,
-            None => self.menu_spinner_started.elapsed().as_millis() as u64,
-        };
-        let Some(index) = gif
-            .frame_at(elapsed_ms)
-            .and_then(|f| gif.frames.iter().position(|g| std::ptr::eq(g, f)))
-        else {
+        let (scale, ox, oy) = self.ui_metrics(fb);
+        let (px0, py0, pw, _ph) = MENU_PANEL_RECT;
+        let x = dx + ox + (px0 * scale).round() as i32;
+        let mut y = dy + oy + (py0 * scale).round() as i32;
+        let pale = Rgb::new(0xc6, 0xda, 0xff);
+        if let Some(font) = self.ui_font_hover.as_mut() {
+            let size = 11.0 * scale;
+            font.draw_top(
+                fb,
+                x,
+                y,
+                MENU_PANEL_TITLE,
+                size,
+                0.0,
+                pale,
+                Some(Rgb::new(0, 0, 0)),
+            );
+            y += (17.0 * scale).round() as i32;
+        }
+        let Some(font) = self.ui_font_info.as_mut() else {
             return;
         };
-        if let Some((_, frames)) = &self.menu_spinner_scaled {
-            let x = dx + ox + (MENU_SPINNER_CENTRE.0 * scale).round() as i32 - size / 2;
-            let y = dy + oy + (MENU_SPINNER_CENTRE.1 * scale).round() as i32 - size / 2;
-            frames[index].draw(fb, x, y);
+        let size = 8.5 * scale;
+        let line = (11.5 * scale).round() as i32;
+        let max_w = (pw * scale).round() as i32;
+        for paragraph in MENU_PANEL_TEXT {
+            for text in wrap_words(paragraph, max_w, |t| font.measure(t, size, 0.0)) {
+                font.draw_top(fb, x, y, &text, size, 0.0, pale, Some(Rgb::new(0, 0, 0)));
+                y += line;
+            }
+            y += line / 2;
         }
     }
 
@@ -13048,7 +13503,7 @@ impl App {
     /// screen shows them behind its panel.
     fn draw_menu_frame(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
         self.draw_menu_frame_art(fb, dx, dy);
-        self.draw_menu_spinner(fb, dx, dy);
+        self.draw_menu_panel_text(fb, dx, dy);
         self.draw_menu_frame_text(fb);
     }
 
@@ -13056,11 +13511,24 @@ impl App {
     /// Create screens (`glue/palnl/backgnd.dds`, 16:9 like the content box).
     fn draw_moon_backdrop(&mut self, fb: &mut Framebuffer) {
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let Some(art) = self.glue.as_ref().and_then(|g| g.palnl_backdrop.clone()) else {
-            self.draw_space_scene(fb);
-            return;
-        };
-        art.draw_scaled(fb, cx, 0, cw, ch);
+        // Scaled once per size: the 3840x2160 art used to be cloned and
+        // resampled every frame.
+        if self.moon_fit.as_ref().map(|f| (f.width, f.height)) != Some((cw, ch)) {
+            let Some(glue) = self.glue.as_ref() else {
+                self.draw_space_scene(fb);
+                return;
+            };
+            let Some(art) = glue.palnl_backdrop.as_ref() else {
+                self.draw_space_scene(fb);
+                return;
+            };
+            let mut fit = Framebuffer::new(cw.max(1) as usize, ch.max(1) as usize);
+            art.draw_scaled(&mut fit, 0, 0, cw, ch);
+            self.moon_fit = Some(fit);
+        }
+        if let Some(fit) = &self.moon_fit {
+            copy_into(fb, fit, cx, 0);
+        }
     }
 
     /// Single Player Registry (`rez/glulogin.ui.json`), see
@@ -13380,17 +13848,10 @@ impl App {
     /// content-box edges, the console plates, three FLCBTN slots with their
     /// animated disk/portrait/mouse-over clips, the measured labels and the
     /// four command buttons drawn as text centred in their shipped rects.
-    fn draw_episode(&mut self, fb: &mut Framebuffer) {
-        use galaxycraft::menu::CampaignSlot;
+    /// The Episode screen's static art: black box, backdrop halves and the
+    /// console plates (see `draw_episode`).
+    fn draw_episode_static(&self, fb: &mut Framebuffer, scale: f32, ox: i32) {
         let (cx, cy, cw, ch) = Self::content_rect(fb);
-        let (scale, oxf) = galaxycraft::menu::campaign_scale(cw, ch);
-        let ox = oxf as i32;
-        let expansion = self.episode_sel >= 3;
-        let slots: &[CampaignSlot] = if expansion {
-            &galaxycraft::menu::CAMPAIGN_X_SLOTS
-        } else {
-            &galaxycraft::menu::CAMPAIGN_SLOTS
-        };
         // The campaign screen is black between the shipped art pieces.
         for y in cy..cy + ch {
             fb.rect(cx, y, cw, 1, Rgb::new(0, 0, 0));
@@ -13432,6 +13893,32 @@ impl App {
                 let y = cy + (scale * 370.0).round() as i32;
                 art.draw_scaled(fb, x, y, w, h);
             }
+        }
+    }
+
+    fn draw_episode(&mut self, fb: &mut Framebuffer) {
+        use galaxycraft::menu::CampaignSlot;
+        let (cx, cy, cw, ch) = Self::content_rect(fb);
+        let (scale, oxf) = galaxycraft::menu::campaign_scale(cw, ch);
+        let ox = oxf as i32;
+        let expansion = self.episode_sel >= 3;
+        let slots: &[CampaignSlot] = if expansion {
+            &galaxycraft::menu::CAMPAIGN_X_SLOTS
+        } else {
+            &galaxycraft::menu::CAMPAIGN_SLOTS
+        };
+        // Static layer (black box, `palcs` halves, console plates), composed
+        // once per window size and campaign set; only the clips and the text
+        // are drawn every frame.
+        let key = (fb.width, fb.height, expansion);
+        if self.episode_static.as_ref().map(|c| c.0) != Some(key) {
+            let mut layer = Framebuffer::new(fb.width as usize, fb.height as usize);
+            layer.clear(Rgb::new(0, 0, 0));
+            self.draw_episode_static(&mut layer, scale, ox);
+            self.episode_static = Some((key, layer));
+        }
+        if let Some((_, layer)) = &self.episode_static {
+            fb.pixels.copy_from_slice(&layer.pixels);
         }
         // Which slot carries the keyboard selection (retail opens on the
         // episode chosen in `Select Game Type`).
@@ -14811,7 +15298,21 @@ impl App {
             kx: cw as f32 / 2560.0,
             ky: ch as f32 / 1440.0,
         };
-        draw_options_plate(fb, space, &rows, active_i);
+        // The plate is static per tab: composed once over black and over
+        // white, then applied per channel as `dst * (W - B) / 255 + B`.
+        let key = (fb.width, fb.height, active_i);
+        if self.options_plate.as_ref().map(|c| c.0) != Some(key) {
+            let mut over_black = Framebuffer::new(fb.width as usize, fb.height as usize);
+            over_black.clear(Rgb::new(0, 0, 0));
+            draw_options_plate(&mut over_black, space, &rows, active_i);
+            let mut over_white = Framebuffer::new(fb.width as usize, fb.height as usize);
+            over_white.clear(Rgb::new(255, 255, 255));
+            draw_options_plate(&mut over_white, space, &rows, active_i);
+            self.options_plate = Some((key, LayerCache::new(&over_black, &over_white)));
+        }
+        if let Some((_, layer)) = &self.options_plate {
+            layer.apply(fb);
+        }
         // Extended-face text, fitted with the outline rasteriser on 130933:
         // title 41.5 px/em at pen 581.5 / baseline 267.06; tab labels
         // 30.05 px/em centred on x 680.0, baseline row + 69.
@@ -16356,9 +16857,33 @@ impl App {
     /// grids with width-fit thumbnails, scrollbar and the right-hand
     /// preview/EQUIP/Ok column.
     fn draw_collections(&mut self, fb: &mut Framebuffer) {
-        self.draw_menu_backdrop(fb);
+        // A CEF modal over the running main menu, like Options: the clips,
+        // the entries and the panel spinner show through the translucent
+        // plate (user capture 2026-11-04 and reference 131005).
+        self.draw_menu_backdrop_live(fb);
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        dim_screen(fb, cx, cw, ch, 160);
+        dim_screen(fb, cx, cw, ch, 149);
+        // Everything above the dimmed menu is static: composed once per
+        // window size (see `LayerCache`).
+        let key = (fb.width, fb.height);
+        if self.collections_layer.as_ref().map(|c| c.0) != Some(key) {
+            let (w, h) = (fb.width as usize, fb.height as usize);
+            let mut over_black = Framebuffer::new(w, h);
+            over_black.clear(Rgb::new(0, 0, 0));
+            self.draw_collections_chrome(&mut over_black);
+            let mut over_white = Framebuffer::new(w, h);
+            over_white.clear(Rgb::new(255, 255, 255));
+            self.draw_collections_chrome(&mut over_white);
+            self.collections_layer = Some((key, LayerCache::new(&over_black, &over_white)));
+        }
+        if let Some((_, layer)) = &self.collections_layer {
+            layer.apply(fb);
+        }
+    }
+
+    /// The Collections plate, grid, preview and buttons over the dimmed menu.
+    fn draw_collections_chrome(&mut self, fb: &mut Framebuffer) {
+        let (cx, _cy, _cw, ch) = Self::content_rect(fb);
         let (scale, uox, uoy) = self.ui_metrics(fb);
         let k = ch as f32 / 1440.0;
         let sx = |x: f32| cx + (x * k).round() as i32;
@@ -16378,7 +16903,7 @@ impl App {
         // fill rgba(0,0,0,.5).  The old code drew two plates with a 43 px gap
         // and a 90 % fill (5x too dark).
         let (px, py, pw, ph) = r(357.0, 71.0, 1849.0, 1137.0);
-        rounded_fill_alpha(fb, px, py, pw, ph, 4.0 * k, 224);
+        rounded_fill_alpha(fb, px, py, pw, ph, 4.0 * k, COLLECTIONS_PLATE_ALPHA);
         for t in 0..(5.0 * k).round().max(1.0) as i32 {
             fb.rect_outline(px + t, py + t, pw - t * 2, ph - t * 2, CSS_OUTER);
         }
@@ -16531,19 +17056,18 @@ impl App {
                     }
                 }
             }
-            let border = if selected {
-                Rgb::new(0x9c, 0xb3, 0xfa)
-            } else {
-                Rgb::new(0x45, 0x45, 0x45)
-            };
-            for t in 0..b {
-                fb.rect_outline(
-                    cell_x + t,
-                    cell_y + t,
-                    cell_w - t * 2,
-                    visible_h - t * 2,
-                    border,
-                );
+            // Only the selected cell is framed (#9cb3fa); on 131005 the other
+            // cells show their art up to the edge, with no grey border.
+            if selected {
+                for t in 0..b {
+                    fb.rect_outline(
+                        cell_x + t,
+                        cell_y + t,
+                        cell_w - t * 2,
+                        visible_h - t * 2,
+                        Rgb::new(0x9c, 0xb3, 0xfa),
+                    );
+                }
             }
         }
         // Frame borders are re-stated after the grid so the clipped
@@ -16684,6 +17208,16 @@ impl App {
     }
 
     fn draw_credits(&mut self, fb: &mut Framebuffer) {
+        // The backdrop and panel are static: compose them once per size
+        // (scaling the DDS art every frame cost 35 ms at 3440x1440).
+        let size = (fb.width as usize, fb.height as usize);
+        if let Some((key, pixels)) = &self.credits_view.backdrop {
+            if *key == size && pixels.len() == fb.pixels.len() {
+                fb.pixels.copy_from_slice(pixels);
+                self.draw_credit_lines(fb);
+                return;
+            }
+        }
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         // Backdrop: the shipped metal room (`glue/battlenet/backgnd.dds`).
         match self.glue.as_ref().and_then(|g| g.credits_backdrop.clone()) {
@@ -16710,37 +17244,164 @@ impl App {
             fb.rect(panel.x, panel.y, panel.w, panel.h, Rgb::new(6, 5, 5));
             fb.rect_outline(panel.x, panel.y, panel.w, panel.h, Rgb::new(150, 40, 20));
         }
-        // Text column: the CSS puts the list at 23%..80% of the viewport
-        // width, starting at 10.2% of its height.
+        self.credits_view.backdrop = Some((size, fb.pixels.clone()));
+        self.draw_credit_lines(fb);
+    }
+
+    /// Show the Credits screen: the panel mounts fresh (scrolled to the top,
+    /// its 2000 ms auto-scroll timer starting now).  The retail screen cuts
+    /// in with no transition (recording, one frame).
+    fn open_credits(&mut self) {
+        self.menu_screen = MenuScreen::Credits;
+        let view = &mut self.credits_view;
+        view.scroll = Default::default();
+        view.frames = 0;
+        view.since = Some(Instant::now());
+        view.keys = (false, false);
+        view.wheel = 0;
+    }
+
+    /// CSS fallback faces of the credits list after Eurostile Extended.
+    fn credits_fallback_fonts(&self) -> Vec<galaxycraft::text::UiFont> {
+        let Some(install) = self.install.as_ref() else {
+            return Vec::new();
+        };
+        [
+            "webui/dist/lib/fonts/nimbus(blizzardglobal).ttf",
+            "webui/dist/lib/fonts/udtypos510b_p_h.ttf",
+        ]
+        .iter()
+        .filter_map(|p| {
+            let bytes = install.read_by_path(p).ok()?;
+            galaxycraft::text::UiFont::from_bytes(bytes, p.to_string())
+        })
+        .collect()
+    }
+
+    /// The credits list (`.CreditsPanel`): laid out, scrolled and drawn as
+    /// the CEF page does (see `galaxycraft::credits`).
+    fn draw_credit_lines(&mut self, fb: &mut Framebuffer) {
+        use galaxycraft::credits::{CreditsLayout, EmMetrics, FRAME_HZ, VIEW_CSS};
         let entries = self.credits_entries();
         if entries.is_empty() {
             return;
         }
-        let text_cx = cx + (cw as f32 * 0.515) as i32;
-        // CSS pixels map 1:1 to a 2560x1440 viewport; scale for other sizes.
-        let k = ch as f32 / 1440.0;
-        let green = Rgb::new(180, 252, 116); // #b4fc74
-        let dim = Rgb::new(150, 230, 110);
-        let mut y = -(self.credits_scroll as i32) + (ch as f32 * 0.102) as i32;
-        for (name, style) in entries.iter() {
-            let (size_css, advance, color) = match style {
-                1 => (80.0, 87.0, green),
-                2 => (56.0, 124.0, green),
-                3 => (44.0, 45.0, green),
-                4 => (36.0, 27.0, dim),
-                5 => (28.0, 81.0, green),
-                _ => (20.0, 20.0, green),
+        let (cx, cy, cw, ch) = Self::content_rect(fb);
+        // The CEF view is the centred 4:3 box at 960 CSS px of height.
+        let s = ch as f32 / VIEW_CSS.1;
+        let bw = ch as f32 * 4.0 / 3.0;
+        let bx = cx as f32 + (cw as f32 - bw) / 2.0;
+        let (lx, lw) = (bx + 0.23 * bw, 0.57 * bw);
+        let (ly, lh) = (cy as f32 + 0.102 * ch as f32, 0.83 * ch as f32);
+        if self.credits_view.layout.as_ref().map(|l| l.0) != Some(ch) {
+            let metrics = |f: &Option<galaxycraft::text::UiFont>| {
+                f.as_ref().and_then(|f| EmMetrics::from_font(f.bytes()))
             };
-            let sz = ((size_css * k / 16.0).round() as i32).clamp(1, 6);
-            if !name.is_empty() && y > -40 && y < ch + 40 {
-                let w = name.chars().count() as i32 * 8 * sz;
-                fb.text(text_cx - w / 2, y, name, color, sz);
+            let (Some(title), Some(body)) = (metrics(&self.ui_font_hover), metrics(&self.ui_font))
+            else {
+                return;
+            };
+            let layout = CreditsLayout::new(&entries, title, body, s);
+            self.credits_view.layout = Some((ch, layout));
+            self.credits_view.masks.clear();
+        }
+        // Run the page's requestAnimationFrame loop up to now (headless
+        // captures pin the clock with `--menu-at`).
+        let height = self
+            .credits_view
+            .layout
+            .as_ref()
+            .map_or(0.0, |l| l.1.height);
+        let max_top = ((height - lh) / s).max(0.0);
+        let elapsed = if self.headless {
+            self.menu_at.unwrap_or(0.0) as f64
+        } else {
+            self.credits_view
+                .since
+                .map_or(0.0, |t| t.elapsed().as_secs_f64())
+        };
+        let target = ((elapsed * FRAME_HZ as f64) as u64)
+            .saturating_sub(galaxycraft::credits::SHOWN_LATENCY_FRAMES);
+        let view = &mut self.credits_view;
+        let wheel = std::mem::take(&mut view.wheel);
+        view.scroll.wheel(wheel, max_top);
+        let mut budget = 200_000;
+        while view.frames < target && budget > 0 {
+            view.scroll.set_keys(view.keys.0, view.keys.1);
+            view.scroll.frame(max_top);
+            view.frames += 1;
+            budget -= 1;
+        }
+        // Composited scrolling snaps the offset to device pixels; the
+        // overflow clip is snapped too.
+        let off = (view.scroll.top * s).round();
+        let clip = (
+            lx.round() as i32,
+            ly.round() as i32,
+            (lx + lw).round() as i32,
+            (ly + lh).round() as i32,
+        );
+        let Some((_, layout)) = view.layout.take() else {
+            return;
+        };
+        let mut ext = self.ui_font_hover.take();
+        let mut fallback = view.fallback.take().unwrap_or_default();
+        let green = Rgb::new(0xb4, 0xfc, 0x74);
+        for (i, line) in layout.lines.iter().enumerate() {
+            let base = (ly + line.baseline - off).round() as i32;
+            let reach = (line.px * 1.5) as i32;
+            if base + reach < clip.1 || base - reach > clip.3 {
+                continue;
             }
-            y += (advance * k) as i32;
-            if y > ch {
-                break;
+            if line.rule {
+                // `border: 1px inset #b4fc74`: dark top edge, light bottom.
+                for (dy, c) in [(0, Rgb::new(0x5a, 0x7e, 0x3a)), (1, green)] {
+                    let y = base + dy;
+                    if y >= clip.1 && y < clip.3 {
+                        fb.rect(clip.0, y, clip.2 - clip.0, 1, c);
+                    }
+                }
+                continue;
+            }
+            if !self.credits_view.masks.contains_key(&i) {
+                let missing = ext
+                    .as_ref()
+                    .is_some_and(|f| line.text.chars().any(|c| !f.has_glyph(c)));
+                if missing && fallback.is_empty() {
+                    fallback = self.credits_fallback_fonts();
+                }
+                if let Some(ext) = ext.as_mut() {
+                    let m = render_credit_line(ext, &mut fallback, line, lx, lw, s);
+                    self.credits_view.masks.insert(i, m);
+                }
+            }
+            let Some(m) = self.credits_view.masks.get(&i) else {
+                continue;
+            };
+            let (ox, oy) = (lx.floor() as i32 + m.x, base + m.top);
+            for row in 0..m.h {
+                let y = oy + row as i32;
+                if y < clip.1 || y >= clip.3 {
+                    continue;
+                }
+                for col in 0..m.w {
+                    let x = ox + col as i32;
+                    if x < clip.0 || x >= clip.2 {
+                        continue;
+                    }
+                    let k = row * m.w + col;
+                    let (t, sh) = (m.text[k], m.shadow[k]);
+                    if t == 0 && sh == 0 {
+                        continue;
+                    }
+                    let c = fb.get(x, y).blend(Rgb::new(0, 0, 0), sh).blend(green, t);
+                    fb.put(x, y, c);
+                }
             }
         }
+        self.ui_font_hover = ext;
+        self.credits_view.fallback = Some(fallback);
+        self.credits_view.layout = Some((ch, layout));
     }
 
     /// The MENU button in the HD console, measured on the references:
@@ -17128,6 +17789,69 @@ mod menu_frame_tests {
     use super::{clear_menu_frame, Framebuffer, Rgb};
 
     #[test]
+    fn layer_cache_reproduces_a_translucent_draw() {
+        use super::LayerCache;
+        // A 50 % black band over the middle row and an opaque red pixel.
+        let draw = |fb: &mut Framebuffer| {
+            for x in 0..4 {
+                let c = fb.get(x, 1);
+                fb.put(x, 1, c.blend(Rgb::new(0, 0, 0), 128));
+            }
+            fb.put(2, 2, Rgb::new(255, 0, 0));
+        };
+        let (mut b, mut w) = (Framebuffer::new(4, 3), Framebuffer::new(4, 3));
+        b.clear(Rgb::new(0, 0, 0));
+        w.clear(Rgb::new(255, 255, 255));
+        draw(&mut b);
+        draw(&mut w);
+        let layer = LayerCache::new(&b, &w);
+        for bg in [Rgb::new(10, 200, 90), Rgb::new(250, 3, 128)] {
+            let (mut want, mut got) = (Framebuffer::new(4, 3), Framebuffer::new(4, 3));
+            want.clear(bg);
+            got.clear(bg);
+            draw(&mut want);
+            layer.apply(&mut got);
+            for (p, q) in want.pixels.iter().zip(&got.pixels) {
+                for s in [0, 8, 16] {
+                    let (a, c) = ((p >> s) & 0xff, (q >> s) & 0xff);
+                    assert!(a.abs_diff(c) <= 1, "{p:06x} vs {q:06x}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_words_keeps_lines_inside_the_width() {
+        use super::wrap_words;
+        // One "pixel" per character.
+        let lines = wrap_words("the quick brown fox jumps", 10, |t| t.len() as i32);
+        assert_eq!(lines, ["the quick", "brown fox", "jumps"]);
+        assert!(lines.iter().all(|l| l.len() <= 10));
+        assert_eq!(
+            wrap_words("supercalifragilistic", 5, |t| t.len() as i32).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn movies_fill_the_16_9_box() {
+        use super::{draw_movie_frame, PosterFrame};
+        // A 320x308 SD frame (the Blizzard logo) covers the whole box.
+        let frame = PosterFrame {
+            width: 320,
+            height: 308,
+            rgb: vec![200; 320 * 308 * 3],
+        };
+        let mut fb = Framebuffer::new(3440, 1440);
+        draw_movie_frame(&mut fb, &frame);
+        for (x, y) in [(440, 0), (2999, 1439), (1720, 720)] {
+            assert_eq!(fb.get(x, y), Rgb::new(200, 200, 200), "box pixel ({x},{y})");
+        }
+        assert_eq!(fb.get(439, 720), Rgb::new(0, 0, 0));
+        assert_eq!(fb.get(3000, 720), Rgb::new(0, 0, 0));
+    }
+
+    #[test]
     fn boxed_screens_land_centred_between_black_bars() {
         use super::{copy_into, mask_pillarbox};
         let mut fb = Framebuffer::new(3440, 1440);
@@ -17304,6 +18028,22 @@ mod retail_timing_tests {
             let (_, frames, _) = menu_clip_timeline(frames_authored as f32 / 15.0, 0.0);
             assert_eq!(frames, frames_authored);
         }
+    }
+
+    #[test]
+    fn menu_clips_pause_off_screen_and_never_fast_forward() {
+        use super::{clip_lag_shift, clip_pause_shift};
+        // 60 Hz draws keep the clock; a 3 s visit to another screen is
+        // skipped instead of being played back at high speed.
+        assert_eq!(clip_pause_shift(Duration::from_millis(16)), Duration::ZERO);
+        assert_eq!(
+            clip_pause_shift(Duration::from_secs(3)),
+            Duration::from_secs(3)
+        );
+        // At 10.5 fps, 30 frames ahead of the decoder: slide 29 frames.
+        let shift = clip_lag_shift(31, 1, 10.5).expect("re-anchored");
+        assert!((shift.as_secs_f32() - 29.0 / 10.5).abs() < 1e-3);
+        assert_eq!(clip_lag_shift(3, 1, 10.5), None, "two frames of slack");
     }
 
     #[test]
