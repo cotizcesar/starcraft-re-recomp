@@ -1,165 +1,70 @@
 # AGENTS.md — project rules for starcraft-re-recomp
 
-> There is a single engine: `engine-rust` (full fidelity: 228 units,
-> 189 orders, 137 transcribed handlers; the test count grows every phase —
-> do not quote it here, run `cargo test`). The C experiment was removed on
-> 2026-10-28 after everything useful was migrated (save/load, replay hashes,
-> `socketpair` networking → design and tests in Rust); its history lives in
-> `research/re-c.bundle` and its provenance in
-> `research/docs/c-engine-provenance.md`. One engine, one truth (DRY).
-> Crate rules (commands, retail/headless gotchas): `engine-rust/AGENTS.md`.
+There is one engine: `engine-rust/` (crate `galaxycraft`, playable client
+`sc_view`). Crate commands, bins, retail/headless gotchas and sim invariants
+live in `engine-rust/AGENTS.md` — read it before touching Rust. Do not quote
+test counts anywhere; run `cargo test`.
 
-## 1. Layout (one tree, no duplicates)
+The C engine was removed on 2026-10-28 (history: `research/re-c.bundle`,
+provenance: `research/docs/c-engine-provenance.md`). Do not resurrect a second
+engine without a justified entry in `research/docs/decision-log.md`. Its oracle
+role is covered by the Boxer+AI identical-replay test, `engine-rust/tools/oracle.py`
+and the arrays checked against the live game.
 
-```text
-starcraft-re-recomp/
-  README.md                      # project overview (product + process)
-  PROGRESS.md                    # what we have / what is missing, with % (generated table)
-  AGENTS.md                      # this file: the project contract
-  CONTRIBUTING.md                # how to build, test and send changes
-  CHANGELOG.md                   # notable changes per date
-  engine-rust/ (+ AGENTS.md)     # THE engine (Rust, playable) + crate rules
-    docs/                        # product docs; docs/gates/ = committed gate outputs
-    packaging/                   # desktop/AppStream/icon, Flatpak manifest, macOS Info.plist
-  scripts/                       # harnesses: LAN, headless renders, visual gates, progress.py, package_*.sh
-  research/                      # reverse engineering: evidence, manifests, Ghidra tools, docs
-    docs/                        # PROJECT-STATUS.md = detailed live state; session-log.md = log
-    manifests/                   # inventory + SHA-256 of the reference install
-    tools/                       # Ghidra scripts (Java) + memory capture
-    re-c.bundle                  # git history of the removed C engine
-  .github/                       # CI, issue/PR templates
-  obsidian/                      # working-notes vault (OBSIDIAN.md = its rules);
-                                 # curated docs above stay the source of truth
-  .opencode/skills/              # OpenCode skills for the vault (sesion, investigar, ...)
-  opencode.json                  # portable OpenCode project config (vault MCP, instructions)
-```
+## 1. Where things live
 
-Local-only (gitignored, never commit): `research/analysis/`,
-`research/build/` (Ghidra projects), `research/work/` (memory dumps),
-`research/logs/`, `engine-rust/assets/`, `engine-rust/fixtures/*` data,
-`engine-rust/docs/evidence/`, screenshots and every other retail-derived file.
-Also local: `.opencode/opencode.json` (personal OpenCode overrides such as
-absolute plugin paths) and the Obsidian workspace/cache.
+- `engine-rust/` — the engine; `docs/gates/` = committed gate outputs; `packaging/` = desktop/Flatpak/macOS metadata.
+- `scripts/` — LAN harnesses, headless renders, visual gates, `progress.py`, `package_*.sh` (release builds go through `stage_clean_tree.sh` so no retail file can ship).
+- `research/` — RE evidence, manifests, Ghidra Java scripts (`research/tools/`). Doc index: `research/docs/README.md`; live state: `research/docs/PROJECT-STATUS.md`; map: `research/docs/architecture.md`.
+- `obsidian/` — working-notes vault (rules in `obsidian/OBSIDIAN.md`, loaded via `opencode.json`). Start a task with `obsidian/context/where-to-look.md` and `python3 scripts/vault_check.py --open --area <area>`; skills `vault-session`, `vault-research`, `vault-review` in `.opencode/skills/`. Curated repo docs stay the source of truth.
+- Local-only, gitignored, never commit: `research/{analysis,build,work,logs}/`, `engine-rust/assets/`, `engine-rust/fixtures/*` data, `engine-rust/docs/evidence/`, screenshots and any retail-derived file; `.opencode/opencode.json` (personal overrides).
+- The retail install (`$SC_INSTALL`) is **read-only**. Never hard-code a personal absolute path; use `SC_INSTALL`, `XDG_CACHE_HOME`, `HOME` or a CLI flag.
+- `research/docs/session-log.md` is **append-only** (falsifications stay recorded with their date).
 
-- The original install (`$SC_INSTALL`) is **read-only**. Nothing writes there.
-- No parallel paths: the only checkout path is the repository itself. Never
-  hard-code a personal absolute path (`/home/<user>/…`); use `SC_INSTALL`,
-  `XDG_CACHE_HOME`, `HOME` or a CLI flag.
-- `research/docs/session-log.md` is **append-only**: history is not
-  rewritten (errors and falsifications stay recorded with their date).
+## 2. Toolchain and CI (what actually gates a merge)
 
-## 2. Principles (SOLID / DRY / YAGNI / KISS applied to RE)
+- Rust pinned to **1.99.1** (`engine-rust/rust-toolchain.toml`, edition 2024). CI uses `--locked`: update `Cargo.lock` with any dependency change.
+- CI has **no fixtures**: it runs `fmt --check`, `clippy --all-targets -D warnings`, `build --bins`, `test --no-run`, and only the fixture-free tests (`cargo test --locked --test menus --test menu_layers --test hd_tileset --test portraits --test retail_replay` + the `PLATFORM_TESTS` lib filters in `.github/workflows/ci.yml`), on Linux, Windows and macOS. The full suite must be run locally with fixtures (`engine-rust/fixtures/README.md`).
+- Python job: `python -m compileall scripts research/tools engine-rust/tools`, `bash -n scripts/*.sh`, `python -m unittest scripts/test_progress.py scripts/test_vault_check.py`, `python scripts/progress.py --check`, `python scripts/vault_check.py`, plus XML/plist parse of `engine-rust/packaging/`.
+- Headless runs: `SC_NO_AUDIO=1`.
 
-- **Evidence before assumption.** FACT (observed) vs INFERENCE (with a
-  hypothesis and a falsifier). Inferred names are never presented as
-  confirmed.
-- **Real DRY:** one implementation per behaviour. Shared logic lives in one
-  place (`replay_to` ↔ `apply_act` is the model: the `sc_view` replay player
-  reuses `apply_act` instead of duplicating it). The C engine was removed
-  rather than maintaining two implementations. One fact, one document: other
-  docs link to it instead of restating it.
-- **YAGNI:** no speculative systems. LAN lockstep (TCP+UDP, discovery,
-  lobby, resync) is **in scope** and already exists (`src/net.rs`, `sc_lan`,
-  `tests/lan.rs`); only the physical two-PC test is missing
-  (`scripts/lan_two_machines.sh`). **Battle.net/online: out of scope.** No
-  skins/features without a test that requires them. Every new file must
-  answer a planned task.
-- **KISS + SOLID in code:** small functions with a single reason to change;
-  `World` knows nothing about sockets: the network only delivers commands
-  (`RecAct`) and compares hashes (`state_hash`); the UI only touches internal
-  state through the public API (`issue`, `train`, `replay_to`, …).
-- **Determinism is an invariant:** the sim is an LCG with a fixed seed; every
-  external mutation enters through `World::issue` or the audited direct
-  mutators (`train`, `morph`, `morph_unit`, `morph_building`). Any new path
-  that mutates state **must** be recorded in the command log or it will break
-  save/load, replays and LAN. A test proves it (`tests/replay.rs`).
+## 3. Principles (RE-specific)
 
-## 3. Rust (`engine-rust`)
+- **Evidence before assumption.** FACT (observed) vs INFERENCE (hypothesis + falsifier). Inferred names are never presented as confirmed. Mark this in the vault too.
+- **One implementation per behaviour** (`sc_view`'s replay player reuses `apply_act`; it does not copy it). One fact, one document: link instead of restating.
+- **Scope:** LAN lockstep is in scope and exists (`src/net.rs`, `sc_lan`, `tests/lan.rs`); only the physical two-PC test is open (`scripts/lan_two_machines.sh`). Battle.net/online and a map editor are **out of scope**. Every new file must answer a planned task.
+- **Determinism is an invariant:** every state mutation enters through `World::issue` or the audited mutators and is recorded in the command log, or save/load, replays and LAN break (`tests/replay.rs` proves it). `World` knows nothing about sockets; UI touches state only via the public API.
 
-- `cargo fmt` before every change; `cargo clippy --all-targets -- -D warnings`
-  must report **0 warnings** (CI enforces both).
-- Every new or fixed behaviour ships a **test that fails without the fix**
-  (unit in `src/` or integration in `tests/`). Tests use paths relative to the
-  crate's assets/fixtures; they never depend on the retail install except the
-  ones gated on `SC_INSTALL`, which skip cleanly when it is unset.
-- Own file formats: magic + version + SHA-256 checksum, explicit size limits
-  before allocating (`n > 10_000_000 → None`), and a corrupt-file test.
-- No `unwrap` on user-data load paths (return `Option` / `Result` with a
-  message); `expect` only in tests.
-- `World` gets no "just in case" fields: every new field needs a reader
-  (tests) and a writer (save/hash) or it does not go in.
+## 4. Rust rules
 
-## 4. Differential validation (no second engine)
+- `cargo fmt` before every change; clippy must report 0 warnings.
+- Every new or fixed behaviour ships a test that fails without the fix. Tests use crate-relative paths; retail-dependent tests are gated on `SC_INSTALL` and skip cleanly when unset.
+- Own file formats: magic + version + SHA-256 checksum, size cap before allocating (`n > 10_000_000 → None`), and a corrupt-file test. No `unwrap` on user-data load paths; `expect` only in tests.
+- No speculative `World` fields: each needs a reader (test) and a writer (save/`state_hash`).
 
-- The C engine was removed; its oracle role is covered by the Boxer+AI test
-  (identical replay), `tools/oracle.py` (table differential), the 73/73
-  arrays checked against the live game, and `re-c.bundle` as a historical
-  reference. Do not resurrect a second engine without an explicit, justified
-  decision in `research/docs/decision-log.md`.
+## 5. Reverse engineering
 
-## 5. Reverse engineering (`research/`)
-
-- Read-only on the original and the dumps (`pread` of `/proc/<pid>/mem`, no
-  debugger, no writes to the process). Working copies go to `/tmp`; the
-  original is never touched.
-- REA connection: `tools.rea.*` via MCP in the OpenCode session. Requires an
-  `environment` block in the `mcp.rea` entry of `opencode.json`
-  (`GHIDRA_INSTALL_DIR`, `JAVA_HOME` → JDK 21, `REA_GHIDRA_STARTUP_TIMEOUT_MS`);
-  Ghidra pinned to **12.1.4** (12.2 is installed but REA requires 12.1.x).
-  Verified details: `research/docs/rea-opencode-integration.md`.
-- Per-target flow: `open_binary` → bounded queries (`list_procedures`,
-  `search_strings`, `read_bytes`) before escalating → `binary_session` for
-  deep work → `close_binary`. Ghidra only appears as a candidate after
-  `open_binary`; `raw-binary` requires `architecture` + `entry_point`.
-- Hard limit: `binary_overview` over MCP on images >10 MB gives a
-  deterministic `provider_timeout` — do not repeat it. Alternative:
-  `analyzeHeadless` by absolute path, with `JAVA_HOME` set to JDK 21, in the
-  background, with small purpose-named scripts in `research/tools/*.java`.
-  Failure record: `research/docs/tool-errors.md`.
-- Annotations (`annotate_native_function`, `set_address_name`) only mutate
-  Ghidra's ephemeral database, never the executable.
-- Pseudocode ≠ original source. Addresses from old mappings are not valid in
-  new dumps (explicit rebase or nothing).
-- Every finding: file + address + confidence + the experiment that would
-  confirm or refute it. Falsifications are published too.
-- Doc index: `research/docs/README.md`.
+- Read-only on the original and dumps (`pread` of `/proc/<pid>/mem`, no debugger, no writes to the process). Work on copies in `/tmp`.
+- REA is reached as `tools.rea.*` (Code Mode). Its MCP entry lives in the **user-global** `~/.config/opencode/opencode.json` → `mcp.rea` (not the repo `opencode.json`) and needs an `environment` block (`GHIDRA_INSTALL_DIR`, `JAVA_HOME` → JDK 21, `REA_GHIDRA_STARTUP_TIMEOUT_MS`). Ghidra **12.1.4** (12.2 is installed but REA requires 12.1.x). Details: `research/docs/rea-opencode-integration.md`, `research/docs/toolchain.md`.
+- Flow: `open_binary` → bounded queries (`list_procedures`, `search_strings`, `read_bytes`) → `binary_session` for deep work → `close_binary`. Ghidra only appears as a candidate after `open_binary`; `raw-binary` requires `architecture` + `entry_point`.
+- `binary_overview` on images >10 MB gives a deterministic `provider_timeout` — do not retry. Use `analyzeHeadless` by absolute path (JDK 21, in the background) with small purpose-named scripts in `research/tools/*.java`. Failures: `research/docs/tool-errors.md`.
+- Ghidra annotations only touch Ghidra's ephemeral DB. Pseudocode ≠ original source. Addresses from old mappings are invalid in new dumps (explicit rebase or nothing).
+- Every finding: file + address + confidence + the experiment that would confirm or refute it. Publish falsifications too.
 
 ## 6. Documentation
 
-- **Language: English** for every committed document, comment, docstring,
-  commit message and CLI message. Literal in-game strings are quoted as-is.
-- **Progress directive.** `PROGRESS.md` is the single, community-facing
-  record of what exists and what is missing, with percentages:
-  1. When a phase or task closes, tick (`[x]`) or add (`[ ]`) the matching
-     checklist item in `PROGRESS.md` **in the same commit**, with an
-     evidence pointer (test, gate output or dated session-log entry).
-  2. A box is ticked only with observable evidence; otherwise it stays open.
-  3. Percentages are never typed by hand: run
-     `python3 scripts/progress.py --write`. CI runs `--check` and fails on a
-     stale table. New scope becomes a new unchecked item, which lowers the
-     percentage honestly.
-  4. Other docs (README, PROJECT-STATUS) link to `PROGRESS.md` instead of
-     restating percentages.
-- `research/docs/PROJECT-STATUS.md` (detailed internal state) is updated when
-  each phase closes, not at the end.
-- `research/docs/architecture.md` is the map; track reports live in
-  `research/analysis/investigations/` (local) and are not re-edited after the
-  synthesis (only referenced).
-- `engine-rust/README.md` describes the product and `PROGRESS.md` lists
-  every feature (done, missing, planned); this file describes the process.
-  Do not duplicate content between them: link.
-- Notable changes get a line in `CHANGELOG.md`.
+- **English** for every committed doc, comment, commit message and CLI message; literal in-game strings quoted as-is.
+- `PROGRESS.md` is the single public record of done/missing. When a task closes, tick (`[x]`) or add (`[ ]`) its item **in the same commit** with an evidence pointer (test, gate output, dated session-log entry). Never type percentages: run `python3 scripts/progress.py --write` (CI `--check` fails on a stale table). Other docs link to it.
+- Update `research/docs/PROJECT-STATUS.md` when each phase closes; add a line to `CHANGELOG.md` for notable changes. Investigation reports in `research/analysis/investigations/` (local) are not re-edited after synthesis.
+- `engine-rust/README.md` = product, `PROGRESS.md` = feature list, this file = process. Do not duplicate between them.
 
-## 7. Definition of Done (verifiable, no exceptions)
+## 7. Definition of Done (paste the proof)
 
-Nothing is declared done without pasting the observable proof:
+From `engine-rust/` with local fixtures:
 
-- `cargo test` (from `engine-rust/`, with local fixtures) → 0 failed,
-  including the new tests.
+- `cargo test` → 0 failed, including the new tests.
 - `cargo clippy --all-targets -- -D warnings` → 0 warnings; `cargo fmt --check` clean.
-- `cargo build --bin sc_view` OK + headless shots if the change touches UI
-  (`--shot-screen saved|replays|pause`).
-- `python3 scripts/progress.py --check` → OK, with `PROGRESS.md` updated if
-  the change moves a checklist item.
-- Docs touched + a dated `session-log.md` entry. No "works on my machine"
-  without the pasted command.
+- `cargo build --bin sc_view` OK, plus headless shots if UI changed (`--shot /tmp/x.bmp --shot-screen saved|replays|pause|…`).
+- `python3 scripts/progress.py --check` → OK (with `PROGRESS.md` updated if a checklist item moved).
+- Docs touched + a dated `research/docs/session-log.md` entry. No "works on my machine" without the pasted command.
+- **Always commit the vault too:** every commit includes the new or changed notes under `obsidian/` (a `sessions/` note whose `log` names the new session-log entry, ticks on closed items, decisions, context) together with the code/docs change. Never leave vault notes untracked. `python3 scripts/vault_check.py --write && python3 scripts/vault_check.py` → `OK` (CI fails otherwise). Workspace/cache files are gitignored; do not force-add them.

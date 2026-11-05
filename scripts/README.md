@@ -10,6 +10,8 @@ local-only and never committed.
 |---|---|---|
 | `progress.py` | Generate (`--write`) or verify (`--check`) the summary table in `PROGRESS.md` | — |
 | `test_progress.py` | Unit tests for `progress.py` (`python3 -m unittest scripts/test_progress.py`) | — |
+| `vault_check.py` | Check the Obsidian session notes against `research/docs/session-log.md` (CI); `--write` refreshes `open` counts, `--open [--area A]` lists open items | — |
+| `test_vault_check.py` | Unit tests for `vault_check.py` (`python3 -m unittest scripts/test_vault_check.py`) | — |
 | `lan_two_machines.sh` | LAN acceptance on two PCs: compare the printed `LAN_RESULT` tick and hash | two machines, same map |
 | `render_screens.sh` | Headless render of every client screen to `/tmp/shots/` | `SC_INSTALL` |
 | `ui_diff.py` | Per-reference control checks (dialog borders, rings, art panels) | references |

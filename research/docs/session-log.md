@@ -5090,3 +5090,38 @@ Conflict decisions (one implementation per behaviour):
 clippy 0; fmt clean; `mp_flow_gate.py` PASS (worst step 3.58, score 5.71);
 `ui_visual_diff.py` 51/51; walkthrough PASS (159 steps); ultrawide 31/31;
 menu timing 4/4; hover 10/10; swish PASS; `progress.py --check` OK.
+
+## 2026-11-05 (101) — Root AGENTS.md compacted; Obsidian vault in English, checked against this log
+
+The user asked for a compact root `AGENTS.md`, for the vault to be committed
+with every change, and for the vault to fit how this repo works, in English
+and useful to future developers.
+
+- **AGENTS.md (FACT, checked against config).**  Rewritten to ~70 lines:
+  CI facts (Rust 1.99.1, `--locked`, fixture-free subset on three OSes, the
+  python job), the REA MCP entry lives in the user-global
+  `~/.config/opencode/opencode.json` (the old text said the repo
+  `opencode.json`, which has no `rea` entry), crate detail delegated to
+  `engine-rust/AGENTS.md`, and "always commit the vault".
+- **Vault findings (FACT).**  Session notes repeated this log; entries
+  2026-11-05 (90)-(92), (97), (99), (100) had no note; 38 open items sat in
+  13 notes with nothing aggregating them; `20-Contexto/` was empty; index
+  links pointed at folders.
+- **Vault changes.**  Folders, frontmatter keys/values, templates and skills
+  in English without number prefixes (`inbox/`, `decisions/`, `context/`,
+  `sessions/`, `reviews/`; skills `vault-session`, `vault-research`,
+  `vault-review`).  Session notes carry `area`, `log` (keys of this file)
+  and `open`; `sessions.base` / `decisions.base` show open work by area.
+  New `scripts/vault_check.py` (+ `test_vault_check.py`, 8 tests), run in
+  CI: required fields, known area, existing log keys, `open` equal to the
+  unchecked items, and every entry from 2026-11-04 (82) covered by a note.
+  Notes backfilled for the six missing entries; 15 open items ticked with
+  a commit or gate as evidence (e.g. upload-artifact `@v7` in `374c9db`,
+  `ui-diff.txt` PASS 39/39), two of them split so the unfinished half stays open.
+  Onboarding notes: `context/where-to-look.md` (area → code → tests →
+  gates), `retail-recordings.md`, `retail-file-glossary.md`.
+
+**Verification.**  `python3 -m unittest scripts/test_progress.py
+scripts/test_vault_check.py` OK; `python3 scripts/vault_check.py` OK;
+`python3 scripts/progress.py --check` OK; no Rust code changed, so
+`cargo test` / clippy were not run.

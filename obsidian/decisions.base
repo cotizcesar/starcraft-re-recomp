@@ -1,0 +1,15 @@
+filters:
+  and:
+    - file.inFolder("decisions")
+    - file.ext == "md"
+views:
+  - type: table
+    name: Decisions
+    order:
+      - file.name
+      - date
+      - estado
+      - tags
+    sort:
+      - property: date
+        direction: DESC

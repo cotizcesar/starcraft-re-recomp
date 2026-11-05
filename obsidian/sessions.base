@@ -1,0 +1,37 @@
+filters:
+  and:
+    - file.inFolder("sessions")
+    - file.ext == "md"
+properties:
+  open:
+    displayName: Open
+  log:
+    displayName: Session log
+views:
+  - type: table
+    name: Open work by area
+    filters:
+      and:
+        - "open > 0"
+    groupBy:
+      property: note.area
+      direction: ASC
+    order:
+      - file.name
+      - open
+      - date
+      - log
+    sort:
+      - property: date
+        direction: DESC
+  - type: table
+    name: All sessions
+    order:
+      - file.name
+      - date
+      - area
+      - open
+      - log
+    sort:
+      - property: date
+        direction: DESC

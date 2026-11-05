@@ -100,7 +100,9 @@ jobs:
         run: |
           python -c "import plistlib; plistlib.load(open('engine-rust/packaging/macos/Info.plist','rb'))"
           python -c "import xml.dom.minidom as m; m.parse('engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.metainfo.xml'); m.parse('engine-rust/packaging/io.github.cotizcesar.GalaxyCraft.svg')"
-      - name: progress.py unit tests
-        run: python -m unittest scripts/test_progress.py -v
+      - name: progress.py and vault_check.py unit tests
+        run: python -m unittest scripts/test_progress.py scripts/test_vault_check.py -v
       - name: PROGRESS.md summary is current
         run: python scripts/progress.py --check
+      - name: Obsidian vault matches the session log
+        run: python scripts/vault_check.py
