@@ -60,6 +60,10 @@ use galaxycraft::ui_art::{ConsoleArt, GlueArt};
 use galaxycraft::video::{PosterFrame, RgbaFrame, VideoInfo, VideoStore};
 use galaxycraft::voice::{VoiceBank, VoiceCue};
 
+/// Multiplayer front end (Select Connection, Games, Create, lobby, score).
+#[path = "sc_view/mp.rs"]
+mod mp;
+
 const HUD_H: i32 = 240;
 /// Intro movie playback: 12 fps at 960 px wide keeps the decoder ahead of
 /// the clock on a laptop CPU while still looking like film, not a slideshow.
@@ -816,7 +820,13 @@ enum GlueSwish {
 fn is_glue_list(screen: &MenuScreen) -> bool {
     matches!(
         screen,
-        MenuScreen::Registry | MenuScreen::SavedGames | MenuScreen::Replays
+        MenuScreen::Registry
+            | MenuScreen::SavedGames
+            | MenuScreen::Replays
+            | MenuScreen::Connection
+            | MenuScreen::Games
+            | MenuScreen::MpCreate
+            | MenuScreen::MpLobby
     )
 }
 
@@ -1312,6 +1322,8 @@ struct App {
     /// Active LAN match, when playing over the network.
     net: Option<NetSession>,
     lan: LanUi,
+    /// Multiplayer screens and the lobby game being played.
+    mp: mp::MpState,
     /// Remastered menu space layers (loaded once from the install).
     menu_layers: Option<MenuLayers>,
     /// Classic-dialog swish in progress and the screen drawn last frame.
@@ -2983,7 +2995,7 @@ impl ScoreRow {
                 units,
             ],
             2 => [
-                p.buildings_built as i64,
+                p.structures_built as i64,
                 p.razings as i64,
                 p.buildings_lost as i64,
                 structures,
@@ -4669,6 +4681,10 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 port,
                 players: 1,
                 started: false,
+                game_type: galaxycraft::multiplayer::GameType::Melee.tag(),
+                map_name: String::new(),
+                map_size: (0, 0),
+                speed: 6,
             };
             if let Ok(addr) = "127.0.0.1:6112".parse() {
                 app.lan.entries.push((addr, announce));
@@ -4753,6 +4769,10 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 o.sfx_volume
             ),
             MenuScreen::Lobby { .. } => format!("races={:?}", app.lobby_races),
+            MenuScreen::Connection
+            | MenuScreen::Games
+            | MenuScreen::MpCreate
+            | MenuScreen::MpLobby => app.mp_state_line(),
             MenuScreen::Registry => format!(
                 "ids={:?} sel={} active={}",
                 app.profile_store.names(),
@@ -5419,6 +5439,7 @@ fn main() {
         menu_at,
         menu_phases,
         lobby_preview: None,
+        mp: mp::MpState::default(),
         hotkey_hover: None,
         hotkey_sel: None,
         hotkey_cells: Vec::new(),
@@ -6010,6 +6031,9 @@ fn main() {
                 app.game_result = Some(shot_screen == "win-dialog");
                 app.end_dialog = true;
                 app.draw(&mut fb);
+            }
+            s if s.starts_with("mp-") || s == "score-defeat" || s == "score-victory" => {
+                app.mp_shot(s, &mut fb);
             }
             "score" | "victory" | "defeat" => {
                 app.load_map(app.map_index);
@@ -6949,6 +6973,8 @@ impl App {
         let Some(entry) = self.maps.get(index).cloned() else {
             return;
         };
+        // A map started from the map list is not a lobby game.
+        self.mp.setup = None;
         let raw = match std::fs::read(&entry.path) {
             Ok(raw) => raw,
             Err(e) => {
@@ -7214,6 +7240,7 @@ impl App {
             local_player: self.local_player,
             tick,
             rec,
+            setup: self.mp.setup.clone(),
         };
         let _ = std::fs::create_dir_all(&self.saves_dir);
         let n = self.save_list(false).len();
@@ -7230,7 +7257,8 @@ impl App {
         self.play("ui_click");
     }
 
-    fn save_replay(&mut self) {
+    /// Save the current game as a replay; returns the file written.
+    fn save_replay(&mut self) -> Option<PathBuf> {
         let rec = self.take_recording();
         let tick = self.world.tick;
         let save = SaveFile {
@@ -7244,15 +7272,23 @@ impl App {
             local_player: self.local_player,
             tick,
             rec,
+            setup: self.mp.setup.clone(),
         };
         let _ = std::fs::create_dir_all(&self.replays_dir);
         let n = self.save_list(true).len();
         let path = self.replays_dir.join(format!("replay-{:03}.gcrep", n + 1));
-        match save.save(&path) {
-            Ok(()) => self.status(format!("Replay saved {}", path.display())),
-            Err(e) => self.status(format!("Replay save failed: {e}")),
-        }
+        let written = match save.save(&path) {
+            Ok(()) => {
+                self.status(format!("Replay saved {}", path.display()));
+                Some(path)
+            }
+            Err(e) => {
+                self.status(format!("Replay save failed: {e}"));
+                None
+            }
+        };
         self.play("ui_click");
+        written
     }
 
     /// Rebuild a world from a save file (shared by load-game and replay).
@@ -7279,13 +7315,28 @@ impl App {
             }
         };
         let slots = scenario.player_slots();
-        let mut world = World::from_scenario(
+        let occupied = save.setup.as_ref().map(|s| s.occupied());
+        let mut world = World::from_scenario_occupied(
             self.data.clone(),
             &scenario,
             &galaxycraft::map::TileData::new(tileset.cv5(), &vf4),
             &save.races,
+            occupied.as_deref(),
         );
         apply_slots(&mut world, &slots);
+        // A lobby game: its setup decides occupants, teams and computers
+        // (the CHK's OWNR bytes describe the map, not this game).
+        if let Some(setup) = &save.setup {
+            setup.apply(&mut world);
+            self.ais = setup
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.occupant == galaxycraft::multiplayer::SetupOccupant::Computer)
+                .map(|(i, _)| SimpleAi::new(i as u8))
+                .collect();
+            self.campaign_ais.clear();
+        }
         world.enable_fog();
         world.rng = save.rec.seed;
         galaxycraft::replay::replay_to(&mut world, &save.rec, save.tick);
@@ -7301,11 +7352,20 @@ impl App {
         self.chk_raw = save.map_chk.clone();
         self.last_races = save.races.clone();
         self.local_player = save.local_player.min(world.players.len().saturating_sub(1));
-        self.console_race = slots
-            .iter()
-            .find(|s| s.slot == self.local_player)
-            .map(|s| s.race(Race::Terran))
-            .unwrap_or(Race::Terran);
+        self.console_race = if save.setup.is_some() {
+            world
+                .players
+                .get(self.local_player)
+                .map(|p| p.race)
+                .unwrap_or(Race::Terran)
+        } else {
+            slots
+                .iter()
+                .find(|s| s.slot == self.local_player)
+                .map(|s| s.race(Race::Terran))
+                .unwrap_or(Race::Terran)
+        };
+        self.mp.setup = save.setup.clone();
         self.console = ConsoleArt::load(&self.assets_root, self.console_race);
         self.world = world;
         self.trigger_portraits_seen = (0, 0);
@@ -7452,9 +7512,13 @@ impl App {
                         .map(|m| m.name.clone())
                         .unwrap_or_default(),
                     map_hash: lobby.map_hash,
-                    port: 7777,
+                    port: galaxycraft::net::LOBBY_PORT,
                     players: queue.players(),
                     started: false,
+                    game_type: galaxycraft::multiplayer::GameType::Melee.tag(),
+                    map_name: String::new(),
+                    map_size: (0, 0),
+                    speed: 6,
                 };
                 let _ = broadcast(sock, &a);
             }
@@ -7504,6 +7568,7 @@ impl App {
                     map_hash,
                     Some(lobby),
                     String::new(),
+                    None,
                 ) {
                     self.lan.status = format!("match started with {players} players");
                 }
@@ -7548,6 +7613,7 @@ impl App {
                     announce.map_hash,
                     None,
                     host_addr,
+                    None,
                 ) {
                     self.lan.status = format!("joined {addr} as player {}", you + 1);
                 }
@@ -7569,6 +7635,7 @@ impl App {
         map_hash: [u8; 32],
         lobby: Option<Lobby>,
         host_addr: String,
+        setup: Option<galaxycraft::multiplayer::GameSetup>,
     ) -> bool {
         let Some(entry) = self.maps.get(map_index).cloned() else {
             self.lan.status = "no map selected".to_string();
@@ -7581,17 +7648,46 @@ impl App {
                 return false;
             }
         };
+        // A lobby game seats each peer in its slot; the legacy LAN screen
+        // seats peer n in slot n.
+        let local_slot = setup
+            .as_ref()
+            .and_then(|s| s.slot_of_peer(local))
+            .unwrap_or(local as usize);
+        let races = setup.as_ref().map(|s| s.races()).unwrap_or(races);
         let save = SaveFile {
             map_name: entry.name.clone(),
             map_chk: raw,
             races: races.clone(),
-            local_player: local as usize,
+            local_player: local_slot,
             tick: 0,
             rec: Recording::new(galaxycraft::net::WORLD_SEED, [0u8; 32]),
+            setup,
         };
         if !self.build_from_save(&save) {
             return false;
         }
+        let peer_count = save
+            .setup
+            .as_ref()
+            .map(|s| {
+                s.slots
+                    .iter()
+                    .filter(|x| {
+                        matches!(
+                            x.occupant,
+                            galaxycraft::multiplayer::SetupOccupant::Human { .. }
+                        )
+                    })
+                    .count() as u8
+            })
+            .unwrap_or(races.len() as u8);
+        // Computers run inside the lockstep on every peer, not locally.
+        let computers = if save.setup.is_some() {
+            std::mem::take(&mut self.ais)
+        } else {
+            Vec::new()
+        };
         for p in &mut peers {
             let _ = p.stream_timeout(NET_READ_TIMEOUT);
         }
@@ -7605,7 +7701,11 @@ impl App {
         self.last_step = Instant::now();
         self.net = Some(NetSession {
             role,
-            lock: Lockstep::new(local, races.len() as u8, DEFAULT_TICKS_PER_TURN),
+            lock: {
+                let mut lock = Lockstep::new(local, peer_count, DEFAULT_TICKS_PER_TURN);
+                lock.computers = computers;
+                lock
+            },
             peers,
             desync: false,
             last_hash: 0,
@@ -7674,6 +7774,10 @@ impl App {
                 }
                 let _ = t.stream_timeout(NET_READ_TIMEOUT);
                 let mut lock = Lockstep::new(local, net.lock.peers, net.lock.ticks_per_turn);
+                // `build_from_save` made fresh computers for a lobby game.
+                if net.save.setup.is_some() {
+                    lock.computers = std::mem::take(&mut self.ais);
+                }
                 galaxycraft::net::apply_resync(&mut self.world, &mut lock, turn, &rec);
                 net.lock = lock;
                 net.peers = vec![t];
@@ -7774,6 +7878,7 @@ impl App {
         self.selected
             .retain(|id| self.world.unit(*id).is_some_and(|u| u.alive));
         self.net = Some(net);
+        self.check_game_result();
     }
 
     /// Route an order: queued for the next network turn, or applied locally.
@@ -8670,19 +8775,14 @@ impl App {
                     if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
                         if hit == Some(GlueListHit::Ok) {
-                            self.capture_active_profile();
-                            if self.registry_after_gametype {
-                                self.registry_after_gametype = false;
-                                self.episode_sel = galaxycraft::menu::episode_start(false);
-                                self.menu_screen = MenuScreen::Episode;
-                            } else {
-                                self.menu_screen = MenuScreen::Main;
-                                self.profile_sel = 0;
-                            }
-                            self.play("ui_click");
+                            self.registry_continue();
                         } else if hit == Some(GlueListHit::Cancel) {
                             self.registry_after_gametype = false;
-                            self.menu_screen = MenuScreen::Main;
+                            self.menu_screen = if std::mem::take(&mut self.mp.registry_next) {
+                                MenuScreen::Connection
+                            } else {
+                                MenuScreen::Main
+                            };
                             self.profile_sel = 0;
                             self.play("ui_click");
                         } else if hit == Some(GlueListHit::NewId) {
@@ -8713,20 +8813,13 @@ impl App {
                         Key::N => self.registry_new_id(),
                         Key::D => self.registry_delete(),
                         Key::Enter | Key::Space => {
-                            self.capture_active_profile();
-                            if self.registry_after_gametype {
-                                self.registry_after_gametype = false;
-                                self.episode_sel = galaxycraft::menu::episode_start(false);
-                                self.menu_screen = MenuScreen::Episode;
-                            } else {
-                                self.menu_screen = MenuScreen::Main;
-                                self.profile_sel = 0;
-                            }
-                            self.play("ui_click");
+                            self.registry_continue();
                         }
                         Key::Escape => {
                             self.registry_after_gametype = false;
-                            if let Some(t) = galaxycraft::menu::back_destination(&screen) {
+                            if std::mem::take(&mut self.mp.registry_next) {
+                                self.menu_screen = MenuScreen::Connection;
+                            } else if let Some(t) = galaxycraft::menu::back_destination(&screen) {
                                 self.menu_screen = t;
                             }
                             self.profile_sel = 0;
@@ -8959,6 +9052,10 @@ impl App {
                     }
                 }
             }
+            ref s @ (MenuScreen::Connection
+            | MenuScreen::Games
+            | MenuScreen::MpCreate
+            | MenuScreen::MpLobby) => self.handle_mp_input(input, s),
             MenuScreen::Lan => {
                 let (hit, clicked) = self.menu_pointer(input);
                 if clicked && let Some(MenuHit::Row(i)) = hit {
@@ -9916,7 +10013,9 @@ impl App {
                 Key::Q => self.quit = true,
                 Key::F10 => self.show_stats = !self.show_stats,
                 Key::F5 => self.save_game(),
-                Key::F6 => self.save_replay(),
+                Key::F6 => {
+                    let _ = self.save_replay();
+                }
                 _ => {}
             }
         }
@@ -10275,6 +10374,10 @@ impl App {
             match from {
                 MenuScreen::SavedGames => self.draw_saved(fb),
                 MenuScreen::Replays => self.draw_create(fb),
+                MenuScreen::Connection
+                | MenuScreen::Games
+                | MenuScreen::MpCreate
+                | MenuScreen::MpLobby => self.draw_mp(fb, &from),
                 _ => self.draw_registry(fb),
             }
             return;
@@ -10289,6 +10392,10 @@ impl App {
             MenuScreen::Episode => self.draw_episode(fb),
             MenuScreen::Mission { .. } => self.draw_mission(fb),
             MenuScreen::Lan => self.draw_lan(fb),
+            ref s @ (MenuScreen::Connection
+            | MenuScreen::Games
+            | MenuScreen::MpCreate
+            | MenuScreen::MpLobby) => self.draw_mp(fb, s),
             MenuScreen::Replays => self.draw_create(fb),
             MenuScreen::SavedGames => self.draw_saved(fb),
             MenuScreen::Lobby { .. } => self.draw_lobby(fb),
@@ -10876,7 +10983,13 @@ impl App {
             _ => {}
         }
         if self.game_result.is_some() && !self.end_dialog {
-            draw_in_box(self, fb, Self::draw_score_screen);
+            // Lobby games use the multiplayer score screen; campaign and
+            // single-player games the gluscore one.
+            if self.mp.setup.is_some() {
+                self.draw_mp_score(fb);
+            } else {
+                draw_in_box(self, fb, Self::draw_score_screen);
+            }
             return;
         }
         if self.paused {
@@ -11981,7 +12094,11 @@ impl App {
             return;
         }
         if self.game_result.is_some() {
-            self.handle_result(window);
+            if self.mp.setup.is_some() {
+                self.handle_mp_score(window);
+            } else {
+                self.handle_result(window);
+            }
             return;
         }
         if self.paused {
@@ -12333,23 +12450,8 @@ impl App {
         self.accumulator += dt * TICKS_PER_REAL_SECOND * self.speed;
         let mut steps = 0;
         while self.accumulator >= 1.0 && steps < 12 {
-            let enemy_base = self
-                .world
-                .units
-                .iter()
-                .find(|u| {
-                    u.alive
-                        && u.owner as usize == self.local_player
-                        && matches!(
-                            u.type_id,
-                            uid::COMMAND_CENTER
-                                | uid::NEXUS
-                                | uid::HATCHERY
-                                | uid::LAIR
-                                | uid::HIVE
-                        )
-                })
-                .map(|u| (u.x / 256, u.y / 256));
+            // Each AI attacks an enemy of its own (never a teammate).
+            let local = self.local_player as u8;
             // Trigger actions 15/16 queue campaign AI scripts.
             if let Some(t) = self.world.triggers.as_mut() {
                 let pending = std::mem::take(&mut t.pending_ai_scripts);
@@ -12370,12 +12472,14 @@ impl App {
                 }
             }
             for ai in &mut self.campaign_ais {
+                let enemy_base = self.world.enemy_town_hall(ai.player, local);
                 ai.update(&mut self.world, enemy_base);
             }
             for ai in &mut self.ais {
                 if self.campaign_ais.iter().any(|c| c.player == ai.player) {
                     continue;
                 }
+                let enemy_base = self.world.enemy_town_hall(ai.player, local);
                 ai.update(&mut self.world, enemy_base);
             }
             self.world.step();
@@ -12388,20 +12492,28 @@ impl App {
         // Drop dead selections.
         self.selected
             .retain(|id| self.world.unit(*id).is_some_and(|u| u.alive));
+        self.check_game_result();
+    }
+
+    /// End the game for the local player: defeat when it is out, victory
+    /// when its side won (allies win together) or every enemy is out.
+    /// Shared by the local loop and the LAN lockstep.
+    fn check_game_result(&mut self) {
         if self.game_result.is_none() {
+            let local = self.local_player as u8;
             let defeat = self
                 .world
                 .players
                 .get(self.local_player)
                 .is_some_and(|p| p.defeated);
-            let victory = self.world.winner == Some(self.local_player as u8)
+            let victory = self.world.has_won(local)
                 || (self.world.players.len() > 1
                     && self
                         .world
                         .players
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| *i != self.local_player)
+                        .filter(|(i, _)| self.world.is_enemy(local, *i as u8))
                         .all(|(_, p)| p.defeated));
             if defeat || victory {
                 let won = !defeat && victory;
@@ -14412,13 +14524,31 @@ impl App {
     /// Single player goes to the episode list; multiplayer goes to the
     /// connection screen (our LAN lobby) instead of opening it directly from
     /// the main menu.
+    /// Registry Ok: continue where the dialog was opened from (Select
+    /// Connection -> Games, Select Game Type -> campaign, else Main).
+    fn registry_continue(&mut self) {
+        self.capture_active_profile();
+        if std::mem::take(&mut self.mp.registry_next) {
+            self.mp_enter_games();
+        } else if self.registry_after_gametype {
+            self.registry_after_gametype = false;
+            self.episode_sel = galaxycraft::menu::episode_start(false);
+            self.menu_screen = MenuScreen::Episode;
+        } else {
+            self.menu_screen = MenuScreen::Main;
+            self.profile_sel = 0;
+        }
+        self.play("ui_click");
+    }
+
     fn finish_gametype(&mut self, expansion: bool) {
         self.intro_expansion = expansion;
         self.episode_sel = galaxycraft::menu::episode_start(expansion);
         self.menu_screen = match galaxycraft::menu::gametype_followup(self.gametype_multi) {
-            galaxycraft::menu::GameTypeFollowup::MultiplayerLobby => MenuScreen::Lobby {
-                map: Some(self.map_index),
-            },
+            galaxycraft::menu::GameTypeFollowup::SelectConnection => {
+                self.mp.enter_connection();
+                MenuScreen::Connection
+            }
             galaxycraft::menu::GameTypeFollowup::Registry => {
                 self.registry_after_gametype = true;
                 self.profile_sel = self.active_index().unwrap_or(0);
@@ -19388,7 +19518,7 @@ mod menu_frame_tests {
         p.scores = [0, 850, 525, 0, 50, 0, 0, 0];
         p.minerals_gathered = 776;
         (p.units_produced, p.kills, p.razings, p.units_lost) = (17, 3, 0, 0);
-        (p.buildings_built, p.minerals_spent) = (3, 400);
+        (p.structures_built, p.minerals_spent) = (3, 400);
         let row = ScoreRow {
             slot: 1,
             human: true,

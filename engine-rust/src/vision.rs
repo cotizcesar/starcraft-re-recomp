@@ -34,6 +34,27 @@ impl Vision {
         }
     }
 
+    /// Shared vision: for every player `p`, OR its bit into each tile that a
+    /// player in `vision_from[p]` sees (and explore it), after the per-owner
+    /// pass.  One pass over the tiles; deterministic.
+    pub fn share(&mut self, vision_from: &[u16]) {
+        if vision_from.iter().all(|&m| m == 0) {
+            return;
+        }
+        for (v, e) in self.visible.iter_mut().zip(self.explored.iter_mut()) {
+            if *v == 0 {
+                continue;
+            }
+            let seen = *v;
+            for (p, &from) in vision_from.iter().enumerate() {
+                if from as u32 & seen != 0 {
+                    *v |= 1 << p;
+                    *e |= 1 << p;
+                }
+            }
+        }
+    }
+
     pub fn clear_visible(&mut self) {
         self.visible.fill(0);
     }
@@ -312,7 +333,18 @@ impl World {
                 &self.terrain,
             );
         }
+        let from: Vec<u16> = self.players.iter().map(|p| p.vision_from).collect();
+        vision.share(&from);
         self.vision = Some(vision);
+    }
+
+    /// Whether `observer` receives `owner`'s vision (itself, or shared).
+    pub fn shares_vision(&self, observer: u8, owner: u8) -> bool {
+        observer == owner
+            || self
+                .players
+                .get(observer as usize)
+                .is_some_and(|p| p.vision_from & (1u16 << (owner & 15)) != 0)
     }
 
     /// `x`/`y` are world pixels, the same units used by `SimUnit`.
@@ -359,7 +391,7 @@ impl World {
         // the retail detector path; mobile detectors use their sight range.
         for detector in &self.units {
             if !detector.alive
-                || detector.owner != observer_owner
+                || !self.shares_vision(observer_owner, detector.owner)
                 || detector.in_transport.is_some()
             {
                 continue;

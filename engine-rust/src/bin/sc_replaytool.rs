@@ -151,6 +151,7 @@ fn make(args: &[String]) -> ExitCode {
         local_player: 0,
         tick: world.tick,
         rec,
+        setup: None,
     };
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);

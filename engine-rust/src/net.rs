@@ -19,8 +19,12 @@ use std::time::{Duration, Instant};
 use crate::replay::{RecAct, decode_act, encode_act};
 use crate::sim::{Race, World};
 
-/// Bumped whenever the message encoding changes.
-pub const PROTOCOL: u16 = 2;
+/// Bumped whenever the message encoding changes.  Protocol 3: player
+/// names in `Join`, the lobby (`LobbyState`/`LobbyRace`) and the resolved
+/// [`crate::multiplayer::GameSetup`] in `Setup`.
+pub const PROTOCOL: u16 = 3;
+/// TCP port a LAN host's lobby listens on.
+pub const LOBBY_PORT: u16 = 7777;
 /// Ticks advanced per network turn. 4 ticks at 24 Hz = 166 ms of input lag.
 pub const DEFAULT_TICKS_PER_TURN: u32 = 4;
 /// Hard cap so a corrupt frame cannot allocate unbounded memory.
@@ -38,6 +42,8 @@ pub enum Msg {
         map_hash: [u8; 32],
         seed: u64,
         race: Race,
+        /// Registry name shown in the host's lobby.
+        name: String,
     },
     /// Host confirms the lobby setup for everyone; `you` is the receiving
     /// peer's index (protocol 2: clients no longer assume they are peer 1).
@@ -48,6 +54,8 @@ pub enum Msg {
         seed: u64,
         races: Vec<Race>,
         ticks_per_turn: u32,
+        /// The lobby game (slots, teams); `None` for the legacy LAN screen.
+        setup: Option<crate::multiplayer::GameSetup>,
     },
     /// One peer's commands for `turn`.
     Turn {
@@ -63,6 +71,17 @@ pub enum Msg {
     Sum {
         turn: u32,
         hash: u64,
+    },
+    /// Host -> joined client: the lobby as it stands (`you` is the
+    /// receiver's peer index), sent on join and whenever it changes.
+    LobbyState {
+        you: u8,
+        lobby: crate::multiplayer::Lobby,
+    },
+    /// Joined client -> host: the race it picked
+    /// ([`crate::multiplayer::race_choice_byte`]).
+    LobbyRace {
+        race: u8,
     },
     /// Host reporting a hash disagreement at `turn`.
     Desync {
@@ -119,12 +138,17 @@ impl Msg {
                 map_hash,
                 seed,
                 race,
+                name,
             } => {
                 w_u8(&mut out, 1);
                 w_u16(&mut out, *protocol);
                 out.extend_from_slice(map_hash);
                 w_u64(&mut out, *seed);
                 w_u8(&mut out, race_byte(*race));
+                let b = name.as_bytes();
+                let n = b.len().min(crate::multiplayer::MAX_NAME);
+                w_u8(&mut out, n as u8);
+                out.extend_from_slice(&b[..n]);
             }
             Msg::Setup {
                 peers,
@@ -133,6 +157,7 @@ impl Msg {
                 seed,
                 races,
                 ticks_per_turn,
+                setup,
             } => {
                 w_u8(&mut out, 2);
                 w_u8(&mut out, *peers);
@@ -144,6 +169,20 @@ impl Msg {
                     w_u8(&mut out, race_byte(*r));
                 }
                 w_u32(&mut out, *ticks_per_turn);
+                let bytes = setup.as_ref().map(|s| s.encode()).unwrap_or_default();
+                w_u8(&mut out, bytes.len() as u8);
+                out.extend_from_slice(&bytes);
+            }
+            Msg::LobbyState { you, lobby } => {
+                w_u8(&mut out, 11);
+                w_u8(&mut out, *you);
+                let bytes = lobby.encode();
+                w_u32(&mut out, bytes.len() as u32);
+                out.extend_from_slice(&bytes);
+            }
+            Msg::LobbyRace { race } => {
+                w_u8(&mut out, 12);
+                w_u8(&mut out, *race);
             }
             Msg::Turn { turn, acts } => {
                 w_u8(&mut out, 3);
@@ -211,12 +250,24 @@ impl Msg {
             return None;
         }
         let m = match c.u8()? {
-            1 => Msg::Join {
-                protocol: c.u16()?,
-                map_hash: c.take32()?,
-                seed: c.u64()?,
-                race: race_from(c.u8()?)?,
-            },
+            1 => {
+                let protocol = c.u16()?;
+                let map_hash = c.take32()?;
+                let seed = c.u64()?;
+                let race = race_from(c.u8()?)?;
+                let n = c.u8()? as usize;
+                if n > crate::multiplayer::MAX_NAME {
+                    return None;
+                }
+                let name = String::from_utf8(c.take_bytes(n)?.to_vec()).ok()?;
+                Msg::Join {
+                    protocol,
+                    map_hash,
+                    seed,
+                    race,
+                    name,
+                }
+            }
             2 => {
                 let peers = c.u8()?;
                 let you = c.u8()?;
@@ -230,15 +281,35 @@ impl Msg {
                 for _ in 0..n {
                     races.push(race_from(c.u8()?)?);
                 }
+                let ticks_per_turn = c.u32()?;
+                let n = c.u8()? as usize;
+                let setup = if n == 0 {
+                    None
+                } else {
+                    Some(crate::multiplayer::GameSetup::decode(c.take_bytes(n)?)?)
+                };
                 Msg::Setup {
                     peers,
                     you,
                     map_hash,
                     seed,
                     races,
-                    ticks_per_turn: c.u32()?,
+                    ticks_per_turn,
+                    setup,
                 }
             }
+            11 => {
+                let you = c.u8()?;
+                let n = c.u32()? as usize;
+                if n > 4096 {
+                    return None;
+                }
+                Msg::LobbyState {
+                    you,
+                    lobby: crate::multiplayer::Lobby::decode(c.take_bytes(n)?)?,
+                }
+            }
+            12 => Msg::LobbyRace { race: c.u8()? },
             3 => {
                 let turn = c.u32()?;
                 let n = c.u32()? as usize;
@@ -353,6 +424,44 @@ impl TcpTransport {
 
     pub fn peer_addr(&self) -> io::Result<std::net::SocketAddr> {
         self.stream.peer_addr()
+    }
+
+    /// The next message if a whole frame has arrived, without blocking
+    /// (the lobby polls every UI frame).  A closed link is an error.
+    pub fn try_recv(&mut self) -> io::Result<Option<Msg>> {
+        self.stream.set_nonblocking(true)?;
+        let mut head = [0u8; 4];
+        let peeked = self.stream.peek(&mut head);
+        let ready = match peeked {
+            Ok(0) => {
+                self.stream.set_nonblocking(false)?;
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed"));
+            }
+            Ok(4) => {
+                let n = u32::from_le_bytes(head) as usize;
+                if n == 0 || n > MAX_FRAME {
+                    self.stream.set_nonblocking(false)?;
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("bad frame length {n}"),
+                    ));
+                }
+                let mut frame = vec![0u8; 4 + n];
+                matches!(self.stream.peek(&mut frame), Ok(got) if got == frame.len())
+            }
+            Ok(_) => false,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => false,
+            Err(e) => {
+                self.stream.set_nonblocking(false)?;
+                return Err(e);
+            }
+        };
+        self.stream.set_nonblocking(false)?;
+        if ready {
+            self.recv().map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Change the read timeout (the UI uses a short one so a half-open
@@ -602,6 +711,7 @@ pub fn udp_join(
             map_hash,
             seed,
             race,
+            name: String::new(),
         }
         .encode(),
     );
@@ -650,6 +760,7 @@ pub fn udp_accept(
             map_hash: m,
             seed: s,
             race,
+            ..
         }) = Msg::decode(&buf[1..n])
         else {
             continue;
@@ -671,6 +782,7 @@ pub fn udp_accept(
                 seed,
                 races: vec![my_race, race],
                 ticks_per_turn: DEFAULT_TICKS_PER_TURN,
+                setup: None,
             }
             .encode(),
         );
@@ -701,6 +813,10 @@ pub struct Lockstep {
     /// a turn interrupted by a dropped peer resumes without waiting again
     /// for messages it already read.
     inbox: Vec<Option<Vec<RecAct>>>,
+    /// Lobby computer players, run before every simulated tick on every
+    /// peer ([`crate::ai::run_computers`] with `prefer` 0, the host's slot
+    /// owner).  Deterministic, so they never need to cross the wire.
+    pub computers: Vec<crate::ai::SimpleAi>,
 }
 
 impl Lockstep {
@@ -713,6 +829,7 @@ impl Lockstep {
             pending: Vec::new(),
             log: Vec::new(),
             inbox: Vec::new(),
+            computers: Vec::new(),
         }
     }
 
@@ -748,6 +865,7 @@ impl Lockstep {
             crate::replay::apply_act(world, &act);
         }
         for _ in 0..self.ticks_per_turn {
+            crate::ai::run_computers(world, &mut self.computers, 0);
             world.step();
         }
         self.turn += 1;
@@ -841,6 +959,7 @@ impl Lobby {
                 map_hash,
                 seed,
                 race,
+                name,
             } => {
                 if protocol != PROTOCOL {
                     return Err(io::Error::new(
@@ -854,7 +973,7 @@ impl Lobby {
                 if seed != self.seed {
                     return Err(io::Error::other("seed mismatch"));
                 }
-                queue.joined.push((t, race, addr));
+                queue.joined.push((t, race, addr, name));
                 Ok(Some(addr))
             }
             other => Err(io::Error::new(
@@ -873,10 +992,10 @@ impl Lobby {
         host_race: Race,
     ) -> io::Result<(Vec<TcpTransport>, Vec<Race>)> {
         let mut races = vec![host_race];
-        races.extend(queue.joined.iter().map(|(_, race, _)| *race));
+        races.extend(queue.joined.iter().map(|(_, race, _, _)| *race));
         let peers = races.len() as u8;
         let mut clients = Vec::with_capacity(queue.joined.len());
-        for (i, (mut t, _, _)) in queue.joined.into_iter().enumerate() {
+        for (i, (mut t, _, _, _)) in queue.joined.into_iter().enumerate() {
             t.send(&Msg::Setup {
                 peers,
                 you: (i + 1) as u8,
@@ -884,6 +1003,33 @@ impl Lobby {
                 seed: self.seed,
                 races: races.clone(),
                 ticks_per_turn: self.ticks_per_turn,
+                setup: None,
+            })?;
+            clients.push(t);
+        }
+        Ok((clients, races))
+    }
+
+    /// Close a lobby game: every joined client gets the resolved `setup`
+    /// (races by slot; each peer finds its slot with
+    /// [`crate::multiplayer::GameSetup::slot_of_peer`]).
+    pub fn start_with_setup(
+        &self,
+        queue: JoinQueue,
+        setup: &crate::multiplayer::GameSetup,
+    ) -> io::Result<(Vec<TcpTransport>, Vec<Race>)> {
+        let races = setup.races();
+        let peers = queue.players();
+        let mut clients = Vec::with_capacity(queue.joined.len());
+        for (i, (mut t, _, _, _)) in queue.joined.into_iter().enumerate() {
+            t.send(&Msg::Setup {
+                peers,
+                you: (i + 1) as u8,
+                map_hash: self.map_hash,
+                seed: self.seed,
+                races: races.clone(),
+                ticks_per_turn: self.ticks_per_turn,
+                setup: Some(setup.clone()),
             })?;
             clients.push(t);
         }
@@ -909,7 +1055,7 @@ impl Lobby {
 /// players including the host).
 pub struct JoinQueue {
     capacity: u8,
-    joined: Vec<(TcpTransport, Race, SocketAddr)>,
+    joined: Vec<(TcpTransport, Race, SocketAddr, String)>,
 }
 
 impl JoinQueue {
@@ -932,8 +1078,95 @@ impl JoinQueue {
 
     /// Address and race of each joined client, in peer order (1..).
     pub fn members(&self) -> Vec<(SocketAddr, Race)> {
-        self.joined.iter().map(|(_, r, a)| (*a, *r)).collect()
+        self.joined.iter().map(|(_, r, a, _)| (*a, *r)).collect()
     }
+
+    /// Registry name the client of `peer` (1..) joined with.
+    pub fn name(&self, peer: u8) -> Option<&str> {
+        let i = (peer as usize).checked_sub(1)?;
+        self.joined.get(i).map(|j| j.3.as_str())
+    }
+
+    /// Send every joined client the lobby (each with its own `you`).
+    /// Returns the peers whose link failed; the caller drops them with
+    /// [`Self::remove`] (highest first) and reopens their slots.
+    pub fn send_lobby(&mut self, lobby: &crate::multiplayer::Lobby) -> Vec<u8> {
+        let mut failed = Vec::new();
+        for (i, j) in self.joined.iter_mut().enumerate() {
+            let msg = Msg::LobbyState {
+                you: (i + 1) as u8,
+                lobby: lobby.clone(),
+            };
+            if j.0.send(&msg).is_err() {
+                failed.push((i + 1) as u8);
+            }
+        }
+        failed
+    }
+
+    /// Lobby messages waiting from joined clients, as `(peer, msg)`, plus
+    /// the peers that disconnected.
+    pub fn poll_lobby(&mut self) -> (Vec<(u8, Msg)>, Vec<u8>) {
+        let mut msgs = Vec::new();
+        let mut gone = Vec::new();
+        for (i, j) in self.joined.iter_mut().enumerate() {
+            loop {
+                match j.0.try_recv() {
+                    Ok(Some(m)) => msgs.push(((i + 1) as u8, m)),
+                    Ok(None) => break,
+                    Err(_) => {
+                        gone.push((i + 1) as u8);
+                        break;
+                    }
+                }
+            }
+        }
+        (msgs, gone)
+    }
+
+    /// Send `msg` to every joined client (best effort; failures surface on
+    /// the next [`Self::poll_lobby`]).
+    pub fn send_all(&mut self, msg: &Msg) {
+        for j in &mut self.joined {
+            let _ = j.0.send(msg);
+        }
+    }
+
+    /// Forget the client of `peer` (1..); later peers move down one.
+    pub fn remove(&mut self, peer: u8) {
+        if let Some(i) = (peer as usize).checked_sub(1)
+            && i < self.joined.len()
+        {
+            self.joined.remove(i);
+        }
+    }
+}
+
+/// Client side of a lobby game: connect and join with a name, without
+/// waiting.  The host answers with `LobbyState` updates and, when the game
+/// starts, `Setup`; read them with [`TcpTransport::try_recv`].
+pub fn connect_lobby(
+    addr: &str,
+    map_hash: [u8; 32],
+    seed: u64,
+    race: Race,
+    name: &str,
+) -> io::Result<TcpTransport> {
+    let stream = TcpStream::connect_timeout(
+        &addr
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "need IP:PORT"))?,
+        Duration::from_secs(3),
+    )?;
+    let mut t = TcpTransport::new(stream)?;
+    t.send(&Msg::Join {
+        protocol: PROTOCOL,
+        map_hash,
+        seed,
+        race,
+        name: name.to_string(),
+    })?;
+    Ok(t)
 }
 
 /// Client side: connect, join, and receive the agreed setup.
@@ -950,6 +1183,7 @@ pub fn connect(
         map_hash,
         seed,
         race,
+        name: String::new(),
     })?;
     let setup = t.recv()?;
     match &setup {
@@ -1165,6 +1399,12 @@ pub struct Announce {
     pub port: u16,
     pub players: u8,
     pub started: bool,
+    /// What the Games list's information plate shows (protocol 3).
+    pub game_type: u8,
+    pub map_name: String,
+    pub map_size: (u16, u16),
+    /// Retail speed index, 0 Slowest .. 6 Fastest.
+    pub speed: u8,
 }
 
 impl Announce {
@@ -1180,6 +1420,14 @@ impl Announce {
         w_u16(&mut out, self.port);
         w_u8(&mut out, self.players);
         w_u8(&mut out, self.started as u8);
+        w_u8(&mut out, self.game_type);
+        let map = self.map_name.as_bytes();
+        let m = map.len().min(120);
+        w_u32(&mut out, m as u32);
+        out.extend_from_slice(&map[..m]);
+        w_u16(&mut out, self.map_size.0);
+        w_u16(&mut out, self.map_size.1);
+        w_u8(&mut out, self.speed);
         out
     }
 
@@ -1194,13 +1442,55 @@ impl Announce {
             return None;
         }
         let name = String::from_utf8_lossy(c.take_bytes(n)?).into_owned();
+        let map_hash = c.take32()?;
+        let port = c.u16()?;
+        let players = c.u8()?;
+        let started = c.u8()? != 0;
+        let game_type = c.u8()?;
+        let m = c.u32()? as usize;
+        if m > 120 {
+            return None;
+        }
+        let map_name = String::from_utf8_lossy(c.take_bytes(m)?).into_owned();
         Some(Announce {
             name,
-            map_hash: c.take32()?,
-            port: c.u16()?,
-            players: c.u8()?,
-            started: c.u8()? != 0,
+            map_hash,
+            port,
+            players,
+            started,
+            game_type,
+            map_name,
+            map_size: (c.u16()?, c.u16()?),
+            speed: c.u8()?,
         })
+    }
+}
+
+/// Record an announce heard from `from` in a Games list of
+/// `(host address, announce, last heard)`.  Hosts announce by broadcast and
+/// on loopback, so one game arrives from two source addresses: it is the
+/// same game when the name, map and port match, and the first address heard
+/// is kept.  Started games are dropped from the list.
+pub fn upsert_game(
+    games: &mut Vec<(SocketAddr, Announce, Instant)>,
+    from: SocketAddr,
+    a: Announce,
+    now: Instant,
+) {
+    let key = SocketAddr::new(from.ip(), a.port);
+    let same = |g: &(SocketAddr, Announce, Instant)| {
+        g.0 == key || (g.1.name == a.name && g.1.map_hash == a.map_hash && g.1.port == a.port)
+    };
+    if a.started {
+        games.retain(|g| !same(g));
+        return;
+    }
+    match games.iter_mut().find(|g| same(g)) {
+        Some(g) => {
+            g.1 = a;
+            g.2 = now;
+        }
+        None => games.push((key, a, now)),
     }
 }
 
@@ -1451,7 +1741,12 @@ pub fn apply_resync(
     rec: &crate::replay::Recording,
 ) {
     let target = turn as u64 * lock.ticks_per_turn as u64;
-    crate::replay::replay_to(world, rec, target);
+    // `lock.computers` must be fresh (game-start state): they are re-run
+    // over the whole log exactly as every peer ran them live.
+    let computers = &mut lock.computers;
+    crate::replay::replay_to_with(world, rec, target, |w| {
+        crate::ai::run_computers(w, computers, 0)
+    });
     lock.turn = turn;
     lock.adopt_log(rec);
 }
@@ -1515,6 +1810,7 @@ mod tests {
                 map_hash: [9u8; 32],
                 seed: 42,
                 race: Race::Zerg,
+                name: "LinKa".into(),
             },
             Msg::Setup {
                 peers: 3,
@@ -1523,7 +1819,42 @@ mod tests {
                 seed: 42,
                 races: vec![Race::Terran, Race::Zerg, Race::Protoss],
                 ticks_per_turn: 4,
+                setup: None,
             },
+            Msg::Setup {
+                peers: 2,
+                you: 1,
+                map_hash: [9u8; 32],
+                seed: 42,
+                races: vec![Race::Protoss, Race::Zerg],
+                ticks_per_turn: 4,
+                setup: Some(crate::multiplayer::GameSetup {
+                    game_type: crate::multiplayer::GameType::TopVsBottom,
+                    slots: vec![
+                        crate::multiplayer::SetupSlot {
+                            occupant: crate::multiplayer::SetupOccupant::Human { peer: 0 },
+                            race: Race::Protoss,
+                            team: 0,
+                        },
+                        crate::multiplayer::SetupSlot {
+                            occupant: crate::multiplayer::SetupOccupant::Human { peer: 1 },
+                            race: Race::Zerg,
+                            team: 1,
+                        },
+                    ],
+                }),
+            },
+            Msg::LobbyState {
+                you: 1,
+                lobby: crate::multiplayer::Lobby::new_host(
+                    "LinKa",
+                    "The Hunters",
+                    8,
+                    crate::multiplayer::GameType::TopVsBottom,
+                    (4, 4),
+                ),
+            },
+            Msg::LobbyRace { race: 3 },
             Msg::Turn {
                 turn: 5,
                 acts: acts.clone(),
@@ -1662,6 +1993,49 @@ mod tests {
     }
 
     #[test]
+    fn a_game_heard_twice_is_listed_once() {
+        let a = Announce {
+            name: "LinKa".into(),
+            map_hash: [1u8; 32],
+            port: LOBBY_PORT,
+            players: 2,
+            started: false,
+            game_type: 12,
+            map_name: "The Hunters".into(),
+            map_size: (128, 128),
+            speed: 6,
+        };
+        let now = Instant::now();
+        let lan: SocketAddr = "192.168.1.20:50000".parse().unwrap();
+        let lo: SocketAddr = "127.0.0.1:50001".parse().unwrap();
+        let mut games = Vec::new();
+        upsert_game(&mut games, lan, a.clone(), now);
+        upsert_game(&mut games, lo, a.clone(), now);
+        assert_eq!(games.len(), 1, "broadcast + loopback copies are one game");
+        assert_eq!(
+            games[0].0,
+            "192.168.1.20:7777".parse().unwrap(),
+            "first address kept"
+        );
+        // Another host's game is a second row; a started game leaves.
+        let other = Announce {
+            name: "Raynor".into(),
+            ..a.clone()
+        };
+        upsert_game(
+            &mut games,
+            "192.168.1.21:50000".parse().unwrap(),
+            other,
+            now,
+        );
+        assert_eq!(games.len(), 2);
+        let started = Announce { started: true, ..a };
+        upsert_game(&mut games, lo, started, now);
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].1.name, "Raynor");
+    }
+
+    #[test]
     fn announce_roundtrips_and_discovery_finds_a_lobby() {
         use std::net::UdpSocket;
         use std::thread;
@@ -1672,8 +2046,15 @@ mod tests {
             port: 7777,
             players: 2,
             started: false,
+            game_type: 12,
+            map_name: "Boxer".into(),
+            map_size: (64, 64),
+            speed: 6,
         };
         assert_eq!(Announce::decode(&a.encode()), Some(a.clone()));
+        let mut short = a.encode();
+        short.pop();
+        assert_eq!(Announce::decode(&short), None, "truncated announce");
 
         let listener = discovery_socket(0).unwrap();
         let listen_addr = listener.local_addr().unwrap();
