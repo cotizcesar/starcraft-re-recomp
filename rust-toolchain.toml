@@ -1,0 +1,4 @@
+# The toolchain every build, test and CI job uses.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

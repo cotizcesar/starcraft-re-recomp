@@ -14,7 +14,7 @@
 //! 0 badlands, 1 platform/space, 2 install, 3 ashworld, 4 jungle,
 //! 5 desert, 6 ice, 7 twilight.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -132,10 +132,10 @@ fn main() {
         // the MPQ tree under `sd/campaign/`; include them in the same run.
         for episode in galaxycraft::campaign::episodes(install) {
             for mission in episode.missions {
-                if let Some(raw) = install.read(&mission.chk_path) {
-                    if !raw.is_empty() {
-                        maps.push((format!("{}/{}", episode.key, mission.key), raw));
-                    }
+                if let Some(raw) = install.read(&mission.chk_path)
+                    && !raw.is_empty()
+                {
+                    maps.push((format!("{}/{}", episode.key, mission.key), raw));
                 }
             }
         }

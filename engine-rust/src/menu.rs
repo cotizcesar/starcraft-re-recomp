@@ -240,16 +240,16 @@ macro_rules! settings_fields {
             }
         }
     };
-    (@get speed $e:expr) => { $e };
-    (@get unit $e:expr) => { $e };
-    (@get bool $e:expr) => { if $e { 1.0 } else { 0.0 } };
-    (@get mode3 $e:expr) => { $e as f32 };
-    (@get mode2 $e:expr) => { $e as f32 };
-    (@set speed $v:expr) => { $v.clamp(0.1, 3.0) };
-    (@set unit $v:expr) => { $v.clamp(0.0, 1.0) };
-    (@set bool $v:expr) => { $v != 0.0 };
-    (@set mode3 $v:expr) => { $v.clamp(0.0, 2.0) as u8 };
-    (@set mode2 $v:expr) => { $v.clamp(0.0, 1.0) as u8 };
+    (@get speed $e:expr_2021) => { $e };
+    (@get unit $e:expr_2021) => { $e };
+    (@get bool $e:expr_2021) => { if $e { 1.0 } else { 0.0 } };
+    (@get mode3 $e:expr_2021) => { $e as f32 };
+    (@get mode2 $e:expr_2021) => { $e as f32 };
+    (@set speed $v:expr_2021) => { $v.clamp(0.1, 3.0) };
+    (@set unit $v:expr_2021) => { $v.clamp(0.0, 1.0) };
+    (@set bool $v:expr_2021) => { $v != 0.0 };
+    (@set mode3 $v:expr_2021) => { $v.clamp(0.0, 2.0) as u8 };
+    (@set mode2 $v:expr_2021) => { $v.clamp(0.0, 1.0) as u8 };
 }
 
 settings_fields! {
@@ -316,11 +316,7 @@ pub fn episode_race(episode: u8) -> &'static str {
 /// First episode index opened by the `Select Game Type` popup: Original
 /// starts at I (index 0), Expansion at IV (index 3).
 pub fn episode_start(expansion: bool) -> usize {
-    if expansion {
-        3
-    } else {
-        0
-    }
+    if expansion { 3 } else { 0 }
 }
 
 /// In-game F10 `Game Menu` entries.
@@ -891,11 +887,7 @@ pub const SWISH_STEPS_PER_SEC: f32 = 30.0;
 /// Remaining offset (UI px) of a plate sliding in from `distance`.
 pub fn swish_in_offset(distance: f32, step: u32) -> f32 {
     let o = distance * 0.75f32.powi(step.min(64) as i32);
-    if o.abs() < 2.0 {
-        0.0
-    } else {
-        o
-    }
+    if o.abs() < 2.0 { 0.0 } else { o }
 }
 
 /// Steps until a plate sliding in from `distance` is in place.

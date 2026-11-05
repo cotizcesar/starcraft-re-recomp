@@ -153,10 +153,10 @@ impl SoundBank {
         let mut sounds = HashMap::new();
         for name in SOUND_NAMES {
             let path = dir.join(format!("{name}.wav"));
-            if let Ok(bytes) = std::fs::read(&path) {
-                if let Some(wav) = Wav::parse(&bytes) {
-                    sounds.insert((*name).to_string(), wav.to_mono_44k());
-                }
+            if let Ok(bytes) = std::fs::read(&path)
+                && let Some(wav) = Wav::parse(&bytes)
+            {
+                sounds.insert((*name).to_string(), wav.to_mono_44k());
             }
         }
         Self { sounds }
@@ -676,9 +676,11 @@ mod coreaudio {
     type FreeList = Mutex<Vec<usize>>;
 
     unsafe extern "C" fn done(user: *mut c_void, _queue: *mut c_void, buf: *mut QueueBuffer) {
-        let free = &*(user as *const FreeList);
-        if let Ok(mut v) = free.lock() {
-            v.push(buf as usize);
+        unsafe {
+            let free = &*(user as *const FreeList);
+            if let Ok(mut v) = free.lock() {
+                v.push(buf as usize);
+            }
         }
     }
 

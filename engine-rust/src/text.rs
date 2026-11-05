@@ -779,10 +779,11 @@ impl UiFont {
         let s = px / face.units_per_em() as f32;
         if let Some(kern) = face.tables().kern {
             for sub in kern.subtables {
-                if sub.horizontal && !sub.variable {
-                    if let Some(v) = sub.glyphs_kerning(l, r) {
-                        return v as f32 * s;
-                    }
+                if sub.horizontal
+                    && !sub.variable
+                    && let Some(v) = sub.glyphs_kerning(l, r)
+                {
+                    return v as f32 * s;
                 }
             }
         }

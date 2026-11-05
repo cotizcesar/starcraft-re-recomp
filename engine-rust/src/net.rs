@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::replay::{decode_act, encode_act, RecAct};
+use crate::replay::{RecAct, decode_act, encode_act};
 use crate::sim::{Race, World};
 
 /// Bumped whenever the message encoding changes.
@@ -110,7 +110,7 @@ fn race_from(b: u8) -> Option<Race> {
 
 impl Msg {
     pub fn encode(&self) -> Vec<u8> {
-        use crate::replay::{w_u16, w_u32, w_u64, w_u8};
+        use crate::replay::{w_u8, w_u16, w_u32, w_u64};
         let mut out = Vec::new();
         w_u16(&mut out, PROTOCOL);
         match self {
@@ -479,7 +479,7 @@ impl UdpTransport {
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
                 ) =>
             {
-                return Ok(false)
+                return Ok(false);
             }
             Err(e) => return Err(e),
         };
@@ -610,10 +610,11 @@ pub fn udp_join(
         sock.send_to(&join, target)?;
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
-                if n > 1 && buf[0] == UDP_HELLO {
-                    if let Some(m @ Msg::Setup { .. }) = Msg::decode(&buf[1..n]) {
-                        return Ok((UdpTransport::new(sock, from)?, m));
-                    }
+                if n > 1
+                    && buf[0] == UDP_HELLO
+                    && let Some(m @ Msg::Setup { .. }) = Msg::decode(&buf[1..n])
+                {
+                    return Ok((UdpTransport::new(sock, from)?, m));
                 }
             }
             Err(e)
@@ -1168,7 +1169,7 @@ pub struct Announce {
 
 impl Announce {
     pub fn encode(&self) -> Vec<u8> {
-        use crate::replay::{w_u16, w_u32, w_u8};
+        use crate::replay::{w_u8, w_u16, w_u32};
         let mut out = Vec::new();
         w_u16(&mut out, PROTOCOL);
         let name = self.name.as_bytes();
@@ -1237,10 +1238,10 @@ pub fn discover(sock: &UdpSocket, window: Duration) -> io::Result<Vec<(SocketAdd
     while Instant::now() < deadline {
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
-                if let Some(a) = Announce::decode(&buf[..n]) {
-                    if !seen.iter().any(|(addr, _)| *addr == from) {
-                        seen.push((from, a));
-                    }
+                if let Some(a) = Announce::decode(&buf[..n])
+                    && !seen.iter().any(|(addr, _)| *addr == from)
+                {
+                    seen.push((from, a));
                 }
             }
             Err(e)

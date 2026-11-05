@@ -690,7 +690,7 @@ impl ProgressBook {
 mod tests {
     #[test]
     fn episode_one_follows_the_retail_mission_table() {
-        use super::{after_victory, mission_of, mission_title, Advance};
+        use super::{Advance, after_victory, mission_of, mission_title};
         // Rebel Yell plays tutorial, terran01..06, 08, 09, 11, 12.
         let keys: Vec<&str> = (1..=11)
             .map(|m| super::mission_key(m).expect("terran mission").1)

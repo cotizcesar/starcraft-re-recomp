@@ -19,11 +19,11 @@ use std::sync::Arc;
 
 use galaxycraft::data::GameData;
 use galaxycraft::handlers::{
-    handler_index, spec_by_va, spec_for_row, HandlerFamily, HandlerSpec, HANDLERS, HANDLER_COUNT,
+    HANDLER_COUNT, HANDLERS, HandlerFamily, HandlerSpec, handler_index, spec_by_va, spec_for_row,
 };
 use galaxycraft::ids::unit as uid;
 use galaxycraft::map::Terrain;
-use galaxycraft::orders::{spec, OrderClass, OrderLane, ORDER_SPECS};
+use galaxycraft::orders::{ORDER_SPECS, OrderClass, OrderLane, spec};
 use galaxycraft::sim::World;
 
 fn root() -> PathBuf {
@@ -530,14 +530,14 @@ fn rows_outside_the_switch_are_explicitly_classified() {
                 assert!(row.handler.is_none(), "aliased row has direct handler");
                 // An alias resolves to the target's recovered handler when
                 // the target has one.  Row 12 and 13 are virtual sites.
-                if let Some(target_spec) = spec(target) {
-                    if target_spec.handler.is_some() {
-                        assert!(
-                            spec_for_row(row.id).is_some(),
-                            "alias row {} does not resolve",
-                            row.id
-                        );
-                    }
+                if let Some(target_spec) = spec(target)
+                    && target_spec.handler.is_some()
+                {
+                    assert!(
+                        spec_for_row(row.id).is_some(),
+                        "alias row {} does not resolve",
+                        row.id
+                    );
                 }
             }
             OrderLane::Production => {

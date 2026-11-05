@@ -7,7 +7,7 @@
 //! button that exists in the set.  Falsifier for any line: the retail card
 //! of a unit in that state showing/hiding the button differently.
 
-use crate::button_sets::{set_of, Button};
+use crate::button_sets::{Button, set_of};
 use crate::sim::{SimUnit, World};
 
 /// Semantic class of a retail button condition.
@@ -102,10 +102,11 @@ pub fn card(world: &World, unit: &SimUnit) -> [Option<(Button, ButtonState)>; 9]
     let set = set_of(unit.type_id as usize);
     for b in set {
         let i = (b.pos as usize).wrapping_sub(1);
-        if i < 9 && out[i].is_none() {
-            if let Some(s) = state(world, unit, b) {
-                out[i] = Some((*b, s));
-            }
+        if i < 9
+            && out[i].is_none()
+            && let Some(s) = state(world, unit, b)
+        {
+            out[i] = Some((*b, s));
         }
     }
     out

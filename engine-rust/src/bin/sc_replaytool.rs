@@ -28,7 +28,7 @@ use std::sync::Arc;
 use galaxycraft::ai::SimpleAi;
 use galaxycraft::data::GameData;
 use galaxycraft::map::Scenario;
-use galaxycraft::replay::{replay_to, state_hash, Recording, SaveFile};
+use galaxycraft::replay::{Recording, SaveFile, replay_to, state_hash};
 use galaxycraft::sim::{Race, World};
 
 fn data() -> GameData {

@@ -1,7 +1,8 @@
 [package]
 name = "galaxycraft"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.99.1"
 description = "A Rust reconstruction of StarCraft 1.23 core gameplay logic, driven by data recovered from the shipped executable."
 license = "MIT"
 repository = "https://github.com/cotizcesar/starcraft-re-recomp"
@@ -24,17 +25,17 @@ codegen-units = 1
 
 [dependencies]
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
-font8x8 = "0.3"
+font8x8 = "0.3.1"
 fontdue = { version = "0.9.5", default-features = false }
 # Glyph outlines for the CEF text rasteriser (already in the tree via fontdue).
-ttf-parser = { version = "0.25", default-features = false, features = ["opentype-layout", "no-std-float"] }
+ttf-parser = { version = "0.25.1", default-features = false, features = ["opentype-layout", "no-std-float"] }
 lewton = "0.10.2"
-libloading = "0.8"
+libloading = "0.9"
 minifb = { version = "0.29", default-features = false, features = ["x11", "dlopen"] }
 ogg = "0.9.2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 sha2 = "0.11.1"
 
 [build-dependencies]
-cc = "1.10.0"
+cc = "1.11.0"

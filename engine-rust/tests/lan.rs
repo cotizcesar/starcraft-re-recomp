@@ -4,18 +4,18 @@
 //! both sides. The test fails if either peer detects a desync or if the final
 //! state hashes differ, which is the same guarantee the 1v1 LAN goal needs.
 
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 
 use galaxycraft::data::GameData;
 use galaxycraft::ids::unit as uid;
 use galaxycraft::map::Scenario;
 use galaxycraft::net::{
-    accept_rejoin, apply_resync, client_turn, connect, host_turn, request_resync, Lobby, Lockstep,
-    DEFAULT_TICKS_PER_TURN,
+    DEFAULT_TICKS_PER_TURN, Lobby, Lockstep, accept_rejoin, apply_resync, client_turn, connect,
+    host_turn, request_resync,
 };
-use galaxycraft::replay::{state_hash, RecAct};
+use galaxycraft::replay::{RecAct, state_hash};
 use galaxycraft::sim::{Order, Race, World};
 
 fn data() -> GameData {
@@ -390,7 +390,7 @@ fn three_peers_join_a_polled_lobby_and_stay_in_sync() {
 #[test]
 fn a_dropped_peer_rejoins_with_backoff_while_the_others_wait() {
     use galaxycraft::net::{
-        host_turn_peers, rejoin_with_backoff, try_accept_rejoin, Backoff, JoinQueue,
+        Backoff, JoinQueue, host_turn_peers, rejoin_with_backoff, try_accept_rejoin,
     };
     let map_hash = [33u8; 32];
     let seed = 0x1234_5678_9abc_def0;
@@ -491,7 +491,7 @@ fn a_dropped_peer_rejoins_with_backoff_while_the_others_wait() {
 
 #[test]
 fn rejoin_backoff_retries_until_the_host_listens() {
-    use galaxycraft::net::{rejoin_with_backoff, Backoff};
+    use galaxycraft::net::{Backoff, rejoin_with_backoff};
     use std::time::{Duration, Instant};
     // Reserve a port, then free it: nobody listens there for a while.
     let addr = std::net::TcpListener::bind("127.0.0.1:0")

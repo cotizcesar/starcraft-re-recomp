@@ -2,7 +2,7 @@
 
 use galaxycraft::map::Scenario;
 use galaxycraft::render::{
-    asset_root, Framebuffer, Grp, MinimapDot, MinimapTerrain, Rgb, SpriteBank, Tileset,
+    Framebuffer, Grp, MinimapDot, MinimapTerrain, Rgb, SpriteBank, Tileset, asset_root,
 };
 use std::fs;
 
@@ -127,7 +127,7 @@ fn creep_draws_the_retail_creep_megatiles_without_animation() {
     let mature: Vec<(i32, i32)> = grid
         .iter()
         .enumerate()
-        .filter(|(_, &s)| s >= 3)
+        .filter(|&(_, &s)| s >= 3)
         .map(|(i, _)| ((i % scenario.width) as i32, (i / scenario.width) as i32))
         .collect();
     assert!(
@@ -310,7 +310,7 @@ fn retail_cache() -> Option<std::path::PathBuf> {
 /// without a materialised retail cache.
 #[test]
 fn sd_creep_edges_are_the_retail_grp_frames_at_their_offsets() {
-    use galaxycraft::render::{creep_edge_frame, era_name, Grp};
+    use galaxycraft::render::{Grp, creep_edge_frame, era_name};
     let Some(cache) = retail_cache() else {
         eprintln!("skip: no materialised retail cache");
         return;

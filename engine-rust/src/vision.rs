@@ -12,7 +12,7 @@
 //! also has a line-of-sight propagation table; the circle below is its
 //! conservative equivalent and is documented as such in `docs/EVIDENCE.md`.
 
-use crate::map::{Terrain, TILE_HIGH, TILE_MIDDLE, TILE_VERY_HIGH};
+use crate::map::{TILE_HIGH, TILE_MIDDLE, TILE_VERY_HIGH, Terrain};
 use crate::sim::World;
 
 #[derive(Clone, Debug)]

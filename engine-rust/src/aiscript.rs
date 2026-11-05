@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::path::{find_path, Obstacles, PathRequest};
+use crate::path::{Obstacles, PathRequest, find_path};
 use crate::sim::World;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -413,10 +413,11 @@ impl CampaignAi {
         let p = &world.players[self.player as usize];
         if self.default_build && p.minerals >= 600 && p.gas >= 150 {
             for &unit in roster {
-                if let Some(limit) = self.max_units.get(&unit) {
-                    if *limit != 255 && self.count(world, unit) >= *limit as i32 {
-                        continue;
-                    }
+                if let Some(limit) = self.max_units.get(&unit)
+                    && *limit != 255
+                    && self.count(world, unit) >= *limit as i32
+                {
+                    continue;
                 }
                 if self.try_train_or_morph(world, unit) {
                     break;
@@ -1454,10 +1455,10 @@ impl CampaignAi {
         {
             return false;
         }
-        if let Some(max) = self.max_units.get(&unit_type) {
-            if self.count(world, unit_type) >= *max as i32 {
-                return true;
-            }
+        if let Some(max) = self.max_units.get(&unit_type)
+            && self.count(world, unit_type) >= *max as i32
+        {
+            return true;
         }
         let producer = world.units.iter().find(|u| {
             u.alive && u.completed && u.owner == self.player && u.type_id == info.producer
@@ -1689,17 +1690,15 @@ impl CampaignAi {
 
     fn try_train_or_morph(&self, world: &mut World, unit_type: u16) -> bool {
         let info = crate::tech::build_info(unit_type);
-        if info.is_some_and(|i| i.producer == crate::ids::unit::LARVA)
-            || world.data.unit(unit_type).is_building()
-        {
-            if let Some(larva) = world
+        if (info.is_some_and(|i| i.producer == crate::ids::unit::LARVA)
+            || world.data.unit(unit_type).is_building())
+            && let Some(larva) = world
                 .units
                 .iter()
                 .find(|u| u.alive && u.owner == self.player && u.type_id == crate::ids::unit::LARVA)
-            {
-                let id = larva.id;
-                return world.morph(id, unit_type).is_ok();
-            }
+        {
+            let id = larva.id;
+            return world.morph(id, unit_type).is_ok();
         }
         self.try_train(world, unit_type)
     }
@@ -2100,9 +2099,10 @@ mod tests {
         let script = ai.get_str("Ter3").unwrap();
         let ins = script.instructions();
         assert!(!ins.is_empty());
-        assert!(ins
-            .iter()
-            .any(|i| i.name() == "build" || i.name() == "train"));
+        assert!(
+            ins.iter()
+                .any(|i| i.name() == "build" || i.name() == "train")
+        );
         for i in &ins {
             assert!(
                 i.opcode < OPCODE_NAMES.len() as u8,

@@ -6,8 +6,8 @@
 //!   cargo run --bin sc_sim -- stats marine
 //!   cargo run --bin sc_sim -- battle 3 marine 1 zealot
 
-use galaxycraft::combat::{fp, CombatSim};
-use galaxycraft::data::{unit_ids, GameData};
+use galaxycraft::combat::{CombatSim, fp};
+use galaxycraft::data::{GameData, unit_ids};
 use galaxycraft::economy::{build_seconds, supply_of};
 
 fn unit_id(name: &str) -> Option<u16> {
@@ -183,9 +183,5 @@ fn print_stats(data: &GameData, id: u16) {
 
 fn unit_label(data: &GameData, id: u16) -> &str {
     let name = data.unit_name(id);
-    if name.is_empty() {
-        "Unit"
-    } else {
-        name
-    }
+    if name.is_empty() { "Unit" } else { name }
 }

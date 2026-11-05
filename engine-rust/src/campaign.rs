@@ -114,14 +114,13 @@ pub fn episodes(install: &RetailInstall) -> Vec<Campaign> {
             // line of the establishing-shot script (`"THE JACOBS
             // INSTALLATION"`).
             let mut mission_name = mission_name;
-            if mission_name.is_empty() || mission_name.eq_ignore_ascii_case("untitled scenario") {
-                if let Some(title) = briefing_key
+            if (mission_name.is_empty() || mission_name.eq_ignore_ascii_case("untitled scenario"))
+                && let Some(title) = briefing_key
                     .as_deref()
                     .and_then(|k| install.read(&format!("locales/enus/assets/rez/{k}.txt")))
                     .and_then(|bytes| brief_title(&String::from_utf8_lossy(&bytes)))
-                {
-                    mission_name = title;
-                }
+            {
+                mission_name = title;
             }
             missions.push(CampaignMission {
                 episode: episode.to_string(),
@@ -442,11 +441,7 @@ pub fn parse_script(source: &str) -> BriefingScript {
 
 fn non_empty(s: &str) -> Option<&str> {
     let s = s.trim();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Resolve an authored glue path to a file that exists in the installation.

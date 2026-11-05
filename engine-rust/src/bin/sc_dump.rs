@@ -86,16 +86,16 @@ fn main() -> ExitCode {
             continue;
         };
         let dst = out.join(&path);
-        if let Some(parent) = dst.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                continue;
-            }
+        if let Some(parent) = dst.parent()
+            && std::fs::create_dir_all(parent).is_err()
+        {
+            continue;
         }
-        if let Ok(mut f) = std::fs::File::create(&dst) {
-            if f.write_all(&data).is_ok() {
-                written += 1;
-                bytes += data.len() as u64;
-            }
+        if let Ok(mut f) = std::fs::File::create(&dst)
+            && f.write_all(&data).is_ok()
+        {
+            written += 1;
+            bytes += data.len() as u64;
         }
     }
     println!(

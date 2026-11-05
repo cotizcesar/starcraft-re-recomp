@@ -25,9 +25,9 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
@@ -41,16 +41,16 @@ use galaxycraft::data::GameData;
 use galaxycraft::dds::DdsImage;
 use galaxycraft::hotkey_data;
 use galaxycraft::ids::unit as uid;
-use galaxycraft::map::{scenario_file_key, PlayerSlot, Scenario};
+use galaxycraft::map::{PlayerSlot, Scenario, scenario_file_key};
 use galaxycraft::menu::{GameMenuItem, GameOptions, HotkeyRace, LobbyRace, MenuScreen, OptionsTab};
 use galaxycraft::net::{
-    announcer, broadcast, client_turn, discover, discovery_socket, Announce, Lobby, Lockstep, Msg,
-    TcpTransport, DEFAULT_TICKS_PER_TURN,
+    Announce, DEFAULT_TICKS_PER_TURN, Lobby, Lockstep, Msg, TcpTransport, announcer, broadcast,
+    client_turn, discover, discovery_socket,
 };
 use galaxycraft::render::{
-    asset_root, draw_unit_box, era_name, Framebuffer, Rgb, SpriteBank, Tileset, TILE_PX,
+    Framebuffer, Rgb, SpriteBank, TILE_PX, Tileset, asset_root, draw_unit_box, era_name,
 };
-use galaxycraft::replay::{state_hash, RecAct, Recorder, Recording, SaveFile};
+use galaxycraft::replay::{RecAct, Recorder, Recording, SaveFile, state_hash};
 use galaxycraft::retail::RetailInstall;
 use galaxycraft::sfx::SfxTable;
 use galaxycraft::sim::{Order, Race, SimUnit, World};
@@ -715,36 +715,38 @@ impl MenuClip {
         // waits briefly for the decoder so headless captures show real art
         // instead of an empty layer.
         let first = self.current.is_none() && self.buffer.is_empty();
-        if self.decoded < want && self.buffer.len() <= self.chunk * 2 {
-            if let Some(rx) = &self.rx {
-                // A frozen clip (`--menu-at` / `--menu-phase` captures) blocks
-                // until the decoder delivers: the old 2 s poll gave up under
-                // CPU load and drew an empty layer, so identical captures
-                // differed.  Live playback never stalls the render thread.
-                let got = if first && self.frozen {
-                    rx.recv_timeout(FROZEN_CLIP_WAIT).ok()
-                } else {
-                    rx.try_recv().ok()
-                };
-                if let Some(frames) = got {
-                    // The playback clock starts with the first decoded
-                    // frame: counting the decoder's start-up time made the
-                    // first frames skip ahead.
-                    if first && !self.frozen && !frames.is_empty() {
-                        self.started = Instant::now();
-                        want = 1;
-                    }
-                    self.buffer.extend(frames);
+        if self.decoded < want
+            && self.buffer.len() <= self.chunk * 2
+            && let Some(rx) = &self.rx
+        {
+            // A frozen clip (`--menu-at` / `--menu-phase` captures) blocks
+            // until the decoder delivers: the old 2 s poll gave up under
+            // CPU load and drew an empty layer, so identical captures
+            // differed.  Live playback never stalls the render thread.
+            let got = if first && self.frozen {
+                rx.recv_timeout(FROZEN_CLIP_WAIT).ok()
+            } else {
+                rx.try_recv().ok()
+            };
+            if let Some(frames) = got {
+                // The playback clock starts with the first decoded
+                // frame: counting the decoder's start-up time made the
+                // first frames skip ahead.
+                if first && !self.frozen && !frames.is_empty() {
+                    self.started = Instant::now();
+                    want = 1;
                 }
+                self.buffer.extend(frames);
             }
         }
         // Never fast-forward: when the clock is ahead of the decoder (a
         // stall), slide it back so playback resumes at the authored rate.
-        if !self.frozen && self.buffer.is_empty() {
-            if let Some(behind) = clip_lag_shift(want, self.decoded, self.fps) {
-                self.started += behind;
-                want = self.decoded + 1;
-            }
+        if !self.frozen
+            && self.buffer.is_empty()
+            && let Some(behind) = clip_lag_shift(want, self.decoded, self.fps)
+        {
+            self.started += behind;
+            want = self.decoded + 1;
         }
         let before = self.decoded;
         while self.decoded < want {
@@ -768,11 +770,11 @@ impl MenuClip {
                 self.decoded - before - 1
             );
         }
-        if !self.alpha_known {
-            if let Some(f) = self.current.as_ref() {
-                self.has_alpha = f.has_alpha();
-                self.alpha_known = true;
-            }
+        if !self.alpha_known
+            && let Some(f) = self.current.as_ref()
+        {
+            self.has_alpha = f.has_alpha();
+            self.alpha_known = true;
         }
         self.current.as_deref()
     }
@@ -2373,21 +2375,20 @@ fn opt_checkbox(
     let ppem = 23.8 * unit;
     let pen = lx as f32 - 0.125 * unit;
     opt_text_at(fb, font, pen, y as f32 + 23.375 * unit, label, ppem, color);
-    if help {
-        if let Some(w) = font
+    if help
+        && let Some(w) = font
             .as_ref()
             .map(|f| f.measure_cef(label, ppem, ppem * CEF_TRACKING))
-        {
-            opt_help(
-                fb,
-                font,
-                pen + w + 13.44 * unit,
-                y as f32 + 8.5 * unit,
-                9.0 * unit,
-                color,
-                ppem,
-            );
-        }
+    {
+        opt_help(
+            fb,
+            font,
+            pen + w + 13.44 * unit,
+            y as f32 + 8.5 * unit,
+            9.0 * unit,
+            color,
+            ppem,
+        );
     }
 }
 
@@ -3095,11 +3096,7 @@ fn score_panel_shift(t: f32) -> f32 {
         return -10_000.0;
     }
     let off = SCORE_SLIDE_FROM * (-(t - SCORE_SLIDE_DELAY) * SCORE_SLIDE_RATE).exp();
-    if off < 1.0 {
-        0.0
-    } else {
-        -off
-    }
+    if off < 1.0 { 0.0 } else { -off }
 }
 
 /// A score value `t` seconds into its count-up (0 before it starts).
@@ -3340,11 +3337,7 @@ enum HudHover {
 /// `stat_txt` string of the minimap terrain toggle's tooltip: 809 "Show
 /// Terrain in Minimap" while hidden, 810 "Hide Terrain ..." while shown.
 fn minimap_toggle_string(terrain_shown: bool) -> u16 {
-    if terrain_shown {
-        810
-    } else {
-        809
-    }
+    if terrain_shown { 810 } else { 809 }
 }
 
 /// Tooltip style measured on 135109 / 135114 / 135121 (content px).  The
@@ -4953,10 +4946,10 @@ fn main() {
             }
             "--menu-phase" => {
                 for part in args[i + 1].split(',') {
-                    if let Some((name, value)) = part.split_once('=') {
-                        if let Ok(value) = value.parse() {
-                            menu_phases.insert(name.to_string(), value);
-                        }
+                    if let Some((name, value)) = part.split_once('=')
+                        && let Ok(value) = value.parse()
+                    {
+                        menu_phases.insert(name.to_string(), value);
                     }
                 }
                 i += 2;
@@ -5082,24 +5075,24 @@ fn main() {
     let slots = scenario.player_slots();
     // `--chk` may name a file outside the bundled pack; give it a real menu
     // entry so the HUD, result panel and restart use its name.
-    if let Some(path) = &chk {
-        if !maps.iter().any(|m| m.path == *path) {
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("map")
-                .to_string();
-            maps.insert(
-                0,
-                MapEntry::new(
-                    path.clone(),
-                    name,
-                    slots.iter().filter(|s| s.active).count().clamp(2, 8),
-                ),
-            );
-            campaign_len += 1;
-            map_index = 0;
-        }
+    if let Some(path) = &chk
+        && !maps.iter().any(|m| m.path == *path)
+    {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("map")
+            .to_string();
+        maps.insert(
+            0,
+            MapEntry::new(
+                path.clone(),
+                name,
+                slots.iter().filter(|s| s.active).count().clamp(2, 8),
+            ),
+        );
+        campaign_len += 1;
+        map_index = 0;
     }
     let race_override = races.clone();
     let menu_race = race_override
@@ -5192,12 +5185,12 @@ fn main() {
         galaxycraft::dds::DdsGrp::parse(&bytes)
     });
     let mut hotkey_bindings = hotkey_data::HotkeyData::get().default_bindings();
-    if let Some(path) = hotkey_save_path() {
-        if let Some(saved) = hotkey_data::load_bindings(&path) {
-            for (i, binding) in saved.iter().enumerate() {
-                if i < hotkey_bindings.len() {
-                    hotkey_bindings[i] = *binding;
-                }
+    if let Some(path) = hotkey_save_path()
+        && let Some(saved) = hotkey_data::load_bindings(&path)
+    {
+        for (i, binding) in saved.iter().enumerate() {
+            if i < hotkey_bindings.len() {
+                hotkey_bindings[i] = *binding;
             }
         }
     }
@@ -5633,14 +5626,13 @@ fn main() {
                     "terran2" => Some("space madness"),
                     _ => None,
                 };
-                if let Some(name) = melee {
-                    if let Some(i) = app
+                if let Some(name) = melee
+                    && let Some(i) = app
                         .maps
                         .iter()
                         .position(|m| m.name.to_lowercase().contains(name))
-                    {
-                        app.map_index = i;
-                    }
+                {
+                    app.map_index = i;
                 }
                 // Capture calibration: a shot may be pointed at any installed
                 // map by name, which is how the reference map is identified by
@@ -6856,14 +6848,14 @@ impl App {
                 }
             }
         }
-        if let Some(rx) = &self.intro_audio {
-            if let Ok(pcm) = rx.try_recv() {
-                self.audio.play_music(Some(std::sync::Arc::new(pcm)));
-                // Mark the track so `start_menu_music` knows it must replace
-                // the movie soundtrack when the intro ends or is skipped.
-                self.music_track = "intro-movie".to_string();
-                self.intro_audio = None;
-            }
+        if let Some(rx) = &self.intro_audio
+            && let Ok(pcm) = rx.try_recv()
+        {
+            self.audio.play_music(Some(std::sync::Arc::new(pcm)));
+            // Mark the track so `start_menu_music` knows it must replace
+            // the movie soundtrack when the intro ends or is skipped.
+            self.music_track = "intro-movie".to_string();
+            self.intro_audio = None;
         }
         let dt = self.intro_last.elapsed().as_secs_f32();
         self.intro_last = Instant::now();
@@ -6998,29 +6990,28 @@ impl App {
         let mut briefing_pages = Vec::new();
         let mut briefing_art = None;
         if let Some(meta) = &entry.campaign {
-            if let Some(script_path) = &meta.script {
-                if let Ok(text) = std::fs::read_to_string(script_path) {
-                    briefing_pages = galaxycraft::campaign::parse_script(&text)
-                        .pages
-                        .into_iter()
-                        .filter(|p| !p.text.trim().is_empty() || p.video.is_some())
-                        .collect();
-                }
+            if let Some(script_path) = &meta.script
+                && let Ok(text) = std::fs::read_to_string(script_path)
+            {
+                briefing_pages = galaxycraft::campaign::parse_script(&text)
+                    .pages
+                    .into_iter()
+                    .filter(|p| !p.text.trim().is_empty() || p.video.is_some())
+                    .collect();
             }
             if let Some(background) = &meta.background {
                 briefing_art = std::fs::read(background)
                     .ok()
                     .and_then(|bytes| galaxycraft::dds::parse(&bytes));
             }
-            if briefing_art.is_none() {
-                if let Some(page) = briefing_pages.first() {
-                    if let Some(path) = &page.background {
-                        let file = self.tiles_dir.join("../glue").join(path);
-                        briefing_art = std::fs::read(file)
-                            .ok()
-                            .and_then(|bytes| galaxycraft::dds::parse(&bytes));
-                    }
-                }
+            if briefing_art.is_none()
+                && let Some(page) = briefing_pages.first()
+                && let Some(path) = &page.background
+            {
+                let file = self.tiles_dir.join("../glue").join(path);
+                briefing_art = std::fs::read(file)
+                    .ok()
+                    .and_then(|bytes| galaxycraft::dds::parse(&bytes));
             }
         }
         let show_retail = !briefing_pages.is_empty();
@@ -7052,12 +7043,12 @@ impl App {
         self.briefing_video = None;
         if let Some(store) = &self.video_store {
             for page in self.briefing_pages.iter() {
-                if let Some(video) = &page.video {
-                    if let Some((_, poster)) = store.poster(video) {
-                        self.briefing_poster = Some(poster);
-                        self.briefing_video = Some(video.clone());
-                        break;
-                    }
+                if let Some(video) = &page.video
+                    && let Some((_, poster)) = store.poster(video)
+                {
+                    self.briefing_poster = Some(poster);
+                    self.briefing_video = Some(video.clone());
+                    break;
                 }
             }
         }
@@ -7965,13 +7956,12 @@ impl App {
     /// `{name:"...",style:N}`; style 1..5 are the CSS heading levels and
     /// style 6 is a divider.
     fn credits_entries(&mut self) -> Vec<(String, u8)> {
-        if self.credits.is_empty() {
-            if let Some(install) = &self.install {
-                if let Ok(bytes) = install.read_by_path("webui/dist/creditspanel/creditspanel.js") {
-                    let text = String::from_utf8_lossy(&bytes);
-                    self.credits = parse_credits(&text);
-                }
-            }
+        if self.credits.is_empty()
+            && let Some(install) = &self.install
+            && let Ok(bytes) = install.read_by_path("webui/dist/creditspanel/creditspanel.js")
+        {
+            let text = String::from_utf8_lossy(&bytes);
+            self.credits = parse_credits(&text);
         }
         self.credits.clone()
     }
@@ -8166,14 +8156,14 @@ impl App {
             Race::Protoss => Some([galaxycraft::ids::unit::NEXUS; 3]),
             _ => None,
         };
-        if let Some(ids) = building {
-            if let Some(u) = self.world.units.iter().find(|u| {
+        if let Some(ids) = building
+            && let Some(u) = self.world.units.iter().find(|u| {
                 u.alive && u.owner as usize == self.local_player && ids.contains(&u.type_id)
-            }) {
-                self.selected = vec![u.id];
-                self.refresh_commands();
-                return;
-            }
+            })
+        {
+            self.selected = vec![u.id];
+            self.refresh_commands();
+            return;
         }
         self.select_some_units();
     }
@@ -8314,10 +8304,8 @@ impl App {
             let game = galaxycraft::profile::GameRecord::from_player(player, won, self.world.tick);
             self.profile_store.profiles[i].stats.record(&game);
         }
-        if won {
-            if let Some(mission) = self.map_mission(self.map_index) {
-                self.profile_store.profiles[i].progress.record_win(mission);
-            }
+        if won && let Some(mission) = self.map_mission(self.map_index) {
+            self.profile_store.profiles[i].progress.record_win(mission);
         }
         self.sync_profiles();
     }
@@ -8615,13 +8603,12 @@ impl App {
                         }
                         Key::X => {
                             self.intro_expansion = !self.intro_expansion;
-                            if let Some(store) = &self.video_store {
-                                if let Some((info, poster)) =
+                            if let Some(store) = &self.video_store
+                                && let Some((info, poster)) =
                                     store.intro_poster(self.intro_expansion)
-                                {
-                                    self.intro_info = Some(info);
-                                    self.intro_poster = Some(poster);
-                                }
+                            {
+                                self.intro_info = Some(info);
+                                self.intro_poster = Some(poster);
                             }
                             self.play("ui_click");
                         }
@@ -8736,20 +8723,21 @@ impl App {
                     )
                 });
                 self.gametype_hover = hit.filter(|idx| *idx < 2);
-                if let Some(idx) = hit {
-                    if input.mouse_down && !self.mouse_was_down {
-                        self.mouse_was_down = true;
-                        match idx {
-                            0 | 1 => self.finish_gametype(idx == 1),
-                            _ => {
-                                self.menu_screen = MenuScreen::Main;
-                                self.gametype_hover = None;
-                                self.gametype_multi = false;
-                                self.play("ui_click");
-                            }
+                if let Some(idx) = hit
+                    && input.mouse_down
+                    && !self.mouse_was_down
+                {
+                    self.mouse_was_down = true;
+                    match idx {
+                        0 | 1 => self.finish_gametype(idx == 1),
+                        _ => {
+                            self.menu_screen = MenuScreen::Main;
+                            self.gametype_hover = None;
+                            self.gametype_multi = false;
+                            self.play("ui_click");
                         }
-                        return;
                     }
+                    return;
                 }
                 if !input.mouse_down {
                     self.mouse_was_down = false;
@@ -8945,16 +8933,14 @@ impl App {
             }
             MenuScreen::Lan => {
                 let (hit, clicked) = self.menu_pointer(input);
-                if clicked {
-                    if let Some(MenuHit::Row(i)) = hit {
-                        let entry = i.checked_sub(2);
-                        if let Some(e) = entry.filter(|e| *e < self.lan.entries.len()) {
-                            if self.lan.sel == e {
-                                self.lan_join();
-                            } else {
-                                self.lan.sel = e;
-                                self.play("ui_click");
-                            }
+                if clicked && let Some(MenuHit::Row(i)) = hit {
+                    let entry = i.checked_sub(2);
+                    if let Some(e) = entry.filter(|e| *e < self.lan.entries.len()) {
+                        if self.lan.sel == e {
+                            self.lan_join();
+                        } else {
+                            self.lan.sel = e;
+                            self.play("ui_click");
                         }
                     }
                 }
@@ -9343,12 +9329,12 @@ impl App {
                     return;
                 }
                 for key in input.keys.iter().copied() {
-                    if let Some(action) = self.hotkey_action {
-                        if let Some(c) = key_letter(key) {
-                            self.rebind_hotkey(action, c, c.to_ascii_lowercase() as u16);
-                            self.play("ui_click");
-                            continue;
-                        }
+                    if let Some(action) = self.hotkey_action
+                        && let Some(c) = key_letter(key)
+                    {
+                        self.rebind_hotkey(action, c, c.to_ascii_lowercase() as u16);
+                        self.play("ui_click");
+                        continue;
                     }
                     match key {
                         Key::Tab => {
@@ -9394,12 +9380,11 @@ impl App {
                         }
                         if in_rect(1453.0, 1302.0, 1831.0, 1386.0) {
                             self.mouse_was_down = true;
-                            if let Some(path) = hotkey_save_path() {
-                                if let Err(e) =
+                            if let Some(path) = hotkey_save_path()
+                                && let Err(e) =
                                     hotkey_data::save_bindings(&path, &self.hotkey_bindings)
-                                {
-                                    eprintln!("cannot save hotkeys {}: {e}", path.display());
-                                }
+                            {
+                                eprintln!("cannot save hotkeys {}: {e}", path.display());
                             }
                             self.hotkey_baseline = self.hotkey_bindings.clone();
                             self.menu_screen = MenuScreen::Main;
@@ -9532,12 +9517,12 @@ impl App {
 
     fn handle_briefing(&mut self, window: &Window) {
         if self.ready.is_some() {
-            if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
-                if let Some((mx, my)) = self.pointer {
-                    if let Some(key) = self.ready_button_at(mx, my) {
-                        self.briefing_key(key);
-                    }
-                }
+            if window.get_mouse_down(MouseButton::Left)
+                && !self.mouse_was_down
+                && let Some((mx, my)) = self.pointer
+                && let Some(key) = self.ready_button_at(mx, my)
+            {
+                self.briefing_key(key);
             }
             self.mouse_was_down = window.get_mouse_down(MouseButton::Left);
         }
@@ -9784,11 +9769,11 @@ impl App {
         let Some(video) = page.video.clone() else {
             return;
         };
-        if let Some(store) = &self.video_store {
-            if let Some((_, poster)) = store.poster(&video) {
-                self.briefing_poster = Some(poster);
-                self.briefing_video = Some(video);
-            }
+        if let Some(store) = &self.video_store
+            && let Some((_, poster)) = store.poster(&video)
+        {
+            self.briefing_poster = Some(poster);
+            self.briefing_video = Some(video);
         }
     }
 
@@ -9948,10 +9933,11 @@ impl App {
 
     fn handle_result(&mut self, window: &Window) {
         let down = window.get_mouse_down(MouseButton::Left);
-        if down && !self.mouse_was_down {
-            if let Some(key) = self.pointer.and_then(|(x, y)| self.result_button_at(x, y)) {
-                self.result_key(key);
-            }
+        if down
+            && !self.mouse_was_down
+            && let Some(key) = self.pointer.and_then(|(x, y)| self.result_button_at(x, y))
+        {
+            self.result_key(key);
         }
         self.mouse_was_down = down;
         for key in window.get_keys_pressed(KeyRepeat::No) {
@@ -10132,14 +10118,13 @@ impl App {
         if let Some(index) = self.world.triggers.as_ref().and_then(|t| t.next_scenario) {
             let raw = self.scenario.strings.get(index as usize)?.trim();
             let key = scenario_file_key(raw);
-            if !key.is_empty() {
-                if let Some(found) = self
+            if !key.is_empty()
+                && let Some(found) = self
                     .maps
                     .iter()
                     .position(|m| scenario_file_key(&m.name) == key)
-                {
-                    return Some(found);
-                }
+            {
+                return Some(found);
             }
         }
         // The mapdata order, not the storage order: Norad II is followed
@@ -10473,12 +10458,12 @@ impl App {
                     }
                 }
             }
-            if let Some((idle, hot)) = glue.ready_slot_frames.get(slot) {
-                if let Some(img) = if talking { hot.as_ref() } else { idle.as_ref() } {
-                    let w = (img.width as f32 * 0.75 * k).round() as i32;
-                    let h = (img.height as f32 * 0.75 * k).round() as i32;
-                    img.draw_scaled(fb, sx(r.x as f32), sy(r.y as f32), w, h);
-                }
+            if let Some((idle, hot)) = glue.ready_slot_frames.get(slot)
+                && let Some(img) = if talking { hot.as_ref() } else { idle.as_ref() }
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, sx(r.x as f32), sy(r.y as f32), w, h);
             }
         }
         let to_content_x = |ux: f32| 320.0 + ux * 3.0;
@@ -10681,10 +10666,8 @@ impl App {
             .as_ref()
             .map(|(fw, fh, _)| *fw != w || *fh != h)
             .unwrap_or(true);
-        if stale {
-            if let Some(art) = &self.briefing_art {
-                self.briefing_fit = Some((w, h, art.cover(w, h)));
-            }
+        if stale && let Some(art) = &self.briefing_art {
+            self.briefing_fit = Some((w, h, art.cover(w, h)));
         }
         if let Some((fw, fh, art)) = &self.briefing_fit {
             for y in 0..(*fh).min(h) {
@@ -10763,11 +10746,11 @@ impl App {
                     // The script names the clip `interstitials\TR1010.webm`
                     // while the cache stores `interstitials/tr1010.webm`;
                     // `resolve` normalises the separators and the case.
-                    if let Some(path) = store.resolve(&rel) {
-                        if let Some(info) = galaxycraft::video::probe_info(&path) {
-                            self.briefing_player =
-                                galaxycraft::cinematic::Cinematic::open(&path, &info, 12.0, 960);
-                        }
+                    if let Some(path) = store.resolve(&rel)
+                        && let Some(info) = galaxycraft::video::probe_info(&path)
+                    {
+                        self.briefing_player =
+                            galaxycraft::cinematic::Cinematic::open(&path, &info, 12.0, 960);
                     }
                 }
             }
@@ -11652,19 +11635,19 @@ impl App {
         let is_building = self.data.unit(type_id).is_building() || type_id == uid::LARVA;
         if is_worker {
             for t in 0..228u16 {
-                if let Some(info) = tree::build_info(t) {
-                    if info.producer == type_id {
-                        self.build_list.push(t);
-                    }
+                if let Some(info) = tree::build_info(t)
+                    && info.producer == type_id
+                {
+                    self.build_list.push(t);
                 }
             }
             self.command_list = self.build_list.clone();
         } else if is_building {
             for t in 0..228u16 {
-                if let Some(info) = tree::build_info(t) {
-                    if info.producer == type_id {
-                        self.command_list.push(t);
-                    }
+                if let Some(info) = tree::build_info(t)
+                    && info.producer == type_id
+                {
+                    self.command_list.push(t);
                 }
             }
         }
@@ -11802,18 +11785,18 @@ impl App {
     fn train(&mut self, unit_type: u16) {
         let mut trained = false;
         for id in self.selected.clone() {
-            if let Some(u) = self.world.unit(id) {
-                if u.owner as usize == self.local_player && self.data.unit(u.type_id).is_building()
-                {
-                    if self.net.is_some() {
-                        if self.send_train(id, unit_type) {
-                            trained = true;
-                        }
-                    } else {
-                        match self.world.train(id, unit_type) {
-                            Ok(()) => trained = true,
-                            Err(e) => self.show_sim_error(e),
-                        }
+            if let Some(u) = self.world.unit(id)
+                && u.owner as usize == self.local_player
+                && self.data.unit(u.type_id).is_building()
+            {
+                if self.net.is_some() {
+                    if self.send_train(id, unit_type) {
+                        trained = true;
+                    }
+                } else {
+                    match self.world.train(id, unit_type) {
+                        Ok(()) => trained = true,
+                        Err(e) => self.show_sim_error(e),
                     }
                 }
             }
@@ -11918,13 +11901,13 @@ impl App {
         };
         // Retail skin when the install provides it; the drawn arrow below is
         // only the fallback for runs without assets.
-        if let Some(grp) = &self.cursor_art {
-            if !grp.frames.is_empty() {
-                let frame = cursor_frame_index(self.cursor_started.elapsed(), grp.frames.len());
-                if let Some(img) = grp.frames.get(frame) {
-                    blit_cursor_scaled(fb, img, mx, my, cursor_scale_for_height(fb.height));
-                    return;
-                }
+        if let Some(grp) = &self.cursor_art
+            && !grp.frames.is_empty()
+        {
+            let frame = cursor_frame_index(self.cursor_started.elapsed(), grp.frames.len());
+            if let Some(img) = grp.frames.get(frame) {
+                blit_cursor_scaled(fb, img, mx, my, cursor_scale_for_height(fb.height));
+                return;
             }
         }
         // 12x18 arrow.
@@ -12155,10 +12138,9 @@ impl App {
                 .and_then(|c| c.layout("stat_f10"))
                 .and_then(|d| d.control(1))
                 .map(|c| c.abs.scaled(self.ui_scale, self.ui_ox, self.ui_oy))
+                && rect.contains(mx, my)
             {
-                if rect.contains(mx, my) {
-                    self.show_stats = !self.show_stats;
-                }
+                self.show_stats = !self.show_stats;
             }
         }
         self.lmb_down = lmb;
@@ -12573,7 +12555,7 @@ impl App {
     /// MTXM entry each creep tile draws with (recorded capture variants,
     /// else the session picker), `None` off creep: shared by the playfield
     /// and the terrain minimap.
-    fn creep_lookup(&mut self) -> impl Fn(i32, i32) -> Option<u16> + 'static {
+    fn creep_lookup(&mut self) -> impl Fn(i32, i32) -> Option<u16> + 'static + use<> {
         let width = self.scenario.width;
         self.creep_tiles
             .update(&mut self.crt_rand, self.world.creep_grid(), width);
@@ -12620,10 +12602,10 @@ impl App {
             let mut ctx = galaxycraft::iscript::AnimContext::default();
             for _ in 0..4 {
                 for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
-                    if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e {
-                        if !out.iter().any(|o| o.0 == id) {
-                            out.push((id, x, y, below));
-                        }
+                    if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e
+                        && !out.iter().any(|o| o.0 == id)
+                    {
+                        out.push((id, x, y, below));
                     }
                 }
                 if st.ended {
@@ -14085,14 +14067,13 @@ impl App {
     /// Static chrome shared by the main menu and the sub-screens: the menu
     /// detail art behind the title frame.
     fn draw_menu_detail_art(&self, fb: &mut Framebuffer) {
-        if let Some(glue) = &self.glue {
-            if let (Some(dialog), Some(art)) = (&glue.menu, &glue.etail) {
-                if let Some(c) = dialog.control(1) {
-                    let (scale, ox, oy) = self.ui_metrics(fb);
-                    let r = c.abs.scaled(scale, ox, oy);
-                    art.draw_scaled(fb, r.x, r.y, r.w, r.h);
-                }
-            }
+        if let Some(glue) = &self.glue
+            && let (Some(dialog), Some(art)) = (&glue.menu, &glue.etail)
+            && let Some(c) = dialog.control(1)
+        {
+            let (scale, ox, oy) = self.ui_metrics(fb);
+            let r = c.abs.scaled(scale, ox, oy);
+            art.draw_scaled(fb, r.x, r.y, r.w, r.h);
         }
     }
 
@@ -14775,28 +14756,28 @@ impl App {
     fn draw_menu_frame_art(&self, fb: &mut Framebuffer, dx: i32, dy: i32) {
         let (scale, ox, oy) = self.ui_metrics(fb);
         let mut drew_art = false;
-        if let Some(glue) = &self.glue {
-            if let Some(dialog) = &glue.menu {
-                for (id, art) in [
-                    (22, glue.title_bg.as_ref()),
-                    (23, glue.title_overlay.as_ref()),
-                ] {
-                    if let (Some(c), Some(art)) = (dialog.control(id), art) {
-                        let mut r = c.abs.scaled(scale, ox, oy);
-                        if id == 22 {
-                            r.x -= 3;
-                        }
-                        // The Remastered surfaces are authored at 4x the
-                        // 640x480 UI and drawn at that native size from the
-                        // control origin.  The overlay is 1584x1054, so its
-                        // red panel border (152..974) lands exactly on the
-                        // 820x820 `titleframe_bg` panel; the stale control
-                        // width (266) would squash it to half size.
-                        let w = (art.width as f32 * scale / 4.0).round() as i32;
-                        let h = (art.height as f32 * scale / 4.0).round() as i32;
-                        art.draw_scaled(fb, r.x + dx, r.y + dy, w, h);
-                        drew_art = true;
+        if let Some(glue) = &self.glue
+            && let Some(dialog) = &glue.menu
+        {
+            for (id, art) in [
+                (22, glue.title_bg.as_ref()),
+                (23, glue.title_overlay.as_ref()),
+            ] {
+                if let (Some(c), Some(art)) = (dialog.control(id), art) {
+                    let mut r = c.abs.scaled(scale, ox, oy);
+                    if id == 22 {
+                        r.x -= 3;
                     }
+                    // The Remastered surfaces are authored at 4x the
+                    // 640x480 UI and drawn at that native size from the
+                    // control origin.  The overlay is 1584x1054, so its
+                    // red panel border (152..974) lands exactly on the
+                    // 820x820 `titleframe_bg` panel; the stale control
+                    // width (266) would squash it to half size.
+                    let w = (art.width as f32 * scale / 4.0).round() as i32;
+                    let h = (art.height as f32 * scale / 4.0).round() as i32;
+                    art.draw_scaled(fb, r.x + dx, r.y + dy, w, h);
+                    drew_art = true;
                 }
             }
         }
@@ -14986,7 +14967,7 @@ impl App {
         rows: &[(String, bool)],
         buttons: &[(&str, bool)],
     ) {
-        use galaxycraft::menu::{LabelAlign, GLUE_LIST_ROW_PITCH, GLUE_LIST_TEXT_INSET};
+        use galaxycraft::menu::{GLUE_LIST_ROW_PITCH, GLUE_LIST_TEXT_INSET, LabelAlign};
         self.draw_moon_backdrop(fb);
         let (cx, _cy, _cw, ch) = Self::content_rect(fb);
         let (scale, ox, oy) = self.ui_metrics(fb);
@@ -15355,36 +15336,35 @@ impl App {
             if let Some(layers) = &mut self.campaign_layers {
                 let clips = &mut layers.slots[i];
                 // Child order from the shipped dialog: disk, portrait, On.
-                if let Some(clip) = clips.disk.as_mut() {
-                    if let Some(frame) = clip.frame() {
-                        draw_poster_rgba(fb, frame, (disk.0, disk.1, disk.2, disk.3), 0.0);
-                    }
+                if let Some(clip) = clips.disk.as_mut()
+                    && let Some(frame) = clip.frame()
+                {
+                    draw_poster_rgba(fb, frame, (disk.0, disk.1, disk.2, disk.3), 0.0);
                 }
-                if let Some(clip) = clips.portrait.as_mut() {
-                    if let Some(frame) = clip.frame() {
-                        // `FLC_FADED` keeps the idle portrait at ~0.25 opacity;
-                        // the hovered slot fades all the way in (measured gain
-                        // 0.97 on 130750/130757/130804) and the `On` clip adds
-                        // the glow.
-                        let dim = if hover == Some(i) {
-                            0.0
-                        } else {
-                            1.0 - galaxycraft::menu::CAMPAIGN_PORTRAIT_IDLE_ALPHA
-                        };
-                        draw_poster_rgba(
-                            fb,
-                            frame,
-                            (portrait.0, portrait.1, portrait.2, portrait.3),
-                            dim,
-                        );
-                    }
+                if let Some(clip) = clips.portrait.as_mut()
+                    && let Some(frame) = clip.frame()
+                {
+                    // `FLC_FADED` keeps the idle portrait at ~0.25 opacity;
+                    // the hovered slot fades all the way in (measured gain
+                    // 0.97 on 130750/130757/130804) and the `On` clip adds
+                    // the glow.
+                    let dim = if hover == Some(i) {
+                        0.0
+                    } else {
+                        1.0 - galaxycraft::menu::CAMPAIGN_PORTRAIT_IDLE_ALPHA
+                    };
+                    draw_poster_rgba(
+                        fb,
+                        frame,
+                        (portrait.0, portrait.1, portrait.2, portrait.3),
+                        dim,
+                    );
                 }
-                if hover == Some(i) {
-                    if let Some(clip) = clips.on.as_mut() {
-                        if let Some(frame) = clip.frame() {
-                            draw_poster_rgba(fb, frame, (on.0, on.1, on.2, on.3), 0.0);
-                        }
-                    }
+                if hover == Some(i)
+                    && let Some(clip) = clips.on.as_mut()
+                    && let Some(frame) = clip.frame()
+                {
+                    draw_poster_rgba(fb, frame, (on.0, on.1, on.2, on.3), 0.0);
                 }
             }
             // Labels (`t\x04T\x01erran\n\x02Episode I\x01`): both lines in
@@ -15443,21 +15423,21 @@ impl App {
         // (`gluCmpgn-8/9/10`, CTEXT 200x50 at x 10 or 440).
         let campaign_at =
             |i: usize| galaxycraft::campaign_progress::Campaign::of_slot(expansion, i);
-        if let Some(i) = hover {
-            if let Some(caption) = self.progress().lock_caption(campaign_at(i)) {
-                let center = 320.0 + if i == 0 { 110.0 } else { 540.0 } * 3.0 - 3.0;
-                for (line, text) in caption.split('\n').enumerate() {
-                    let w = self.glue_measure(text, GLUE_BIG_PX, GlueFace::Big);
-                    self.glue_text(
-                        fb,
-                        center - w / 2.0,
-                        GLUE_CAPTION_BASE + line as f32 * GLUE_CAPTION_PITCH,
-                        text,
-                        GLUE_BIG_PX,
-                        GLUE_INFO,
-                        None,
-                    );
-                }
+        if let Some(i) = hover
+            && let Some(caption) = self.progress().lock_caption(campaign_at(i))
+        {
+            let center = 320.0 + if i == 0 { 110.0 } else { 540.0 } * 3.0 - 3.0;
+            for (line, text) in caption.split('\n').enumerate() {
+                let w = self.glue_measure(text, GLUE_BIG_PX, GlueFace::Big);
+                self.glue_text(
+                    fb,
+                    center - w / 2.0,
+                    GLUE_CAPTION_BASE + line as f32 * GLUE_CAPTION_PITCH,
+                    text,
+                    GLUE_BIG_PX,
+                    GLUE_INFO,
+                    None,
+                );
             }
         }
         if let Some(campaign) = self.campaign_prompt {
@@ -15757,11 +15737,11 @@ impl App {
         let popup_h = pw(753.0);
         let popup_x = px(708.0);
         let popup_y = py(342.0);
-        if let Some(glue) = &self.glue {
-            if let Some(art) = &glue.campaign_hist {
-                art.draw_scaled(fb, popup_x, popup_y, popup_w, popup_h);
-                has_plate = true;
-            }
+        if let Some(glue) = &self.glue
+            && let Some(art) = &glue.campaign_hist
+        {
+            art.draw_scaled(fb, popup_x, popup_y, popup_w, popup_h);
+            has_plate = true;
         }
         if !has_plate {
             fb.rect(
@@ -16410,53 +16390,50 @@ impl App {
         // on 134831 (Zerg / Terran / Protoss / Random).  The highlighted row
         // is the one under the pointer (retail hover), falling back to the
         // slot's current race.  The screenshot states above stay identical.
-        if !replays {
-            if let Some(slot) = self.lobby_race_open {
-                let popup_x = cx + (cw as f32 * 0.3516) as i32;
-                let popup_y = row_y(slot) - (ch as f32 * 0.0060) as i32;
-                let popup_w = (cw as f32 * 0.1738) as i32;
-                let popup_h = (ch as f32 * 0.1944) as i32;
-                fb.rect(popup_x, popup_y, popup_w, popup_h, Rgb::new(2, 4, 10));
-                fb.rect_outline(popup_x, popup_y, popup_w, popup_h, CSS_INNER);
-                let options = [
-                    LobbyRace::Zerg,
-                    LobbyRace::Terran,
-                    LobbyRace::Protoss,
-                    LobbyRace::Random,
-                ];
-                let hover_k = match self.menu_hover {
-                    Some(MenuHit::RacePick(hovered, k)) if hovered == slot => Some(k),
-                    _ => None,
-                };
-                for (k, race) in options.iter().enumerate() {
-                    let ty = popup_y
-                        + (ch as f32 * 0.010) as i32
-                        + (k as f32 * ch as f32 * 0.0382) as i32;
-                    let lit = hover_k == Some(k)
-                        || (hover_k.is_none() && self.lobby_races.get(slot) == Some(race));
-                    if lit {
-                        fb.rect(
-                            popup_x + 1,
-                            ty - 2,
-                            popup_w - 2,
-                            (ch as f32 * 0.036) as i32,
-                            Rgb::new(14, 24, 66),
-                        );
-                    }
-                    hd(
-                        self,
-                        fb,
-                        popup_x + (cw as f32 * 0.006) as i32,
-                        ty,
-                        race.label(),
-                        8.5 * scale,
-                        if lit {
-                            Rgb::new(225, 235, 255)
-                        } else {
-                            rgb_green
-                        },
+        if !replays && let Some(slot) = self.lobby_race_open {
+            let popup_x = cx + (cw as f32 * 0.3516) as i32;
+            let popup_y = row_y(slot) - (ch as f32 * 0.0060) as i32;
+            let popup_w = (cw as f32 * 0.1738) as i32;
+            let popup_h = (ch as f32 * 0.1944) as i32;
+            fb.rect(popup_x, popup_y, popup_w, popup_h, Rgb::new(2, 4, 10));
+            fb.rect_outline(popup_x, popup_y, popup_w, popup_h, CSS_INNER);
+            let options = [
+                LobbyRace::Zerg,
+                LobbyRace::Terran,
+                LobbyRace::Protoss,
+                LobbyRace::Random,
+            ];
+            let hover_k = match self.menu_hover {
+                Some(MenuHit::RacePick(hovered, k)) if hovered == slot => Some(k),
+                _ => None,
+            };
+            for (k, race) in options.iter().enumerate() {
+                let ty =
+                    popup_y + (ch as f32 * 0.010) as i32 + (k as f32 * ch as f32 * 0.0382) as i32;
+                let lit = hover_k == Some(k)
+                    || (hover_k.is_none() && self.lobby_races.get(slot) == Some(race));
+                if lit {
+                    fb.rect(
+                        popup_x + 1,
+                        ty - 2,
+                        popup_w - 2,
+                        (ch as f32 * 0.036) as i32,
+                        Rgb::new(14, 24, 66),
                     );
                 }
+                hd(
+                    self,
+                    fb,
+                    popup_x + (cw as f32 * 0.006) as i32,
+                    ty,
+                    race.label(),
+                    8.5 * scale,
+                    if lit {
+                        Rgb::new(225, 235, 255)
+                    } else {
+                        rgb_green
+                    },
+                );
             }
         }
         if replays {
@@ -16619,16 +16596,15 @@ impl App {
                 }
             }
             fb.rect_outline(px, py, pw, ph, Rgb::new(30, 90, 40));
-            if let Some(entry) = self.maps.get(self.map_index) {
-                if let Ok(raw) = std::fs::read(&entry.path) {
-                    if let Ok(sc) = Scenario::parse(&raw) {
-                        for (sx, sy) in sc.start_locations() {
-                            let gx = px + (sx * pw / (sc.width as i32).max(1));
-                            let gy = py + (sy * ph / (sc.height as i32).max(1));
-                            fb.rect(gx - 2, gy - 2, 5, 5, Rgb::new(60, 220, 90));
-                            fb.rect(gx - 1, gy - 1, 3, 3, Rgb::new(220, 255, 220));
-                        }
-                    }
+            if let Some(entry) = self.maps.get(self.map_index)
+                && let Ok(raw) = std::fs::read(&entry.path)
+                && let Ok(sc) = Scenario::parse(&raw)
+            {
+                for (sx, sy) in sc.start_locations() {
+                    let gx = px + (sx * pw / (sc.width as i32).max(1));
+                    let gy = py + (sy * ph / (sc.height as i32).max(1));
+                    fb.rect(gx - 2, gy - 2, 5, 5, Rgb::new(60, 220, 90));
+                    fb.rect(gx - 1, gy - 1, 3, 3, Rgb::new(220, 255, 220));
                 }
             }
             // Map statistics, right-aligned in the lower part of the info plate.
@@ -17875,25 +17851,25 @@ impl App {
                     self.hotkey_bindings.get(aid as usize).copied().flatten(),
                 ))
             });
-            if rebind.is_none() {
-                if let Some(font) = self.ui_font.as_mut() {
-                    let phase: f32 = std::env::var("GC_HINT_PHASE")
-                        .ok()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0.2);
-                    font.draw_centered_weighted_phase(
-                        fb,
-                        sx(1654.0),
-                        phase,
-                        sy(hint_y),
-                        "Click on a command to change its hotkey",
-                        fpx(27.6),
-                        0.0,
-                        dim,
-                        None,
-                        1.0,
-                    );
-                }
+            if rebind.is_none()
+                && let Some(font) = self.ui_font.as_mut()
+            {
+                let phase: f32 = std::env::var("GC_HINT_PHASE")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.2);
+                font.draw_centered_weighted_phase(
+                    fb,
+                    sx(1654.0),
+                    phase,
+                    sy(hint_y),
+                    "Click on a command to change its hotkey",
+                    fpx(27.6),
+                    0.0,
+                    dim,
+                    None,
+                    1.0,
+                );
             }
             if let Some((label, def, icon_name, shares, current)) = rebind {
                 if let Some(font) = self.ui_font.as_mut() {
@@ -17981,38 +17957,38 @@ impl App {
                         1.0,
                     );
                 }
-                if let Some(second_line) = second_line {
-                    if let Some(font) = self.ui_font.as_mut() {
+                if let Some(second_line) = second_line
+                    && let Some(font) = self.ui_font.as_mut()
+                {
+                    font.draw_top(
+                        fb,
+                        sx(1287.0),
+                        sy(1128.0),
+                        second_line,
+                        fpx(22.0),
+                        0.0,
+                        Rgb::new(190, 190, 190),
+                        None,
+                    );
+                }
+                if let Some(font) = self.ui_font_hover.as_mut() {
+                    if shares > 1
+                        && let Some(font) = self.ui_font.as_mut()
+                    {
                         font.draw_top(
                             fb,
                             sx(1287.0),
-                            sy(1128.0),
-                            second_line,
-                            fpx(22.0),
+                            sy(if second_line.is_some() {
+                                1158.0
+                            } else {
+                                1136.0
+                            }),
+                            &format!("{shares} units share this command"),
+                            fpx(27.0),
                             0.0,
-                            Rgb::new(190, 190, 190),
+                            dim,
                             None,
                         );
-                    }
-                }
-                if let Some(font) = self.ui_font_hover.as_mut() {
-                    if shares > 1 {
-                        if let Some(font) = self.ui_font.as_mut() {
-                            font.draw_top(
-                                fb,
-                                sx(1287.0),
-                                sy(if second_line.is_some() {
-                                    1158.0
-                                } else {
-                                    1136.0
-                                }),
-                                &format!("{shares} units share this command"),
-                                fpx(27.0),
-                                0.0,
-                                dim,
-                                None,
-                            );
-                        }
                     }
                     let def_top = if second_line.is_some() {
                         1190.0
@@ -18613,12 +18589,13 @@ impl App {
         // The backdrop and panel are static: compose them once per size
         // (scaling the DDS art every frame cost 35 ms at 3440x1440).
         let size = (fb.width as usize, fb.height as usize);
-        if let Some((key, pixels)) = &self.credits_view.backdrop {
-            if *key == size && pixels.len() == fb.pixels.len() {
-                fb.pixels.copy_from_slice(pixels);
-                self.draw_credit_lines(fb);
-                return;
-            }
+        if let Some((key, pixels)) = &self.credits_view.backdrop
+            && *key == size
+            && pixels.len() == fb.pixels.len()
+        {
+            fb.pixels.copy_from_slice(pixels);
+            self.draw_credit_lines(fb);
+            return;
         }
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         // Backdrop: the shipped metal room (`glue/battlenet/backgnd.dds`).
@@ -19086,38 +19063,38 @@ impl App {
                 );
             }
         }
-        if let Some((id, label)) = checkbox {
-            if let Some(r) = ctrl(id) {
-                // 134931: a 48 px box from 2 px left of the control, 3 px
-                // (143,27,0) border around near-black (14,2,0).
-                let side = (48.0 * k).round() as i32;
-                let (bx, t) = (r.x - (2.0 * k).round() as i32, (3.0 * k).round() as i32);
-                fb.rect(bx, r.y, side, side, DIALOG_CHECK_BORDER);
-                fb.rect(
-                    bx + t,
-                    r.y + t,
-                    side - 2 * t,
-                    side - 2 * t,
-                    DIALOG_CHECK_FILL,
+        if let Some((id, label)) = checkbox
+            && let Some(r) = ctrl(id)
+        {
+            // 134931: a 48 px box from 2 px left of the control, 3 px
+            // (143,27,0) border around near-black (14,2,0).
+            let side = (48.0 * k).round() as i32;
+            let (bx, t) = (r.x - (2.0 * k).round() as i32, (3.0 * k).round() as i32);
+            fb.rect(bx, r.y, side, side, DIALOG_CHECK_BORDER);
+            fb.rect(
+                bx + t,
+                r.y + t,
+                side - 2 * t,
+                side - 2 * t,
+                DIALOG_CHECK_FILL,
+            );
+            let (x, y, _, _) = to_c(r);
+            // `RC_SMALLTEXT`-sized label with the dialog's drop shadow
+            // (134931: ink 824..1128 x 677..704 for "Show Tips at
+            // Startup").
+            // The HUD face at the unit-name size (glyph left edges within
+            // 0.33 px of retail; see `GlueFace::Hud`).
+            for (d, colour) in [(DIALOG_SHADOW, Rgb::new(0, 0, 0)), (0.0, HUD_TEXT_COLOR)] {
+                self.glue_text_face(
+                    fb,
+                    x + DIALOG_CHECK_DX + d,
+                    y + DIALOG_CHECK_BASE + d,
+                    label,
+                    DIALOG_CHECK_PX,
+                    colour,
+                    None,
+                    GlueFace::Hud,
                 );
-                let (x, y, _, _) = to_c(r);
-                // `RC_SMALLTEXT`-sized label with the dialog's drop shadow
-                // (134931: ink 824..1128 x 677..704 for "Show Tips at
-                // Startup").
-                // The HUD face at the unit-name size (glyph left edges within
-                // 0.33 px of retail; see `GlueFace::Hud`).
-                for (d, colour) in [(DIALOG_SHADOW, Rgb::new(0, 0, 0)), (0.0, HUD_TEXT_COLOR)] {
-                    self.glue_text_face(
-                        fb,
-                        x + DIALOG_CHECK_DX + d,
-                        y + DIALOG_CHECK_BASE + d,
-                        label,
-                        DIALOG_CHECK_PX,
-                        colour,
-                        None,
-                        GlueFace::Hud,
-                    );
-                }
             }
         }
         for &(id, label, default) in buttons {
@@ -19238,7 +19215,7 @@ mod timestamp_tests {
 
 #[cfg(test)]
 mod menu_frame_tests {
-    use super::{clear_menu_frame, Framebuffer, Rgb};
+    use super::{Framebuffer, Rgb, clear_menu_frame};
 
     #[test]
     fn town_hall_supply_rows_use_the_race_labels() {
@@ -19296,7 +19273,7 @@ mod menu_frame_tests {
 
     #[test]
     fn ready_text_scroll_follows_the_retail_recording() {
-        use super::{ready_text_scroll, READY_TEXT_PITCH};
+        use super::{READY_TEXT_PITCH, ready_text_scroll};
         // Tracked offsets (px) on the Wasteland recording, 0.1 s after
         // each line started: the Adjutant (11 lines, 26 469 ms) and Duke
         // (9 lines, 27 794 ms).
@@ -19417,7 +19394,7 @@ mod menu_frame_tests {
 
     #[test]
     fn movies_fill_the_16_9_box() {
-        use super::{draw_movie_frame, PosterFrame};
+        use super::{PosterFrame, draw_movie_frame};
         // A 320x308 SD frame (the Blizzard logo) covers the whole box.
         let frame = PosterFrame {
             width: 320,
@@ -19465,7 +19442,7 @@ mod menu_frame_tests {
 
 #[cfg(test)]
 mod hunters_pose_tests {
-    use super::{hunters_poses, Race};
+    use super::{Race, hunters_poses};
     use galaxycraft::ids::unit as u;
 
     #[test]
@@ -19491,7 +19468,7 @@ mod hunters_pose_tests {
 
 #[cfg(test)]
 mod tile_grid_tests {
-    use super::{parse_tile_grid, HUNTERS_ZERG_CREEP};
+    use super::{HUNTERS_ZERG_CREEP, parse_tile_grid};
 
     #[test]
     fn hex_grid_maps_digits_to_tiles_and_skips_dots() {
@@ -19538,7 +19515,7 @@ mod trigger_portrait_tests {
 
 #[cfg(test)]
 mod mission_scrollbar_tests {
-    use super::{draw_mission_scrollbar, Framebuffer};
+    use super::{Framebuffer, draw_mission_scrollbar};
 
     /// Live capture 21 (list at the top): thumb rows 519..560 are #ff0000,
     /// the track at y 700 is #6b0000 at x 1771, the arrow apex is red.
@@ -19663,8 +19640,8 @@ mod retail_timing_tests {
 mod options_chrome_tests {
     //! Retail Options chrome (130933..130954) at the 2560x1440 content box.
     use super::{
-        draw_options_plate, opt_checkbox, opt_dropdown, CefSpace, Framebuffer, Rgb, CSS_INNER,
-        CSS_OUTER,
+        CSS_INNER, CSS_OUTER, CefSpace, Framebuffer, Rgb, draw_options_plate, opt_checkbox,
+        opt_dropdown,
     };
 
     const ROWS: [f32; 5] = [345.0, 438.0, 531.0, 624.0, 717.0];
@@ -19768,7 +19745,7 @@ mod options_chrome_tests {
 
 #[cfg(test)]
 mod console_anchor_tests {
-    use super::{console_dialog_shift, menu_plate_rect, UiRect};
+    use super::{UiRect, console_dialog_shift, menu_plate_rect};
 
     #[test]
     fn statdata_centres_in_whole_game_px_and_the_rest_in_screen_px() {
@@ -19796,7 +19773,7 @@ mod console_anchor_tests {
 
 #[cfg(test)]
 mod glue_pane_tests {
-    use super::{glue_pane_cell, PaneCell};
+    use super::{PaneCell, glue_pane_cell};
 
     /// Row extents of the pane, as the 134919 / 134931 captures measure them
     /// (x 702..=1878, y 96..=863 at 1440p).
@@ -19828,7 +19805,7 @@ mod glue_pane_tests {
 
 #[cfg(test)]
 mod hunters_smoke_tests {
-    use super::{hunters_capture_minimap_terrain, hunters_capture_smoke, hunters_smoke, Race};
+    use super::{Race, hunters_capture_minimap_terrain, hunters_capture_smoke, hunters_smoke};
 
     #[test]
     fn each_protoss_capture_shows_its_own_geyser_smoke() {
@@ -19885,7 +19862,7 @@ mod dialog_button_tests {
 
 #[cfg(test)]
 mod card_shift_tests {
-    use super::{card_draw_shift, Race};
+    use super::{Race, card_draw_shift};
 
     #[test]
     fn zerg_and_protoss_cards_draw_one_game_px_left() {

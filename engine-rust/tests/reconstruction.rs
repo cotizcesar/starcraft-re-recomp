@@ -8,7 +8,7 @@ use galaxycraft::data::GameData;
 use galaxycraft::ids::{tech, unit as uid, upgrade};
 use galaxycraft::map::{Scenario, Terrain};
 use galaxycraft::sim::{
-    build_ticks, research_ticks, upgrade_ticks, Order, Race, SimError, World, MAX_ORDER_QUEUE,
+    MAX_ORDER_QUEUE, Order, Race, SimError, World, build_ticks, research_ticks, upgrade_ticks,
 };
 use galaxycraft::tech as tree;
 use galaxycraft::trigger::TriggerSystem;
@@ -436,14 +436,16 @@ fn scenario_parser_and_starting_base() {
         &galaxycraft::map::TileData::synthetic(&vf4),
         &[Race::Terran, Race::Protoss],
     );
-    assert!(w
-        .units
-        .iter()
-        .any(|u| u.alive && u.owner == 0 && u.type_id == uid::COMMAND_CENTER));
-    assert!(w
-        .units
-        .iter()
-        .any(|u| u.alive && u.owner == 1 && u.type_id == uid::NEXUS));
+    assert!(
+        w.units
+            .iter()
+            .any(|u| u.alive && u.owner == 0 && u.type_id == uid::COMMAND_CENTER)
+    );
+    assert!(
+        w.units
+            .iter()
+            .any(|u| u.alive && u.owner == 1 && u.type_id == uid::NEXUS)
+    );
     assert_eq!(
         w.units
             .iter()
@@ -495,10 +497,11 @@ fn campaign_scenarios_do_not_get_free_bases() {
         1,
         "the placed SCV is the only player-0 unit"
     );
-    assert!(!w
-        .units
-        .iter()
-        .any(|u| u.alive && u.type_id == uid::COMMAND_CENTER));
+    assert!(
+        !w.units
+            .iter()
+            .any(|u| u.alive && u.type_id == uid::COMMAND_CENTER)
+    );
 }
 
 /// Load and step every shipped map when the caller provides extracted copies:
@@ -615,10 +618,12 @@ fn ai_produces_workers_and_buildings_without_scripted_units() {
         .filter(|u| u.alive && u.owner == 0 && u.type_id == uid::SCV)
         .count();
     assert!(workers > 4, "AI should train workers");
-    assert!(world
-        .units
-        .iter()
-        .any(|u| u.alive && u.owner == 0 && u.type_id == uid::SUPPLY_DEPOT));
+    assert!(
+        world
+            .units
+            .iter()
+            .any(|u| u.alive && u.owner == 0 && u.type_id == uid::SUPPLY_DEPOT)
+    );
 }
 
 #[test]
@@ -948,10 +953,12 @@ fn zerg_building_morphs_keep_the_structure_and_consume_drones() {
         world.step();
     }
     assert!(!world.units[drone].alive, "the Drone is consumed");
-    assert!(world
-        .units
-        .iter()
-        .any(|u| u.alive && u.type_id == uid::EVOLUTION_CHAMBER && !u.completed));
+    assert!(
+        world
+            .units
+            .iter()
+            .any(|u| u.alive && u.type_id == uid::EVOLUTION_CHAMBER && !u.completed)
+    );
 }
 
 #[test]
@@ -1004,9 +1011,11 @@ fn zerg_structures_require_creep_and_hatcheries_make_it() {
         !world.has_creep_tile(16, 16),
         "creep recedes after the source dies"
     );
-    assert!(world
-        .find_build_spot(uid::SPAWNING_POOL, (16 * 32, 16 * 32))
-        .is_none());
+    assert!(
+        world
+            .find_build_spot(uid::SPAWNING_POOL, (16 * 32, 16 * 32))
+            .is_none()
+    );
     // The Extractor is exempt from the creep requirement.
     let _geyser = world
         .spawn_px(0, uid::VESPENE_GEYSER, 40 * 32, 40 * 32)

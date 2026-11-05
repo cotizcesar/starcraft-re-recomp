@@ -18,9 +18,9 @@ use galaxycraft::data::GameData;
 use galaxycraft::map::Scenario;
 use galaxycraft::map::{TileData, TileTables};
 use galaxycraft::net::{
-    client_turn, connect, host_turn, udp_accept, udp_join, Lobby, Lockstep, Msg, Transport,
+    Lobby, Lockstep, Msg, Transport, client_turn, connect, host_turn, udp_accept, udp_join,
 };
-use galaxycraft::replay::{state_hash, RecAct};
+use galaxycraft::replay::{RecAct, state_hash};
 use galaxycraft::sim::{Order, Race, World};
 use sha2::{Digest, Sha256};
 

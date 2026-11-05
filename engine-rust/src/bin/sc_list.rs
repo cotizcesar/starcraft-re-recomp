@@ -46,10 +46,10 @@ fn main() {
     };
     let paths = install.list(&prefix, &suffix);
     for path in &paths {
-        if let Some(needle) = &contains {
-            if !path.to_lowercase().contains(needle) {
-                continue;
-            }
+        if let Some(needle) = &contains
+            && !path.to_lowercase().contains(needle)
+        {
+            continue;
         }
         println!("{path}");
     }

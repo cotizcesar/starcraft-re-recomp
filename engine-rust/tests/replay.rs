@@ -5,7 +5,7 @@ use std::sync::Arc;
 use galaxycraft::data::GameData;
 use galaxycraft::ids::unit as uid;
 use galaxycraft::map::Terrain;
-use galaxycraft::replay::{replay_to, state_hash, Recorder, Recording, SaveFile};
+use galaxycraft::replay::{Recorder, Recording, SaveFile, replay_to, state_hash};
 use galaxycraft::sim::{Order, World};
 
 fn data() -> GameData {
@@ -101,7 +101,7 @@ fn tiny_chk() -> Vec<u8> {
 #[test]
 fn savefile_roundtrip_with_embedded_map() {
     use galaxycraft::map::Scenario;
-    use galaxycraft::replay::{replay_to, state_hash, SaveFile};
+    use galaxycraft::replay::{SaveFile, replay_to, state_hash};
     use galaxycraft::sim::Race;
 
     let chk = tiny_chk();
@@ -200,10 +200,10 @@ fn boxer_with_ai_save_reload_replays_identically() {
     for t in 0..300u64 {
         ai0.update(&mut w, Some((60, 60)));
         ai1.update(&mut w, Some((60, 60)));
-        if t == 10 {
-            if let Some(id) = marine {
-                let _ = w.issue(id, Order::AttackMove { pos: (500, 500) });
-            }
+        if t == 10
+            && let Some(id) = marine
+        {
+            let _ = w.issue(id, Order::AttackMove { pos: (500, 500) });
         }
         w.step();
     }

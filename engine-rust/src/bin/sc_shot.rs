@@ -10,7 +10,7 @@ use std::sync::Arc;
 use galaxycraft::data::GameData;
 use galaxycraft::map::Scenario;
 use galaxycraft::render::{
-    asset_root, draw_unit_box, era_name, Framebuffer, Rgb, SpriteBank, Tileset,
+    Framebuffer, Rgb, SpriteBank, Tileset, asset_root, draw_unit_box, era_name,
 };
 use galaxycraft::retail::RetailInstall;
 use galaxycraft::sim::{Race, World};

@@ -14,17 +14,17 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use crate::combat::{fp, resolve_damage_status, Defense, StatusDamage};
+use crate::combat::{Defense, StatusDamage, fp, resolve_damage_status};
 use crate::data::{GameData, UnitType, WeaponType};
 use crate::ids::{tech as tech_id, unit as uid, upgrade, weapon as wid};
 use crate::iscript::{
-    AnimContext, AnimEvent, AnimState, ANIM_AIR_ATTACK_INIT, ANIM_AIR_ATTACK_REPEAT,
-    ANIM_AIR_ATTACK_TO_IDLE, ANIM_CAST_SPELL, ANIM_GND_ATTACK_INIT, ANIM_GND_ATTACK_REPEAT,
-    ANIM_GND_ATTACK_TO_IDLE, ANIM_INIT, ANIM_WALKING, ANIM_WALKING_TO_IDLE,
+    ANIM_AIR_ATTACK_INIT, ANIM_AIR_ATTACK_REPEAT, ANIM_AIR_ATTACK_TO_IDLE, ANIM_CAST_SPELL,
+    ANIM_GND_ATTACK_INIT, ANIM_GND_ATTACK_REPEAT, ANIM_GND_ATTACK_TO_IDLE, ANIM_INIT, ANIM_WALKING,
+    ANIM_WALKING_TO_IDLE, AnimContext, AnimEvent, AnimState,
 };
 use crate::map::{Scenario, Terrain, UnitProperties};
-use crate::path::{find_path_with_regions, Obstacles, PathRequest, Rect, RegionMap};
-use crate::projectile::{behavior, hit, BulletState, Projectile};
+use crate::path::{Obstacles, PathRequest, Rect, RegionMap, find_path_with_regions};
+use crate::projectile::{BulletState, Projectile, behavior, hit};
 use crate::replay::Recorder;
 use crate::tech as tree;
 use crate::vision::Vision;
@@ -236,7 +236,7 @@ impl Spell {
     }
 }
 
-pub use crate::orders::{lane, order_class, spec, OrderClass, OrderLane, OrderSpec};
+pub use crate::orders::{OrderClass, OrderLane, OrderSpec, lane, order_class, spec};
 
 /// True when the recovered order dispatcher runs this row's handler on the
 /// current logical tick.  Retail keeps a per-unit carry counter at
@@ -786,11 +786,12 @@ impl World {
                     world.units[j].addon = Some(world.units[i].id);
                     world.units[i].addon_attached = true;
                 }
-            } else if let Some(child_parent) = addon_parent(world.units[j].type_id) {
-                if world.units[i].type_id == child_parent && world.units[i].addon.is_none() {
-                    world.units[i].addon = Some(world.units[j].id);
-                    world.units[j].addon_attached = true;
-                }
+            } else if let Some(child_parent) = addon_parent(world.units[j].type_id)
+                && world.units[i].type_id == child_parent
+                && world.units[i].addon.is_none()
+            {
+                world.units[i].addon = Some(world.units[j].id);
+                world.units[j].addon_attached = true;
             }
         }
         // Legacy/protected maps with no usable serial link: attach an add-on
@@ -1448,10 +1449,10 @@ impl World {
             return false;
         };
         let p = &self.players[owner as usize];
-        if let Some(t) = info.required_tech {
-            if !p.has_tech(t) {
-                return false;
-            }
+        if let Some(t) = info.required_tech
+            && !p.has_tech(t)
+        {
+            return false;
         }
         let attached_addons: std::collections::HashSet<u32> =
             self.units.iter().filter_map(|u| u.addon).collect();
@@ -1830,11 +1831,11 @@ impl World {
         if self.units[i].lifted {
             return Err(SimError::ProducerBusy);
         }
-        if let Some(addon_id) = self.units[i].addon.take() {
-            if let Some(a) = self.index_of(addon_id) {
-                // Add-ons stay grounded and become inactive, not destroyed.
-                self.units[a].addon_attached = false;
-            }
+        if let Some(addon_id) = self.units[i].addon.take()
+            && let Some(a) = self.index_of(addon_id)
+        {
+            // Add-ons stay grounded and become inactive, not destroyed.
+            self.units[a].addon_attached = false;
         }
         self.units[i].lifted = true;
         self.units[i].order = Order::Idle;
@@ -2177,10 +2178,10 @@ impl World {
         pos: Option<(i32, i32)>,
     ) -> Result<(), SimError> {
         let result = self.apply_order_row_typed_inner(unit_id, order_id, target, pos);
-        if result.is_ok() {
-            if let Some(i) = self.index_of(unit_id) {
-                self.units[i].order_row = order_id;
-            }
+        if result.is_ok()
+            && let Some(i) = self.index_of(unit_id)
+        {
+            self.units[i].order_row = order_id;
         }
         result
     }
@@ -2215,7 +2216,7 @@ impl World {
                 return self.issue(unit_id, Order::AttackMove { pos: p });
             }
             156 | 159 | 160 | 161 | 163 | 166 | 61 => {
-                return self.issue(unit_id, Order::HoldPosition)
+                return self.issue(unit_id, Order::HoldPosition);
             }
             // Computer Return heads for the owner's town hall.
             162 => {
@@ -2745,11 +2746,11 @@ impl World {
     /// ticks between carry passes: retail keeps moving the flingy every tick
     /// while the order handler only re-validates the target every 8th tick.
     fn advance_attack(&mut self, i: usize, target: u32) {
-        if let Some(tidx) = self.index_of(target) {
-            if self.units[tidx].alive {
-                let p = (self.units[tidx].x, self.units[tidx].y);
-                self.move_towards(i, p, fp(2));
-            }
+        if let Some(tidx) = self.index_of(target)
+            && self.units[tidx].alive
+        {
+            let p = (self.units[tidx].x, self.units[tidx].y);
+            self.move_towards(i, p, fp(2));
         }
     }
 
@@ -2775,13 +2776,11 @@ impl World {
                 }
             }
             Order::AttackMove { pos } => {
-                if think {
-                    if let Some(target) = self.acquire_target(i) {
-                        self.units[i].resume_order = Some(Order::AttackMove { pos });
-                        self.units[i].order = Order::AttackUnit { target };
-                        self.attack_target(i, target);
-                        return;
-                    }
+                if think && let Some(target) = self.acquire_target(i) {
+                    self.units[i].resume_order = Some(Order::AttackMove { pos });
+                    self.units[i].order = Order::AttackUnit { target };
+                    self.attack_target(i, target);
+                    return;
                 }
                 if self.move_towards(i, pos, fp(4)) {
                     self.order_done(i);
@@ -3315,11 +3314,7 @@ impl World {
         } else if !self.is_air_unit(attacker) && !self.is_air_unit(target) {
             let ah = self.terrain.elevation_px(a.x / fp(1), a.y / fp(1));
             let th = self.terrain.elevation_px(t.x / fp(1), t.y / fp(1));
-            if th > ah {
-                119
-            } else {
-                0
-            }
+            if th > ah { 119 } else { 0 }
         } else {
             0
         }
@@ -3368,29 +3363,27 @@ impl World {
             }
             return true;
         }
-        if b.state == BulletState::Follow {
-            if let Some(tid) = b.target {
-                if let Some(t) = self.unit(tid) {
-                    if t.alive {
-                        b.target_pos = (t.x, t.y);
-                    } else {
-                        b.target = None;
-                        b.state = BulletState::Fly;
-                    }
+        if b.state == BulletState::Follow
+            && let Some(tid) = b.target
+        {
+            if let Some(t) = self.unit(tid) {
+                if t.alive {
+                    b.target_pos = (t.x, t.y);
                 } else {
                     b.target = None;
                     b.state = BulletState::Fly;
                 }
+            } else {
+                b.target = None;
+                b.state = BulletState::Fly;
             }
         }
-        if b.state == BulletState::Bounce {
-            if let Some(tid) = b.target {
-                if let Some(t) = self.unit(tid) {
-                    if t.alive {
-                        b.target_pos = (t.x, t.y);
-                    }
-                }
-            }
+        if b.state == BulletState::Bounce
+            && let Some(tid) = b.target
+            && let Some(t) = self.unit(tid)
+            && t.alive
+        {
+            b.target_pos = (t.x, t.y);
         }
         b.remaining_time -= 1;
         let dx = b.target_pos.0 - b.x;
@@ -3415,28 +3408,29 @@ impl World {
         }
         let source_idx = self.index_of(b.source).unwrap_or(usize::MAX);
         if b.state == BulletState::Bounce {
-            if b.bounces_left > 0 && b.hit_flags & 1 == 0 {
-                if let Some(tid) = b.target {
-                    let divisor = 3u32.saturating_pow(3 - b.bounces_left as u32);
-                    self.resolve_hit_type(
-                        b.owner,
-                        Some(tid),
-                        source_idx,
-                        weapon,
-                        (b.x, b.y),
-                        divisor,
-                        1,
-                    );
-                    if b.bounces_left > 1 {
-                        if let Some(next) = self.find_bounce_target(b, tid) {
-                            b.previous_target = Some(tid);
-                            b.target = Some(next);
-                            b.bounces_left -= 1;
-                            b.remaining_time = b.remaining_time.max(30);
-                            b.state = BulletState::Bounce;
-                            return true;
-                        }
-                    }
+            if b.bounces_left > 0
+                && b.hit_flags & 1 == 0
+                && let Some(tid) = b.target
+            {
+                let divisor = 3u32.saturating_pow(3 - b.bounces_left as u32);
+                self.resolve_hit_type(
+                    b.owner,
+                    Some(tid),
+                    source_idx,
+                    weapon,
+                    (b.x, b.y),
+                    divisor,
+                    1,
+                );
+                if b.bounces_left > 1
+                    && let Some(next) = self.find_bounce_target(b, tid)
+                {
+                    b.previous_target = Some(tid);
+                    b.target = Some(next);
+                    b.bounces_left -= 1;
+                    b.remaining_time = b.remaining_time.max(30);
+                    b.state = BulletState::Bounce;
+                    return true;
                 }
             }
             return false;
@@ -3493,10 +3487,10 @@ impl World {
         match weapon.explosion {
             hit::NONE => {}
             hit::NORMAL | hit::YAMATO | hit::UNUSED_23 => {
-                if let Some(t) = target_idx {
-                    if self.can_see_unit(owner, t) {
-                        self.apply_hit_from(owner, source, t, weapon, divisor);
-                    }
+                if let Some(t) = target_idx
+                    && self.can_see_unit(owner, t)
+                {
+                    self.apply_hit_from(owner, source, t, weapon, divisor);
                 }
             }
             hit::RADIAL_SPLASH | hit::ENEMY_SPLASH | hit::AIR_SPLASH => {
@@ -3524,13 +3518,13 @@ impl World {
                 }
             }
             hit::BROODLINGS => {
-                if let Some(t) = target_idx {
-                    if self.data.unit(self.units[t].type_id).is_organic() {
-                        let (x, y) = (self.units[t].x / fp(1), self.units[t].y / fp(1));
-                        self.kill_unit(t);
-                        let _ = self.spawn_px(owner as usize, uid::BROODLING, x, y);
-                        let _ = self.spawn_px(owner as usize, uid::BROODLING, x + 16, y);
-                    }
+                if let Some(t) = target_idx
+                    && self.data.unit(self.units[t].type_id).is_organic()
+                {
+                    let (x, y) = (self.units[t].x / fp(1), self.units[t].y / fp(1));
+                    self.kill_unit(t);
+                    let _ = self.spawn_px(owner as usize, uid::BROODLING, x, y);
+                    let _ = self.spawn_px(owner as usize, uid::BROODLING, x + 16, y);
                 }
             }
             hit::EMP => {
@@ -3577,15 +3571,15 @@ impl World {
                 self.spawn_dark_swarm(owner, pos);
             }
             hit::CONSUME => {
-                if let Some(t) = target_idx {
-                    if t != source {
-                        let gained =
-                            self.data.unit(self.units[t].type_id).hit_points_raw as i32 / fp(1) * 2;
-                        if source < self.units.len() {
-                            self.units[source].add_energy_points(gained);
-                        }
-                        self.kill_unit(t);
+                if let Some(t) = target_idx
+                    && t != source
+                {
+                    let gained =
+                        self.data.unit(self.units[t].type_id).hit_points_raw as i32 / fp(1) * 2;
+                    if source < self.units.len() {
+                        self.units[source].add_energy_points(gained);
                     }
+                    self.kill_unit(t);
                 }
             }
             hit::RESTORATION => {
@@ -3836,12 +3830,11 @@ impl World {
         }
         // An add-on dies with its parent, and a destroyed add-on clears the
         // parent's slot.
-        if let Some(addon_id) = self.units[i].addon.take() {
-            if let Some(j) = self.index_of(addon_id) {
-                if self.units[j].alive {
-                    self.kill_unit(j);
-                }
-            }
+        if let Some(addon_id) = self.units[i].addon.take()
+            && let Some(j) = self.index_of(addon_id)
+            && self.units[j].alive
+        {
+            self.kill_unit(j);
         }
         let dead_id = self.units[i].id;
         for u in &mut self.units {
@@ -3878,10 +3871,10 @@ impl World {
         // they are not ejected alive.
         let cargo = std::mem::take(&mut self.units[i].cargo);
         for id in cargo {
-            if let Some(j) = self.index_of(id) {
-                if self.units[j].alive {
-                    self.kill_unit(j);
-                }
+            if let Some(j) = self.index_of(id)
+                && self.units[j].alive
+            {
+                self.kill_unit(j);
             }
         }
     }
@@ -4865,11 +4858,11 @@ impl World {
             SpellTarget::Point(x, y) => Some((x * fp(1), y * fp(1))),
             SpellTarget::None => Some((self.units[i].x, self.units[i].y)),
         };
-        if let Some(p) = pos {
-            if self.distance_to_point(i, p) > range {
-                self.move_towards(i, (p.0 / fp(1), p.1 / fp(1)), range / fp(1));
-                return;
-            }
+        if let Some(p) = pos
+            && self.distance_to_point(i, p) > range
+        {
+            self.move_towards(i, (p.0 / fp(1), p.1 / fp(1)), range / fp(1));
+            return;
         }
         let has_anim = self
             .data
@@ -5046,10 +5039,10 @@ impl World {
                 if let Some(t) = target_idx {
                     let max = self.data.unit(uid::COMMAND_CENTER).hit_points_raw as i32;
                     if self.units[t].type_id == uid::COMMAND_CENTER && self.units[t].hp * 2 < max {
-                        if let Some(addon) = self.units[t].addon.take() {
-                            if let Some(a) = self.index_of(addon) {
-                                self.kill_unit(a);
-                            }
+                        if let Some(addon) = self.units[t].addon.take()
+                            && let Some(a) = self.index_of(addon)
+                        {
+                            self.kill_unit(a);
                         }
                         self.units[t].type_id = uid::INFESTED_COMMAND_CENTER;
                         self.units[t].owner = c_owner;
@@ -5068,13 +5061,13 @@ impl World {
                 }
             }
             Spell::Consume => {
-                if let Some(t) = target_idx {
-                    if t != caster {
-                        let gained =
-                            self.data.unit(self.units[t].type_id).hit_points_raw as i32 / fp(1) * 2;
-                        self.units[caster].add_energy_points(gained);
-                        self.kill_unit(t);
-                    }
+                if let Some(t) = target_idx
+                    && t != caster
+                {
+                    let gained =
+                        self.data.unit(self.units[t].type_id).hit_points_raw as i32 / fp(1) * 2;
+                    self.units[caster].add_energy_points(gained);
+                    self.kill_unit(t);
                 }
             }
             Spell::Ensnare => {
@@ -5619,11 +5612,7 @@ fn default_hangar_capacity(type_id: u16) -> u8 {
 }
 
 fn default_hangar(type_id: u16) -> u8 {
-    if type_id == uid::VULTURE {
-        3
-    } else {
-        0
-    }
+    if type_id == uid::VULTURE { 3 } else { 0 }
 }
 
 fn weapon_can_target(weapon: &WeaponType, target: &UnitType) -> bool {

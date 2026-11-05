@@ -339,10 +339,10 @@ impl TriggerSystem {
                     if world.tick < self.state.wait_until[player] {
                         continue;
                     }
-                    if let Some((ti, start)) = self.state.resume[player].take() {
-                        if let Some(trigger) = self.triggers.get(ti).cloned() {
-                            self.run_actions(world, player, ti, &trigger, start);
-                        }
+                    if let Some((ti, start)) = self.state.resume[player].take()
+                        && let Some(trigger) = self.triggers.get(ti).cloned()
+                    {
+                        self.run_actions(world, player, ti, &trigger, start);
                     }
                 }
             }
@@ -492,11 +492,7 @@ impl TriggerSystem {
                     .map(|p| self.command_count(world, p, c))
                     .max()
                     .unwrap_or(0);
-                if mine == most {
-                    1
-                } else {
-                    0
-                }
+                if mine == most { 1 } else { 0 }
             }
             7 => {
                 let mine = self.bring_count(world, player, c);
@@ -504,11 +500,7 @@ impl TriggerSystem {
                     .map(|p| self.bring_count(world, p, c))
                     .max()
                     .unwrap_or(0);
-                if mine == most {
-                    1
-                } else {
-                    0
-                }
+                if mine == most { 1 } else { 0 }
             }
             8 => {
                 let mine = self.kill_count(world, player, c.unit_id);
@@ -516,11 +508,7 @@ impl TriggerSystem {
                     .map(|p| self.kill_count(world, p, c.unit_id))
                     .max()
                     .unwrap_or(0);
-                if mine == most {
-                    1
-                } else {
-                    0
-                }
+                if mine == most { 1 } else { 0 }
             }
             9 => {
                 let kind = c.amount_modifier as u16;
@@ -529,11 +517,7 @@ impl TriggerSystem {
                     .map(|p| self.score(world, p, kind))
                     .max()
                     .unwrap_or(0);
-                if mine == most {
-                    1
-                } else {
-                    0
-                }
+                if mine == most { 1 } else { 0 }
             }
             10 => {
                 let mine = self.resources(world, player, c.amount_modifier);
@@ -541,11 +525,7 @@ impl TriggerSystem {
                     .map(|p| self.resources(world, p, c.amount_modifier))
                     .max()
                     .unwrap_or(0);
-                if mine == most {
-                    1
-                } else {
-                    0
-                }
+                if mine == most { 1 } else { 0 }
             }
             11 => self
                 .switches
@@ -591,11 +571,7 @@ impl TriggerSystem {
                     .map(|p| self.command_count(world, p, c))
                     .min()
                     .unwrap_or(0);
-                if mine == least {
-                    1
-                } else {
-                    0
-                }
+                if mine == least { 1 } else { 0 }
             }
             17 => {
                 let mine = self.bring_count(world, player, c);
@@ -603,11 +579,7 @@ impl TriggerSystem {
                     .map(|p| self.bring_count(world, p, c))
                     .min()
                     .unwrap_or(0);
-                if mine == least {
-                    1
-                } else {
-                    0
-                }
+                if mine == least { 1 } else { 0 }
             }
             18 => {
                 let mine = self.kill_count(world, player, c.unit_id);
@@ -615,11 +587,7 @@ impl TriggerSystem {
                     .map(|p| self.kill_count(world, p, c.unit_id))
                     .min()
                     .unwrap_or(0);
-                if mine == least {
-                    1
-                } else {
-                    0
-                }
+                if mine == least { 1 } else { 0 }
             }
             19 => {
                 let kind = c.amount_modifier as u16;
@@ -628,11 +596,7 @@ impl TriggerSystem {
                     .map(|p| self.score(world, p, kind))
                     .min()
                     .unwrap_or(0);
-                if mine == least {
-                    1
-                } else {
-                    0
-                }
+                if mine == least { 1 } else { 0 }
             }
             20 => {
                 let mine = self.resources(world, player, c.amount_modifier);
@@ -640,11 +604,7 @@ impl TriggerSystem {
                     .map(|p| self.resources(world, p, c.amount_modifier))
                     .min()
                     .unwrap_or(0);
-                if mine == least {
-                    1
-                } else {
-                    0
-                }
+                if mine == least { 1 } else { 0 }
             }
             21 => self.score(world, player, c.amount_modifier as u16),
             _ => return false,
@@ -701,11 +661,7 @@ impl TriggerSystem {
                 .enumerate()
                 .filter(|(i, _)| {
                     let building = world.data.unit(*i as u16).is_building();
-                    if unit == 230 {
-                        !building
-                    } else {
-                        building
-                    }
+                    if unit == 230 { !building } else { building }
                 })
                 .map(|(_, n)| *n)
                 .sum::<u32>() as i32
@@ -1622,7 +1578,7 @@ mod tests {
         let mut a = record(22, 13, 0);
         a[320 + 20..320 + 24].copy_from_slice(&3u32.to_le_bytes());
         a[320 + 27] = 4; // set
-                         // Second trigger: switch #3 is set -> set minerals to 123.
+        // Second trigger: switch #3 is set -> set minerals to 123.
         let mut b = record(22, 26, 0);
         b[15] = 11;
         b[14] = 2; // switch is set
@@ -1681,7 +1637,7 @@ mod tests {
         a[320 + 20..320 + 24].copy_from_slice(&5u32.to_le_bytes());
         a[320 + 24..320 + 26].copy_from_slice(&7u16.to_le_bytes()); // custom
         a[320 + 27] = 7; // set
-                         // Second trigger: Score(Custom) Exactly 5 -> minerals 77.
+        // Second trigger: Score(Custom) Exactly 5 -> minerals 77.
         let mut b = record(21, 26, 0);
         b[15] = 21;
         b[8..12].copy_from_slice(&5u32.to_le_bytes());
