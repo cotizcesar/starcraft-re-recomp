@@ -4830,3 +4830,47 @@ the original absolute permissions live in a git-ignored
 `opencode debug config` still loads the plugin.  `AGENTS.md` layout lists
 the three new paths; `.gitignore` keeps the vault workspace/cache and the
 personal override local.
+
+## 2026-11-05 (98) — Toolchain and dependencies to latest, documentation simplified and validated
+
+Goal (user): latest versions of every library (Rust 1.99.1), simpler docs
+validated against the code with no local paths, a full list of what is
+done, missing and planned (controller support), keeping everything
+compatible.
+
+- **Toolchain.**  `rust-toolchain.toml` pins 1.99.1 (rustfmt, clippy);
+  `rust-version = "1.99.1"`; CI/release use `dtolnay/rust-toolchain@1.99.1`.
+  Edition 2021 -> 2024 with `cargo fix --edition`: three drop-order notes
+  reviewed (a moved `Result` / a socket; no effect, LAN tests pass);
+  rustfmt style 2024; 62 nested `if`s collapsed into let-chains by clippy.
+- **Dependencies.**  `libloading` 0.8 -> 0.9 (`minifb` still pulls 0.8.9),
+  `cc` 1.11.0, serde 1.0.229, serde_json 1.0.154, font8x8 0.3.1, ttf-parser
+  0.25.1, `cargo update`.  Actions: upload-artifact v7, download-artifact
+  v8, action-gh-release v3; CI Python 3.14.  Release ffmpeg n8.1 -> n9.0:
+  video/cinematic/portrait tests and the visual, timing and ultrawide gates
+  pass with 9.0 (`GALAXYCRAFT_FFMPEG`).  Cross `cargo check` for Windows
+  and macOS needs cross C compilers absent here; CI covers both.
+- **Local paths.**  Tests no longer fall back to `$HOME/Games/battlenet/...`:
+  `retail_replay::default_replay_base()` derives the replay folder from
+  `SC_INSTALL` (16 retail replays still parsed); the portrait test,
+  `make_inventory.py` and `render_screens.sh` require `SC_INSTALL`; the LAN
+  walk state prints the map file name, so gate outputs carry no cache path.
+  `retail.rs` keeps its generic default-install candidates.
+- **Validation (FACT, this session).**  Table counts (228/130/209/189/44/
+  61/517/999/1,539), scripts 293 + 156, handlers 137, damage cases 74,880,
+  `sc_campaign --install` 391/391, CASC 52,498/14,382/43,091, every module,
+  binary, path and link cited by the main docs exist.  Stale or false
+  claims fixed: "241 tests", "nine WAV effects", creep and WebM listed as
+  missing, broken screenshot links, "6 lines / lifetime by lines",
+  "objectives from the first second in all 11 missions", "visual gate
+  43/43", crate AGENTS bin list.
+- **Gaps found (now `[ ]` in PROGRESS.md).**  `World::hostile` ignores
+  `Player.team`, so allied players fight; no single-player cheat codes; the
+  Create screen's game type is a fixed label; the protocol carries
+  `Msg::Chat` but there is no chat UI; no observer mode; Save Replay is
+  disabled on the score screen; the client reads only the `enUS` locale.
+- **Docs.**  `PROGRESS.md` rewritten as the complete feature list (10
+  areas, 75 items, 75 %, controller support as a planned area);
+  `engine-rust/README.md` rewritten; `PROJECT-STATUS.md` one page;
+  `features.md` and `docs/COVERAGE.md` removed (merged); historical docs
+  (`EVIDENCE.md`, `gap-audit.md`, `parity-report.md`) labelled as such.

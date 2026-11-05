@@ -145,8 +145,9 @@ absolute plugin paths) and the Obsidian workspace/cache.
 - `research/docs/architecture.md` is the map; track reports live in
   `research/analysis/investigations/` (local) and are not re-edited after the
   synthesis (only referenced).
-- `engine-rust/README.md` + `features.md` describe the product; this file
-  describes the process. Do not duplicate content between them: link.
+- `engine-rust/README.md` describes the product and `PROGRESS.md` lists
+  every feature (done, missing, planned); this file describes the process.
+  Do not duplicate content between them: link.
 - Notable changes get a line in `CHANGELOG.md`.
 
 ## 7. Definition of Done (verifiable, no exceptions)

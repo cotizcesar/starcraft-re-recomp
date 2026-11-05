@@ -1,5 +1,8 @@
 # Visual parity report (44 references)
 
+> Historical report; the live visual gate output is
+> `engine-rust/docs/gates/ui-visual-diff.txt`.
+
 > **Historical (2026-10-29), superseded.**  These numbers predate the
 > retail-art rebuilds of the menus and the in-game rounds 1–3.  The live
 > measurement is `engine-rust/docs/gates/ui-visual-diff.txt`

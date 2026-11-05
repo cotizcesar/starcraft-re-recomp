@@ -3,7 +3,7 @@
 # Output: /tmp/shots/<screen>.png  (BMP intermediate is deleted)
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/../engine-rust" || exit 1
-INSTALL="${SC_INSTALL:-$HOME/Games/battlenet/drive_c/Program Files (x86)/StarCraft}"
+INSTALL="${SC_INSTALL:?set SC_INSTALL to the StarCraft installation}"
 OUT="${1:-/tmp/shots}"
 W="${W:-3440}"
 H="${H:-1440}"

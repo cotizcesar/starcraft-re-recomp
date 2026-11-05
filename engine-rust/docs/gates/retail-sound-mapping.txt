@@ -15,7 +15,7 @@ d"===e?(event.preventDefault(),p.default.sendMessage("PlaySound",{id:"GLUSND_MOU
 
 --- live retail run (2026-11-02) ---
 Launch: Lutris game `starcraft-direct` (direct script generated with `lutris -b`):
-  umu-run .../x86/StarCraft.exe -launch (Proton/UMU, prefix ~/Games/battlenet)
+  umu-run .../x86/StarCraft.exe -launch (Proton/UMU, Battle.net prefix)
 Window: 3440x1440 fullscreen, remastered CEF menu (content 2560x1440 at x=440).
 Input: compositor-level uinput mouse (python-evdev, ID_INPUT_MOUSE=1), KWin
 activated the game through its Scripting DBus interface. This drove the real

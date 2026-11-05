@@ -10,7 +10,7 @@ origen: opencode
 ## Goal
 
 Make the Credits section behave exactly like the user's retail recording
-`~/Videos/Screencasts/Screencast_20261104_210917.webm`. Engineering record:
+`Screencast_20261104_210917.webm` (user recording). Engineering record:
 `research/docs/session-log.md` 2026-11-04 (85).
 
 ## Progress
