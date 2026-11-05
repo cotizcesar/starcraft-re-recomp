@@ -4602,3 +4602,36 @@ steps, campaign win + flow); `menu_hover_text.py` 10/10;
 **Verification.**  `cargo test` 472 passed, 0 failed (with `SC_INSTALL`);
 clippy 0; fmt clean; `ui_visual_diff.py` 51/51; walkthrough PASS (campaign
 flow); `ultrawide_diff.py` 31/31; `menu_time_diff.py` 4/4.
+
+## 2026-11-05 (91) — Wasteland to victory: Victory/Defeat owner, victory timing, paused transmission text
+
+- **Victory timing (FACT, `Screencast_20261105_074531`).**  The
+  leaderboard turns "10 of 10 Marines" at 3.0 s and the `wmission` dialog
+  appears, without a fade, at 3.57 s: one 30-tick trigger cycle at most.
+- **Victory/Defeat owner (bug found by the new test).**  Actions 1/2 used
+  `select_owner(action.group)`; the shipped maps leave `group` 0, so
+  Wasteland's Force 1 victory trigger set `winner = 0` (an absent player)
+  and the mission could never be won in the client; Defeat likewise hit
+  player 0.  They now apply to the player running the trigger, as in BW.
+  `tests/campaign_episode1.rs::wasteland_victory_fires_within_one_trigger_cycle`
+  plays the real map: 10 Marines + Barracks + Raynor -> victory within
+  `TRIGGER_INTERVAL`.  It also shows the BW wait-blocking at work: the
+  Barracks, rescue and 8 s SCV conversations hold the player's other
+  triggers until tick 448.
+- **Paused transmission text (INFERENCE, one sample).**  Lifetimes on the
+  recordings: TIP 10.1 s, SCV transmission 7.2 s, NEW MISSION OBJECTIVE
+  4.0 s, Raynor's transmission 4.0 s.  Length models (raw bytes 248 / 178
+  / 73 / 106, letters, lines) fit the first three and give 4.9-5.5 s for
+  Raynor.  Only Raynor's line runs between Pause Game and Unpause Game,
+  and its text leaves at the Unpause (22.06 s vs 22.1 s).  A paused
+  transmission now shows its text for exactly its length
+  (`TriggerCue::Text::paused`, `text_life_ms(ms, lines, paused)`).
+  Falsifier: a paused transmission whose text outlives it.
+  `wasteland_rescue_conversation_follows_the_retail_timing` checks the
+  map: Raynor's cue is paused (3956 ms on screen) and NEW MISSION OBJECTIVE
+  follows 6.0 +- 0.2 s later.
+
+**Verification.**  `cargo test` 476 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 6/6); clippy 0; fmt clean; walkthrough PASS
+(campaign win + flow); `ui_visual_diff.py` 51/51; `progress.py --check`
+OK.

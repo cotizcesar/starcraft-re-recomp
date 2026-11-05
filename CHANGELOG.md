@@ -22,6 +22,11 @@ status is in [PROGRESS.md](PROGRESS.md).
   and resources spent (also what trigger Score conditions read).
 
 ### Fixed
+- Victory and Defeat trigger actions apply to the player running the
+  trigger (they read the unused `group` operand, so Wasteland's victory
+  went to player 0 and could not be won).
+- A Transmission shown under a trigger's Pause Game keeps its text only
+  while it talks (Raynor's rescue line, 4.0 s on the retail recording).
 - Score screen motion: the empty frame slides in from the left, then rows
   and numbers appear and count up (again on every tab change), as on the
   retail recording.

@@ -26,10 +26,19 @@ pub const TEXT_PER_LINE_MS: u64 = 1_525;
 /// On-screen lifetime of a trigger text of `lines` lines: Display Text
 /// (`transmission_ms` 0) or a Transmission, which stays at least as long
 /// as it talks.
-pub fn text_life_ms(transmission_ms: u32, lines: usize) -> u64 {
+pub fn text_life_ms(transmission_ms: u32, lines: usize, paused: bool) -> u64 {
+    // A Transmission under a trigger's Pause Game shows its text only
+    // while it talks: Raynor's 3956 ms line (Wasteland, between Pause and
+    // Unpause Game) left at 22.1 s, 4.0 s after it showed, where every
+    // length model gives 5-5.5 s.  INFERENCE from that one sample;
+    // falsifier: a paused transmission whose text outlives it.
+    if paused && transmission_ms > 0 {
+        return transmission_ms as u64;
+    }
     let by_lines = TEXT_BASE_MS + TEXT_PER_LINE_MS * lines as u64;
     by_lines.max(transmission_ms as u64)
 }
+
 /// Lines visible at once above the console (oldest scroll away first):
 /// the SCV transmission (4 lines) pushes the TIP's first 4 of 6 lines out
 /// (recording, 90 s).
@@ -176,13 +185,24 @@ mod tests {
         // 1 Wasteland recordings: TIP (6 lines) 10.1 s, SCV transmission
         // (4 lines, 4 920 ms) 7.2 s, NEW MISSION OBJECTIVE (2 lines) 4.0 s.
         let near = |got: u64, want: u64| got.abs_diff(want) <= 250;
-        assert!(near(text_life_ms(0, 6), 10_100));
-        assert!(near(text_life_ms(4_920, 4), 7_200));
-        assert!(near(text_life_ms(0, 2), 4_000));
+        assert!(near(text_life_ms(0, 6, false), 10_100));
+        assert!(near(text_life_ms(4_920, 4, false), 7_200));
+        assert!(near(text_life_ms(0, 2, false), 4_000));
         assert_eq!(
-            text_life_ms(20_000, 3),
+            text_life_ms(20_000, 3, false),
             20_000,
             "long transmissions keep their length"
+        );
+    }
+
+    #[test]
+    fn a_paused_transmission_shows_only_while_it_talks() {
+        // Raynor's paused 3-line, 3956 ms transmission: 4.0 s on screen.
+        assert_eq!(text_life_ms(3_956, 3, true), 3_956);
+        assert_eq!(
+            text_life_ms(0, 2, true),
+            text_life_ms(0, 2, false),
+            "Display Text unaffected"
         );
     }
 
