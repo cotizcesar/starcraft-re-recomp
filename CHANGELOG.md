@@ -4,6 +4,22 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Contributor notes: compact AGENTS.md, vault in English and checked in CI
+
+### Changed
+- Root `AGENTS.md` compacted to the rules an agent would miss (CI facts,
+  REA config location, vault committed with every change).
+- The Obsidian vault is in English with plain folder names (`context/`,
+  `sessions/`, `decisions/`, `reviews/`, `inbox/`); skills renamed
+  `vault-session`, `vault-research`, `vault-review`.
+
+### Added
+- `scripts/vault_check.py` (run in CI): session notes must cover every
+  session-log entry and keep an accurate count of open items; `--open
+  --area` lists open work.
+- Onboarding notes: `obsidian/context/where-to-look.md`,
+  `retail-recordings.md`, `retail-file-glossary.md`.
+
 ## 2026-11-05 — LAN flow branch merged onto the current engine
 
 ### Changed

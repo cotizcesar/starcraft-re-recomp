@@ -1,10 +1,15 @@
 ---
 title: ""
 date: YYYY-MM-DD
-estado: propuesta
+type: decision
 tags: [decision]
-origen: opencode
+status: proposed
+source: opencode
 ---
+
+<!-- status: proposed | accepted | superseded (link the replacement).
+Project-wide or architectural decisions also go to
+research/docs/decision-log.md; this note is the short version. -->
 
 ## Context
 
@@ -13,3 +18,6 @@ origen: opencode
 ## Decision
 
 ## Rationale
+
+## Evidence
+- (commit, test or session-log entry; FACT vs INFERENCE)
