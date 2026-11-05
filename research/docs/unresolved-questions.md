@@ -45,11 +45,15 @@ where it is recorded; open items carry the experiment that settles them.
    blocking. (P3.)
 4. INFERENCES that need the retail client running (each also recorded where
    it is used):
-   - Trigger text lifetimes: measured once (2026-11-04, Wasteland: TIP
-     9.5-11.2 s, SCV transmission 6.7-8.5 s) and applied
-     (`transmission::text_life_ms`); more samples would turn them into a
-     rule.  The "always display" flag `0x04` is still untested: play a
-     flagged message with subtitles off.
+   - Trigger text lifetimes: now a rule fitted on nine retail samples
+     (62 ms per character, at least 4 s and the transmission; session log
+     94).  Still open: the "always display" flag `0x04` (play a flagged
+     message with subtitles off), the 11-line limit (10 observed), and the
+     scroll rate of short ready-room texts (fitted on 9- and 11-line ones).
+   - Audio timing (briefing WAVs, transmissions, rescue and victory
+     sounds): every retail recording so far was video only.
+   - Rescue poll on the first tick (the order timer starting at 0) and
+     Skip Tutorial recording progress without counting a game.
    - Transmission duration modifiers (`trigger::transmission_ms`).
    - The per-sprite lighting mix and lighting scale uniforms
      (`hd-lighting.md` #10).

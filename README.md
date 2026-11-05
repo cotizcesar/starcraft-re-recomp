@@ -28,6 +28,11 @@ player's own legal StarCraft installation at runtime and never modifies it
 - **Playable client `sc_view`**: Remastered menus, campaign, briefings, HUD
   per race, minimap, hotkeys, fog of war, saves, replays, 16:9 to 4K and
   ultrawide.
+- **Campaign 1 (Rebel Yell) checked against the retail client**: mission
+  order, films, establishing shots, the Terran ready room, trigger text,
+  rescues, victory dialog and score screen are fitted to recordings of the
+  retail game (Boot Camp, Wasteland, Backwater Station) and pinned by
+  tests against the shipped maps (`tests/campaign_episode1.rs`).
 - **LAN multiplayer**: command-only lockstep over TCP or UDP, with discovery,
   a lobby and resync. Two processes stay hash-identical over 2400 ticks.
 - **Reverse-engineering notes** with FACT vs INFERENCE discipline: memory
