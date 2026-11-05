@@ -774,6 +774,42 @@ impl TriggerSystem {
         player < 8 && self.present[player] && trigger.enabled[18 + self.forces[player] as usize]
     }
 
+    /// The value a leaderboard shows for `player`: units of its type under
+    /// control (17/18, goal 33/34; 18/34 inside its location), resources
+    /// (19/35: minerals, gas or both by `score_kind`), kills of its unit
+    /// type (20/36) or a score (21/37).
+    pub fn leaderboard_value(&self, world: &World, player: usize) -> i64 {
+        let Some(lb) = &self.leaderboard else {
+            return 0;
+        };
+        let Some(p) = world.players.get(player) else {
+            return 0;
+        };
+        match lb.kind {
+            17 | 18 | 33 | 34 => {
+                let c = TriggerCondition {
+                    location: lb.location.unwrap_or(0),
+                    group: player as u32,
+                    unit_id: lb.unit_id,
+                    ..TriggerCondition::default()
+                };
+                if lb.location.is_some() {
+                    self.bring_count(world, player, &c) as i64
+                } else {
+                    self.command_count(world, player, &c) as i64
+                }
+            }
+            19 | 35 => match lb.score_kind {
+                0 => p.minerals as i64,
+                1 => p.gas as i64,
+                _ => (p.minerals + p.gas) as i64,
+            },
+            20 | 36 => p.kill_counts.get(lb.unit_id as usize).copied().unwrap_or(0) as i64,
+            21 | 37 => self.score(world, player, lb.score_kind) as i64,
+            _ => 0,
+        }
+    }
+
     /// Players of force `force` (0..=3) that are in the game.
     fn force_members(&self, force: usize) -> Vec<usize> {
         (0..8)
@@ -1868,6 +1904,23 @@ mod tests {
         w.tick = 1;
         t.process(&mut w);
         assert!(w.players[1].defeated && !w.players[0].defeated);
+    }
+
+    #[test]
+    fn a_control_leaderboard_counts_the_players_units() {
+        // Leader Board (Control) of Marines (unit 0), as Wasteland's.
+        let mut r = record(22, 17, 0);
+        r[320 + 24..320 + 26].copy_from_slice(&0u16.to_le_bytes());
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        for x in [100, 140, 180] {
+            w.spawn_px(0, crate::ids::unit::MARINE, x, 100).unwrap();
+        }
+        w.spawn_px(1, crate::ids::unit::MARINE, 400, 400).unwrap();
+        w.tick = 1;
+        t.process(&mut w);
+        assert_eq!(t.leaderboard_value(&w, 0), 3);
+        assert_eq!(t.leaderboard_value(&w, 1), 1);
     }
 
     #[test]

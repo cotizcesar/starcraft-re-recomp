@@ -4635,3 +4635,39 @@ flow); `ultrawide_diff.py` 31/31; `menu_time_diff.py` 4/4.
 `tests/campaign_episode1.rs` 6/6); clippy 0; fmt clean; walkthrough PASS
 (campaign win + flow); `ui_visual_diff.py` 51/51; `progress.py --check`
 OK.
+
+## 2026-11-05 (92) — Wasteland in-game HUD against the recording
+
+Frames of `Screencast_20261105_074011` (43-47 s) and `_074531` (0-3 s)
+compared with client captures of the same Wasteland state
+(`--shot-screen select-cc`, `game-error`, `leaderboard-marines`).  The
+console, selection wireframe, command card and minimap were already in
+the 51-screen visual gate; three campaign-specific elements differed:
+
+- **Error line (FACT).**  Retail shows "Not enough minerals...mine more
+  minerals." (`stat_txt` 850) centred over the console: ink 962..1595 x
+  894..921 content px, near white, `blizzard-regular` ~31 px/em.  The
+  client printed `Cannot train: NotEnoughMinerals` in its debug status
+  line, plus "Building X" / "Mission started" texts that retail never
+  shows.  `stat_error_id` maps minerals 850, gas 851, supply 844/845/846
+  (Zerg/Terran/Protoss), energy 864; "You can't build there." 856 for a
+  blocked placement; refused Build orders now report too.  Ours: ink
+  964..1596 x 894..921.  How long the line stays is INFERENCE (4 s; the
+  recording keeps clicking).
+- **Town-hall rows (FACT).**  Retail Terran: "Supplies Used / Supplies
+  Provided / Total Supplies / Supplies Max" (`stat_txt` 822/816/819/825);
+  the client wrote "Control ..." for Terran.  `supply_labels` reads rows
+  815..826 by race.  Core text colour equal (223,223,255 vs 224,220,254).
+- **Trigger leaderboard (FACT).**  Retail: a 30 px square in the player's
+  BW colour at (6,6) (recording 10,70,203 = BW blue 12,72,204) and "9 of
+  10 Marines" in green (72,249,74) with a black shadow, ink x 50..274,
+  rows 8..29; Garm Brood is absent because Wasteland's action 32 turns
+  computer players off.  The client never drew trigger leaderboards (only
+  a debug table on L).  `TriggerSystem::leaderboard_value` (control,
+  resources, kills, score kinds) and `draw_trigger_leaderboard`; ours
+  matches the ink box within 1 px.  Row pitch for several players is
+  INFERENCE (36 px).
+
+**Verification.**  `cargo test` 479 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51; walkthrough PASS;
+`ultrawide_diff.py` 31/31; `progress.py --check` OK.

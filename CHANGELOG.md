@@ -22,6 +22,12 @@ status is in [PROGRESS.md](PROGRESS.md).
   and resources spent (also what trigger Score conditions read).
 
 ### Fixed
+- In-game messages as retail: refused production / orders show the
+  `stat_txt` error line centred over the console (was a "Cannot train:
+  NotEnoughMinerals" debug status; "Building X" / "Mission started" are
+  gone), Terran town halls say "Supplies ..." (was "Control ..."), and the
+  trigger leaderboard is drawn ("9 of 10 Marines" in Wasteland; it was
+  never shown).
 - Victory and Defeat trigger actions apply to the player running the
   trigger (they read the unused `group` operand, so Wasteland's victory
   went to player 0 and could not be won).

@@ -1213,6 +1213,9 @@ struct App {
     /// the score screen (retail Wasteland recording: dialog at 3.5 s, the
     /// score screen after its Victory button).
     end_dialog: bool,
+    /// Retail in-game error line ("Not enough minerals...mine more
+    /// minerals.") and when it was shown.
+    game_error: Option<(String, Instant)>,
     /// Win-only: the `Next Scenario` action resolved into the bundled pack.
     next_map: Option<usize>,
     tiles_dir: PathBuf,
@@ -2991,6 +2994,58 @@ impl ScoreRow {
             _ => [units, structures, resources, units + structures + resources],
         }
     }
+}
+
+/// Trigger leaderboard: text green and row pitch (one row on the
+/// recording; the pitch is INFERENCE), and the BW player colours (the
+/// recording's square is (10,70,203) for player 2's (12,72,204)).
+const LEADERBOARD_GREEN: Rgb = Rgb::new(72, 249, 74);
+const LEADERBOARD_PITCH: f32 = 36.0;
+const BW_PLAYER_COLOURS: [Rgb; 8] = [
+    Rgb::new(244, 4, 4),
+    Rgb::new(12, 72, 204),
+    Rgb::new(44, 180, 148),
+    Rgb::new(136, 64, 156),
+    Rgb::new(248, 140, 20),
+    Rgb::new(112, 48, 20),
+    Rgb::new(204, 224, 208),
+    Rgb::new(252, 252, 56),
+];
+
+/// Retail in-game error line (`stat_txt.tbl`): baseline and colour from
+/// the Wasteland recording; how long it stays is INFERENCE (the recording
+/// keeps clicking, so its end is not visible).
+const GAME_ERROR_BASE: f32 = 916.0;
+const GAME_ERROR_COLOUR: Rgb = Rgb::new(252, 248, 244);
+const GAME_ERROR_LIFE: Duration = Duration::from_secs(4);
+const STAT_CANT_BUILD_THERE: u16 = 856;
+
+/// Town-hall supply rows from `stat_txt.tbl`: Used (821), Provided (815),
+/// Total (818), Max (824), each Zerg / Terran / Protoss in turn.
+fn supply_labels(strings: &galaxycraft::tables::StringTable, race: Race) -> [String; 4] {
+    let k = match race {
+        Race::Zerg => 0,
+        Race::Protoss => 2,
+        _ => 1,
+    };
+    [821u16, 815, 818, 824].map(|id| strings.get(id + k - 1).unwrap_or("").to_string())
+}
+
+/// `stat_txt.tbl` id (1-based) of the error a refused order shows:
+/// minerals 850, gas 851, supply 844/845/846 by race, energy 864.
+fn stat_error_id(e: galaxycraft::sim::SimError, race: Race) -> Option<u16> {
+    use galaxycraft::sim::SimError;
+    Some(match e {
+        SimError::NotEnoughMinerals => 850,
+        SimError::NotEnoughGas => 851,
+        SimError::NotEnoughSupply => match race {
+            Race::Zerg => 844,
+            Race::Protoss => 846,
+            _ => 845,
+        },
+        SimError::NotEnoughEnergy => 864,
+        _ => return None,
+    })
 }
 
 /// In-game trigger text (content px, see `draw_hud`): ink widths 603 / 376
@@ -5260,6 +5315,7 @@ fn main() {
         paused: false,
         game_result: None,
         end_dialog: false,
+        game_error: None,
         next_map: None,
         tiles_dir: tiles_dir.clone(),
         menu_race,
@@ -5833,6 +5889,56 @@ fn main() {
                 app.load_map(app.map_index);
                 app.briefing = false;
                 app.paused = true;
+                app.draw(&mut fb);
+            }
+            "select-cc" => {
+                app.load_map(app.map_index);
+                app.briefing = false;
+                let me = app.local_player as u8;
+                if let Some(id) = app
+                    .world
+                    .units
+                    .iter()
+                    .find(|u| {
+                        u.alive
+                            && u.owner == me
+                            && u.type_id == galaxycraft::ids::unit::COMMAND_CENTER
+                    })
+                    .map(|u| u.id)
+                {
+                    app.selected = vec![id];
+                    app.refresh_commands();
+                }
+                app.draw(&mut fb);
+            }
+            "leaderboard-marines" => {
+                // Wasteland after its Barracks trigger: the Marine counter.
+                app.load_map(app.map_index);
+                app.briefing = false;
+                let me = app.local_player;
+                if let Some(t) = app.world.triggers.as_mut() {
+                    t.leaderboard_computer_players = false;
+                    t.leaderboard = Some(galaxycraft::trigger::Leaderboard {
+                        player: me,
+                        text_id: app
+                            .scenario
+                            .strings
+                            .iter()
+                            .position(|s| s.contains("of 10 Marines"))
+                            .map_or(0, |i| i as u32 + 1),
+                        kind: 17,
+                        unit_id: galaxycraft::ids::unit::MARINE,
+                        score_kind: 0,
+                        goal: None,
+                        location: None,
+                    });
+                }
+                app.draw(&mut fb);
+            }
+            "game-error" => {
+                app.load_map(app.map_index);
+                app.briefing = false;
+                app.show_sim_error(galaxycraft::sim::SimError::NotEnoughMinerals);
                 app.draw(&mut fb);
             }
             "trigger-text" | "trigger-objective" => {
@@ -6780,6 +6886,21 @@ impl App {
         }
         if self.intro_player.as_ref().is_some_and(|p| p.finished()) {
             self.advance_intro();
+        }
+    }
+
+    /// Show a retail `stat_txt.tbl` error line (1-based id) in the game.
+    fn show_game_error(&mut self, id: u16) {
+        if let Some(text) = self.data.strings.get(id - 1) {
+            self.game_error = Some((text.to_string(), Instant::now()));
+        }
+    }
+
+    /// The retail error line of a refused order or production.
+    fn show_sim_error(&mut self, e: galaxycraft::sim::SimError) {
+        let race = self.local_race();
+        if let Some(id) = stat_error_id(e, race) {
+            self.show_game_error(id);
         }
     }
 
@@ -9468,7 +9589,6 @@ impl App {
         self.briefing = false;
         self.last_step = Instant::now();
         self.play("ui_click");
-        self.status("Mission started");
     }
 
     /// Start (or Replay) the ready-room script from its first action.
@@ -11630,9 +11750,7 @@ impl App {
                     } else {
                         match self.world.train(id, unit_type) {
                             Ok(()) => trained = true,
-                            Err(e) => {
-                                self.status(format!("Cannot train: {e:?}"));
-                            }
+                            Err(e) => self.show_sim_error(e),
                         }
                     }
                 }
@@ -11653,7 +11771,7 @@ impl App {
         let (lx, ly) = self.to_logical(sx, sy);
         let (wx, wy) = self.world_of(lx, ly);
         let Some(spot) = self.world.find_build_spot(unit_type, (wx, wy)) else {
-            self.status("No room to build there");
+            self.show_game_error(STAT_CANT_BUILD_THERE);
             return;
         };
         let mut placed = false;
@@ -11663,20 +11781,21 @@ impl App {
                 .unit(id)
                 .is_some_and(|u| self.data.unit(u.type_id).is_worker())
             {
-                let _ = self.world.issue(
+                match self.world.issue(
                     id,
                     Order::Build {
                         unit_type,
                         pos: spot,
                     },
-                );
-                placed = true;
+                ) {
+                    Ok(()) => placed = true,
+                    Err(e) => self.show_sim_error(e),
+                }
             }
         }
         if placed {
             self.actions = self.actions.saturating_add(1);
             self.play("ui_click");
-            self.status(format!("Building {}", self.data.unit_name(unit_type)));
             self.build_mode = None;
         }
     }
@@ -12795,6 +12914,26 @@ impl App {
                 GlueFace::Hud,
             );
         }
+        self.draw_trigger_leaderboard(fb);
+        // Retail error line, centred over the console (recording: ink
+        // 962..1595 x 894..921 content px, near white).
+        if let Some((text, at)) = self.game_error.clone() {
+            if at.elapsed() < GAME_ERROR_LIFE {
+                let w = self.glue_measure(&text, TRIGGER_TEXT_PX, GlueFace::Hud);
+                self.glue_text_face(
+                    fb,
+                    1280.0 - w / 2.0,
+                    GAME_ERROR_BASE,
+                    &text,
+                    TRIGGER_TEXT_PX,
+                    GAME_ERROR_COLOUR,
+                    None,
+                    GlueFace::Hud,
+                );
+            } else {
+                self.game_error = None;
+            }
+        }
         // Status line in the game view.
         if Instant::now() < self.status_until && !self.status.is_empty() {
             fb.text_centered(
@@ -13034,19 +13173,18 @@ impl App {
         ) {
             let used = self.world.supply_used(self.local_player as u8) / 2;
             let cap = self.world.supply_cap(self.local_player as u8) / 2;
-            let label = if matches!(self.console_race, Race::Protoss) {
-                "Psi"
-            } else {
-                "Control"
-            };
             // "Provided" is this building's own supply (134905: a Hatchery
-            // shows 1 while the player total is 9).
+            // shows 1 while the player total is 9).  Labels are the
+            // `stat_txt.tbl` rows of the race (Terran "Supplies Used:", as
+            // on the retail Wasteland recording; the old code said
+            // "Control" for Terran).
             let provided = ty.supply_provided as i32 / 2;
+            let labels = supply_labels(&self.data.strings, self.console_race);
             let rows = [
-                format!("{label} Used: {used}"),
-                format!("{label} Provided: {provided}"),
-                format!("Total {label}: {cap}"),
-                format!("{label} Max: 200"),
+                format!("{} {used}", labels[0]),
+                format!("{} {provided}", labels[1]),
+                format!("{} {cap}", labels[2]),
+                format!("{} 200", labels[3]),
             ];
             for (i, text) in rows.iter().enumerate() {
                 let r = self.hud_control(
@@ -13561,6 +13699,66 @@ impl App {
                 let x = slot.x + (slot.w - w) / 2;
                 let y = slot.y + (slot.h - h) / 2;
                 draw_tinted(fb, img, (x, y, w, h), colour);
+            }
+        }
+    }
+
+    /// The map's trigger leaderboard, top-left (retail Wasteland: a 30 px
+    /// player-colour square at (6,6) and "9 of 10 Marines" in green,
+    /// `blizzard-regular` 31.1 px/em, ink x 50, ink rows 8..29).  One row per
+    /// player in the game, highest first; computers only when action 32
+    /// leaves them on, rescuable players never.
+    fn draw_trigger_leaderboard(&mut self, fb: &mut Framebuffer) {
+        let Some(t) = self.world.triggers.as_ref() else {
+            return;
+        };
+        let Some(lb) = t.leaderboard.clone() else {
+            return;
+        };
+        let label = self
+            .scenario
+            .string(lb.text_id)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let computers = t.leaderboard_computer_players;
+        let slots = self.scenario.player_slots();
+        let mut rows: Vec<(i64, usize)> = slots
+            .iter()
+            .filter(|s| s.active && (s.human || s.computer))
+            .filter(|s| {
+                self.world
+                    .players
+                    .get(s.slot)
+                    .is_some_and(|p| !p.rescuable && (computers || !p.is_computer))
+            })
+            .map(|s| (t.leaderboard_value(&self.world, s.slot), s.slot))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let (cx, _, _, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let px = |v: f32| (v * k).round() as i32;
+        for (n, (value, slot)) in rows.into_iter().enumerate() {
+            let dy = n as f32 * LEADERBOARD_PITCH;
+            fb.rect(
+                cx + px(6.0),
+                px(6.0 + dy),
+                px(30.0),
+                px(30.0),
+                BW_PLAYER_COLOURS[slot % 8],
+            );
+            let text = format!("{value} {label}");
+            for (d, colour) in [(2.0, Rgb::new(0, 0, 0)), (0.0, LEADERBOARD_GREEN)] {
+                self.glue_text_face(
+                    fb,
+                    48.0 + d,
+                    30.0 + dy + d,
+                    &text,
+                    TRIGGER_TEXT_PX,
+                    colour,
+                    None,
+                    GlueFace::Hud,
+                );
             }
         }
     }
@@ -18979,6 +19177,60 @@ mod timestamp_tests {
 #[cfg(test)]
 mod menu_frame_tests {
     use super::{clear_menu_frame, Framebuffer, Rgb};
+
+    #[test]
+    fn town_hall_supply_rows_use_the_race_labels() {
+        use super::supply_labels;
+        use galaxycraft::sim::Race;
+        let data = galaxycraft::data::GameData::bundled().expect("bundled data");
+        assert_eq!(
+            supply_labels(&data.strings, Race::Terran),
+            [
+                "Supplies Used:",
+                "Supplies Provided:",
+                "Total Supplies:",
+                "Supplies Max:"
+            ]
+        );
+        assert_eq!(supply_labels(&data.strings, Race::Zerg)[0], "Control Used:");
+        assert_eq!(supply_labels(&data.strings, Race::Protoss)[2], "Total Psi:");
+    }
+
+    #[test]
+    fn refused_orders_show_the_retail_error_strings() {
+        use super::stat_error_id;
+        use galaxycraft::sim::{Race, SimError};
+        let data = galaxycraft::data::GameData::bundled().expect("bundled data");
+        let text = |e, r| {
+            data.strings
+                .get(stat_error_id(e, r).expect("mapped") - 1)
+                .unwrap_or("")
+        };
+        assert_eq!(
+            text(SimError::NotEnoughMinerals, Race::Terran),
+            "Not enough minerals...mine more minerals."
+        );
+        assert_eq!(
+            text(SimError::NotEnoughSupply, Race::Terran),
+            "Not enough supplies...build more Supply Depots."
+        );
+        assert_eq!(
+            text(SimError::NotEnoughSupply, Race::Protoss),
+            "Not enough psi...build more Pylons."
+        );
+        assert_eq!(
+            text(SimError::NotEnoughSupply, Race::Zerg),
+            "Too many underlings...create more Overlords."
+        );
+        assert_eq!(
+            text(SimError::NotEnoughGas, Race::Terran),
+            "Not enough Vespene gases....harvest more gas."
+        );
+        assert_eq!(
+            data.strings.get(super::STAT_CANT_BUILD_THERE - 1),
+            Some("You can't build there.")
+        );
+    }
 
     #[test]
     fn score_count_up_follows_the_retail_curve() {
