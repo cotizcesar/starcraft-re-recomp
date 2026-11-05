@@ -1,11 +1,13 @@
 ---
 title: "Main-menu footer labels only recolour on hover"
 date: 2026-11-04
-status: accepted
+status: superseded
 type: decision
 tags: [decision, main-menu, inference]
 source: opencode
 ---
+
+> Superseded 2026-11-05 by [[main-menu-labels-recolour-only]] (all seven entries).
 
 ## Context
 

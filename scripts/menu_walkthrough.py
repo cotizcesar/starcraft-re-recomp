@@ -6,7 +6,9 @@ Feeds a deterministic input script through the real `sc_view` menu handlers
 
 1. the screen transition sequence covers every menu screen and each change
    plays the press cue (`ui_click`) and the swish-in (`ui_swish`), plus the
-   swish-out (`ui_swish_out`) when a classic list dialog leaves;
+   swish-out (`ui_swish_out`) when a classic list dialog leaves; leaving
+   Main through one of its entries (Hotkeys and Exit aside) plays only the
+   press;
 2. `ui_click` fires on control presses, a press that stays on the screen
    never swishes, and `ui_move` fires when the pointer enters a control;
 3. Options sliders/checkboxes/tabs change the real `GameOptions` values and
@@ -90,8 +92,8 @@ SCRIPT = ",".join(
         "move:558:1273", "click",           # Show Credits
         "move:558:1348", "click",           # a click does not leave Credits
         "key:Escape",                       # Esc sends `Exit` -> Main
-        # `View Intro` starts the movie path (not a MenuScreen), covered by
-        # the intro timeline tests; the walkthrough continues on the menu.
+        # `View Intro` (Select Game Type, then the movie) is walked by
+        # `view_intro_check`; this walkthrough continues on the menu.
         "move:558:1192", "click",           # Hotkeys (Terran)
         "move:471:357", "click",            # select SCV
         "move:549:1344", "click",           # open Restore dialog
@@ -328,6 +330,56 @@ SKIP_SCRIPT = ",".join(
 )
 
 
+# View Intro asks Original / Expansion with the Select Game Type dialog, like
+# Single Player, then plays that game's title movie and returns to Main
+# (user report on the retail client, 2026-11-05).  Leaving Main plays only
+# the press, and the return from the film is not a whooshing screen change.
+INTRO_SCRIPT = ",".join([
+    "move:558:1348", "click",   # View Intro -> Select Game Type
+    "move:1427:846", "click",   # Expansion -> smk/starxintr.webm
+    "intro:end",                # the film ends -> Main
+    "move:558:1348", "click",   # View Intro again
+    "move:1103:618", "click",   # Original -> smk/starintr.webm
+    "intro:end",
+])
+
+
+def view_intro_check(args) -> None:
+    outdir = Path(tempfile.mkdtemp(prefix="gc-intro-walk-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir))
+    proc = subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
+         "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", INTRO_SCRIPT],
+        env=env, text=True, capture_output=True,
+    )
+    if proc.returncode != 0:
+        fail(f"view intro check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
+    rows = [r for r in parse_tsv(outdir / "walk.tsv") if r["action"] in ("click", "intro:end")]
+    want = [
+        ("GameType", "", ["ui_click"]),
+        ("Main", "flow=intro clips=smk/starxintr.webm", ["ui_click"]),
+        ("Main", "", None),
+        ("GameType", "", ["ui_click"]),
+        ("Main", "flow=intro clips=smk/starintr.webm", ["ui_click"]),
+        ("Main", "", None),
+    ]
+    if len(rows) != len(want):
+        fail(f"view intro: {len(rows)} steps recorded, expected {len(want)}")
+    for row, (screen, state, cues) in zip(rows, want):
+        got = sorted(filter(None, row["sounds"].split("+")))
+        # Back on Main the pointer still rests on View Intro (`ui_move` is
+        # its hover cue); only a whoosh would be wrong there.
+        sound_ok = (not {"ui_swish", "ui_swish_out"} & set(got)) if cues is None else got == cues
+        if row["screen"] != screen or state not in row["state"] or not sound_ok:
+            fail(f"view intro step {row['step']}: screen={row['screen']} sounds={got} "
+                 f"state={row['state']!r}; want {screen} {cues} {state!r}")
+    if any("flow=intro" in r["state"] for r in (rows[2], rows[5])):
+        fail("view intro: the film did not return to the menu")
+    shutil.rmtree(outdir, ignore_errors=True)
+    print("PASS view intro: View Intro -> Select Game Type (press only) -> Expansion plays "
+          "smk/starxintr.webm, Original smk/starintr.webm -> Main without a whoosh")
+
+
 def campaign_skip_tutorial_check(args) -> None:
     saves = Path(tempfile.mkdtemp(prefix="gc-flow-"))
     outdir = Path(tempfile.mkdtemp(prefix="gc-flow-walk-"))
@@ -514,19 +566,27 @@ def main() -> int:
     # The classic glue list dialogs (`is_glue_list` in sc_view): the
     # multiplayer Select Connection / Games / Create / Lobby are the same
     # family as Registry.
+    MAIN_ENTRY_NO_SWISH = {"GameType", "Options", "Collections", "Credits", "Intro"}
     glue = {"Registry", "SavedGames", "Replays", "Connection", "Games", "MpCreate", "MpLobby"}
     prev_screen = rows[0]["screen"]
     for row in rows:
         if row["screen"] == prev_screen:
             continue
         cues = sorted(filter(None, row["sounds"].split("+")))
-        want = sorted(["ui_click", "ui_swish"] + (["ui_swish_out"] if prev_screen in glue else []))
+        # Leaving Main through Single Player / Multiplayer (Select Game
+        # Type), Options, Collections, Show Credits or View Intro plays only
+        # the press (user report on the retail client, 2026-11-05;
+        # `menu::screen_change_swish`).
+        swish_in = not (prev_screen == "Main" and row["screen"] in MAIN_ENTRY_NO_SWISH)
+        want = sorted(["ui_click"] + (["ui_swish"] if swish_in else [])
+                      + (["ui_swish_out"] if prev_screen in glue else []))
         if cues != want:
             fail(f"step {row['step']} {prev_screen} -> {row['screen']} cues {cues} != {want}")
         prev_screen = row["screen"]
     print(
         f"PASS transitions: {len(transitions)} screen changes, each with the "
-        "press cue and the swish-in (swish-out when a list dialog leaves)"
+        "press cue and the swish-in (swish-out when a list dialog leaves; "
+        "press only when Main opens an entry)"
     )
     print("     " + " -> ".join(["Main"] + got))
 
@@ -647,6 +707,7 @@ def main() -> int:
     campaign_win_check(args)
     campaign_flow_check(args)
     campaign_skip_tutorial_check(args)
+    view_intro_check(args)
     profile_persistence_check(args)
     print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
           "keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls")

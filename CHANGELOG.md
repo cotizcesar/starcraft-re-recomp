@@ -4,6 +4,23 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Main menu hover, View Intro and modal fixes
+
+### Fixed
+- The Single Player hover grid always starts small and restarts on every
+  hover instead of resuming mid-loop.
+- Single Player and Multiplayer no longer shift on hover; they only change
+  colour, like the other entries.
+- Leaving the main menu through Single Player, Multiplayer, Options,
+  Collections, Show Credits or View Intro plays only the click, no whoosh.
+- Menu labels carry the same drop shadow as the build footer.
+- The main-menu introduction text no longer shows through Collections,
+  Options and the other sub-screens.
+
+### Changed
+- View Intro asks Original / Expansion (Select Game Type) and plays that
+  game's title movie.
+
 ## 2026-11-05 — Contributor notes: compact AGENTS.md, vault in English and checked in CI
 
 ### Changed

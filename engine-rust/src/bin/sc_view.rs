@@ -497,6 +497,29 @@ const MENU_CLIP_CHUNK: f32 = 0.5;
 /// The old 2.5 s offset skipped the fleet entrance and made the seam visible.
 const MENU_CLIP_START: f32 = 0.0;
 
+/// `glue/mainmenu/singleon.webm` (151 frames at 15 fps) repeats one
+/// 76-frame cycle: the targeting grid vanishes after frame 17 (and 93) and
+/// grows back from 63 % of its width at frame 31 to full size at frame 36
+/// (107..112 in the second cycle).  Frame 0 is mid-cycle, with the grid
+/// already full size.  Measured with `ffmpeg -c:v libvpx-vp9` alpha
+/// coverage on the 1.23.10.13515 cache, 2026-11-05.  `multion` and `exiton`
+/// have no such intro.
+const SINGLE_ON_GROW_FRAME: usize = 31;
+const SINGLE_ON_CYCLE_FRAMES: usize = 76;
+
+/// Loop window `(start second, authored frames)` of a mouse-over clip.  The
+/// hover must always begin with the small grid (user report on the retail
+/// client, 2026-11-05), so SingleOn plays from its grow-in frame and loops
+/// one whole cycle, which lands back on the grow-in seamlessly.
+fn hover_clip_window(name: &str) -> Option<(f32, usize)> {
+    (name == "singleon").then(|| {
+        (
+            SINGLE_ON_GROW_FRAME as f32 / MENU_CLIP_SOURCE_FPS,
+            SINGLE_ON_CYCLE_FRAMES,
+        )
+    })
+}
+
 /// The shipped cursor GRP (80x84) is 4x the 640x480 UI art, i.e. authored
 /// for a 1920-line canvas.  The live client draws it at `height / 1920`
 /// (`ui_scale / 4`): measured 56-57 px tall at 1440p and 42-43 px at 1080p,
@@ -505,6 +528,24 @@ const MENU_CLIP_START: f32 = 0.0;
 const CURSOR_ASSET_HEIGHT: f32 = 1920.0;
 /// Retail cycles the five cursor frames at 6 fps (ten 60 Hz samples each).
 const CURSOR_FPS: f32 = 6.0;
+
+/// Colours of a main-menu label as `(rest of the word, hotkey glyph)`.
+/// Hover only recolours the word: the glyph runs, faces and tracking stay
+/// the idle ones for every entry, so no label moves when the pointer enters
+/// it (user reports 2026-11-04 and 2026-11-05).
+fn main_label_hover_colors(hovered: bool, normal: Rgb, bright: Rgb, hover: Rgb) -> (Rgb, Rgb) {
+    if hovered {
+        (hover, bright)
+    } else {
+        (normal, bright)
+    }
+}
+
+/// Drop shadow of the glue labels and the build footer: `(offset px,
+/// colour)`, one UI pixel down-right in opaque black.
+fn label_drop_shadow(scale: f32) -> (i32, Rgb) {
+    (scale.round().max(1.0) as i32, Rgb::new(0, 0, 0))
+}
 
 /// Index of the cursor frame for `elapsed`, in GRP order (0..4).
 fn cursor_frame_index(elapsed: Duration, frames: usize) -> usize {
@@ -606,6 +647,12 @@ impl MenuClip {
     /// Open the clip at an explicit second.  `--menu-at` uses this to take
     /// deterministic captures of the otherwise wall-clock animation.
     fn open_at(path: PathBuf, start: f32, frozen: bool) -> Option<Self> {
+        Self::open_window(path, start, None, frozen)
+    }
+
+    /// [`Self::open_at`] looping only `frames` authored frames from `start`
+    /// (the whole remaining timeline when `None`).
+    fn open_window(path: PathBuf, start: f32, frames: Option<usize>, frozen: bool) -> Option<Self> {
         let info = galaxycraft::video::probe_info(&path)?;
         let full = info.duration_ms? as f32 / 1000.0;
         if full <= 0.0 || info.pixel_width == 0 {
@@ -615,7 +662,8 @@ impl MenuClip {
         // instead of drifting by the rounding of a seconds-based duration.
         // Retail holds each authored frame for 1/10.5 s, so a 151-frame
         // layer loops in 14.38 s (not the WebM's 10.07 s).
-        let (start, frames, _duration) = menu_clip_timeline(full, start);
+        let (start, rest, _duration) = menu_clip_timeline(full, start);
+        let frames = frames.map_or(rest, |n| n.clamp(1, rest));
         let mut clip = Self {
             path,
             info,
@@ -698,6 +746,21 @@ impl MenuClip {
             })
             .ok();
         self.rx = Some(rx);
+    }
+
+    /// Back to the first frame of the loop, with nothing on screen until it
+    /// is decoded: a mouse-over clip restarts from its beginning on every
+    /// hover instead of resuming (or running hidden) where it left off.
+    /// The worker pre-decodes the first chunk while the clip is not shown,
+    /// so the next hover starts without a gap.  Pinned captures keep their
+    /// frame.
+    fn rewind(&mut self) {
+        if self.frozen {
+            return;
+        }
+        self.restart();
+        self.current = None;
+        self.last_pull = None;
     }
 
     /// Frame to draw for this instant.
@@ -1065,6 +1128,9 @@ struct App {
     /// Fully composed static main-menu frame (backdrop + chrome) at the
     /// current resolution.  Only the animated clips and text redraw.
     menu_static: Option<(usize, usize, Vec<u32>)>,
+    /// The same layer without the panel introduction, for the modals and
+    /// sub-screens drawn over the menu.
+    menu_static_bare: Option<(usize, usize, Vec<u32>)>,
     intro_fit: Option<(usize, usize, DdsImage)>,
     /// Backdrop resampled once to the 16:9 content box (the 3412x1920 art is
     /// 25 MB decoded; bilinear-scaling it every frame is wasted work).
@@ -1198,13 +1264,16 @@ struct App {
     /// Entry currently under the pointer (or keyboard-highlighted); `None`
     /// is the retail idle state (no hover animation, no highlighted label).
     main_cursor: Option<usize>,
+    /// Hovered entry when the menu clips were last drawn (rewinds the
+    /// mouse-over clip it leaves).
+    menu_clip_hover: Option<usize>,
     /// Original (0) / Expansion (1) under the pointer in the `Select Game
     /// Type` popup; `None` keeps the keyboard selection.
     gametype_hover: Option<usize>,
-    /// The popup was opened from `Multiplayer`, so choosing a game type must
-    /// continue to the multiplayer connection flow (retail does not open the
-    /// lobby straight from the main menu).
-    gametype_multi: bool,
+    /// Main-menu entry that opened the popup: Multiplayer continues to the
+    /// connection flow (retail does not open the lobby straight from the
+    /// main menu), View Intro plays the chosen title movie.
+    gametype_origin: galaxycraft::menu::GameTypeOrigin,
     /// `Registry` was opened by Single Player → Select Game Type; Ok must
     /// continue to the episode list instead of returning to the main menu.
     registry_after_gametype: bool,
@@ -5197,7 +5266,14 @@ fn main() {
     let frozen = menu_at.is_some() || !menu_phases.is_empty();
     let load_clip = |name: &str| {
         let start = menu_phases.get(name).copied().unwrap_or(clip_start);
-        MenuClip::open_at(clip_path(name), start, frozen)
+        // Live hover clips use their loop window; pinned captures keep the
+        // phase they were measured at.
+        match hover_clip_window(name).filter(|_| !frozen) {
+            Some((start, frames)) => {
+                MenuClip::open_window(clip_path(name), start, Some(frames), false)
+            }
+            None => MenuClip::open_at(clip_path(name), start, frozen),
+        }
     };
     let menu_layers = {
         let layers = MenuLayers {
@@ -5275,6 +5351,7 @@ fn main() {
         intro,
         intro_started: Instant::now(),
         menu_static: None,
+        menu_static_bare: None,
         intro_fit: None,
         backdrop_fit: None,
         moon_fit: None,
@@ -5304,8 +5381,9 @@ fn main() {
         persist_profiles,
         profile_sel: 0,
         main_cursor: None,
+        menu_clip_hover: None,
         gametype_hover: None,
-        gametype_multi: false,
+        gametype_origin: galaxycraft::menu::GameTypeOrigin::SinglePlayer,
         registry_after_gametype: false,
         episode_sel: 0,
         mission_list: galaxycraft::campaign_progress::MissionList::default(),
@@ -8854,7 +8932,7 @@ impl App {
                         _ => {
                             self.menu_screen = MenuScreen::Main;
                             self.gametype_hover = None;
-                            self.gametype_multi = false;
+                            self.gametype_origin = galaxycraft::menu::GameTypeOrigin::SinglePlayer;
                             self.play("ui_click");
                         }
                     }
@@ -8884,7 +8962,7 @@ impl App {
                                 self.menu_screen = t;
                             }
                             self.gametype_hover = None;
-                            self.gametype_multi = false;
+                            self.gametype_origin = galaxycraft::menu::GameTypeOrigin::SinglePlayer;
                             self.play("ui_click");
                         }
                         _ => {}
@@ -10283,9 +10361,14 @@ impl App {
         if leaving {
             self.play("ui_swish_out");
         }
+        // Leaving the main menu through one of its entries plays only the
+        // press (`menu::screen_change_swish`).
+        let swish_in = previous
+            .as_ref()
+            .is_some_and(|p| galaxycraft::menu::screen_change_swish(p, &current));
         if self.menu_at.is_some() || !self.menu_phases.is_empty() {
             // Pinned captures: no motion, the sounds still follow the change.
-            if changed {
+            if swish_in {
                 self.play("ui_swish");
             }
             self.glue_swish = None;
@@ -10298,7 +10381,7 @@ impl App {
                 _ if is_glue_list(&current) => Some(GlueSwish::In { started: now }),
                 _ => None,
             };
-            if !leaving {
+            if !leaving && swish_in {
                 self.play("ui_swish");
             }
         }
@@ -14181,7 +14264,7 @@ impl App {
         // resolution and copy the cached pixels every frame.  Only the clips,
         // entries and profile text are redrawn.
         let t0 = Instant::now();
-        self.copy_menu_static(fb);
+        self.copy_menu_static(fb, true);
         let t1 = Instant::now();
         self.draw_menu_clips(fb);
         let t2 = Instant::now();
@@ -14202,10 +14285,20 @@ impl App {
 
     /// Copy the main menu's static layer (backdrop, detail art, title
     /// frame and panel text), composing it once per window size.
-    fn copy_menu_static(&mut self, fb: &mut Framebuffer) {
+    ///
+    /// `panel_text` draws the introduction in the title-frame panel.  Only
+    /// the main menu itself shows it: behind every modal and sub-screen the
+    /// retail panel is empty (references 130933 and 131005 show only the
+    /// offline news spinner there), so the text no longer bleeds through
+    /// the Options and Collections plates.
+    fn copy_menu_static(&mut self, fb: &mut Framebuffer, panel_text: bool) {
         let (w, h) = (fb.width as usize, fb.height as usize);
-        let stale = self
-            .menu_static
+        let slot = if panel_text {
+            &self.menu_static
+        } else {
+            &self.menu_static_bare
+        };
+        let stale = slot
             .as_ref()
             .map(|(cw, ch, _)| *cw != w || *ch != h)
             .unwrap_or(true);
@@ -14215,10 +14308,19 @@ impl App {
             self.draw_menu_backdrop_plain(&mut cache);
             self.draw_menu_detail_art(&mut cache);
             self.draw_menu_frame_art(&mut cache, 0, 0);
-            self.draw_menu_panel_text(&mut cache, 0, 0);
-            self.menu_static = Some((w, h, cache.pixels));
+            if panel_text {
+                self.draw_menu_panel_text(&mut cache, 0, 0);
+                self.menu_static = Some((w, h, cache.pixels));
+            } else {
+                self.menu_static_bare = Some((w, h, cache.pixels));
+            }
         }
-        if let Some((_, _, pixels)) = &self.menu_static {
+        let slot = if panel_text {
+            &self.menu_static
+        } else {
+            &self.menu_static_bare
+        };
+        if let Some((_, _, pixels)) = slot {
             fb.pixels.copy_from_slice(pixels);
         }
     }
@@ -14264,20 +14366,25 @@ impl App {
             let r = galaxycraft::menu::FLC_RECTS[slot + usize::from(is_hover)].1;
             (base.0 + r.0, base.1 + r.1, r.2, r.3)
         };
+        let left = std::mem::replace(&mut self.menu_clip_hover, hover);
         let Some(layers) = &mut self.menu_layers else {
             return;
         };
-        // Every clip runs on one continuous clock, hovered or not: on the
-        // retail recording (2026-11-04) the SingleOn red marker of clip frame
-        // 40 shows 0.12 s after the hover starts, so the mouse-over loop
-        // does not restart on hover.  Hidden mouse-over clips are still
-        // pulled each frame so their decoder keeps pace.
+        // A mouse-over clip starts from its beginning on every hover and is
+        // rewound (not paused) when the pointer leaves: the user reported
+        // the SingleOn grid appearing full size on the retail client
+        // (2026-11-05).  This supersedes the 2026-11-04 reading of the
+        // recording (frame-40 marker 0.12 s after the hover), which assumed
+        // one continuous clock.  Hidden mouse-over clips are not pulled.
+        if left != hover
+            && let Some(old) = left
+            && let Some(clip) = layers.clip(old, true)
+        {
+            clip.rewind();
+        }
         for (idx, is_hover) in MENU_CLIP_ORDER {
             let (x, y, w, h) = rect(idx, is_hover);
             if is_hover && hover != Some(idx) {
-                if let Some(clip) = layers.clip(idx, true) {
-                    let _ = clip.frame();
-                }
                 continue;
             }
             if let Some(clip) = layers.clip(idx, is_hover) {
@@ -14474,13 +14581,13 @@ impl App {
         self.main_cursor = None;
         match idx {
             0 => {
-                self.gametype_multi = false;
+                self.gametype_origin = galaxycraft::menu::GameTypeOrigin::SinglePlayer;
                 self.menu_screen = MenuScreen::GameType;
             }
             1 => {
                 // Retail opens `Select Game Type` for Multiplayer too; the
                 // lobby is only reached after choosing Original/Expansion.
-                self.gametype_multi = true;
+                self.gametype_origin = galaxycraft::menu::GameTypeOrigin::Multiplayer;
                 if self.campaign_len < self.maps.len() {
                     self.map_index = self.campaign_len;
                 }
@@ -14503,15 +14610,12 @@ impl App {
             }
             5 => self.open_credits(),
             6 => {
-                // Retail `View Intro` replays the title movie (the publisher
-                // logo is only part of the first-launch sequence).
-                self.begin_intro(
-                    galaxycraft::video::intro_sequence(false, false)
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect(),
-                    None,
-                );
+                // Retail `View Intro` asks Original / Expansion with the same
+                // `Select Game Type` dialog as Single Player, then replays
+                // that title movie (the publisher logo is only part of the
+                // first-launch sequence); `finish_gametype` starts it.
+                self.gametype_origin = galaxycraft::menu::GameTypeOrigin::ViewIntro;
+                self.menu_screen = MenuScreen::GameType;
             }
             _ => self.quit = true,
         }
@@ -14541,7 +14645,20 @@ impl App {
     fn finish_gametype(&mut self, expansion: bool) {
         self.intro_expansion = expansion;
         self.episode_sel = galaxycraft::menu::episode_start(expansion);
-        self.menu_screen = match galaxycraft::menu::gametype_followup(self.gametype_multi) {
+        self.menu_screen = match galaxycraft::menu::gametype_followup(self.gametype_origin) {
+            galaxycraft::menu::GameTypeFollowup::PlayIntro => {
+                // The movie returns to the main menu; the popup is gone, so
+                // the return is not a screen change that whooshes.
+                self.swish_screen = Some(MenuScreen::Main);
+                self.begin_intro(
+                    galaxycraft::video::intro_sequence(expansion, false)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    None,
+                );
+                MenuScreen::Main
+            }
             galaxycraft::menu::GameTypeFollowup::SelectConnection => {
                 self.mp.enter_connection();
                 MenuScreen::Connection
@@ -14553,7 +14670,7 @@ impl App {
             }
         };
         self.gametype_hover = None;
-        self.gametype_multi = false;
+        self.gametype_origin = galaxycraft::menu::GameTypeOrigin::SinglePlayer;
         self.play("ui_click");
     }
 
@@ -14689,33 +14806,12 @@ impl App {
             LabelAlign::Left => label.x,
             LabelAlign::Center => label.x - label.width / 2.0,
         };
-        // Single Player / Multiplayer switch the whole word to the bright
-        // extended face (130704/130712).  The centred footer entries keep
-        // their glyph layout and only change colour: switching the face
-        // re-spaced every letter after the first, which read as the word
-        // sliding left (user report on the retail client, 2026-11-04).
-        let (normal, bright) = if hovered && label.align == LabelAlign::Center {
-            (hover, bright)
-        } else {
-            (normal, bright)
-        };
-        if hovered && label.align != LabelAlign::Center {
-            self.draw_hd_text(
-                fb,
-                text,
-                left,
-                label.y,
-                LabelAlign::Left,
-                label.width,
-                16.0,
-                scale,
-                ox,
-                oy,
-                hover,
-                true,
-            );
-            return;
-        }
+        // Every entry keeps its glyph layout on hover and only changes
+        // colour: switching the face re-spaced every letter after the
+        // first, which read as the word sliding (user reports on the retail
+        // client: the footer entries 2026-11-04, Single Player / Multiplayer
+        // 2026-11-05).  [`main_label_hover_colors`] is the shared rule.
+        let (normal, bright) = main_label_hover_colors(hovered, normal, bright, hover);
         let mut chars = text.chars();
         let Some(first) = chars.next() else {
             return;
@@ -14809,19 +14905,26 @@ impl App {
             // The retail labels are letter-spaced Eurostile: reproduce the
             // measured ink width by distributing the difference as tracking.
             let tracking = ((target - natural) / gaps).clamp(-px * 0.04, px * 0.35);
-            let shadow = if std::env::var_os("GC_NO_LABEL_SHADOW").is_some() {
-                None
-            } else {
-                Some(Rgb::new(0, 0, 0))
-            };
-            match align {
+            // The retail glue labels carry the same hard drop shadow as the
+            // build footer: an opaque black copy one UI pixel down-right
+            // (measured 3 px at 1440p on reference 130637 for "Options",
+            // "Single Player" and "Show Credits").  The font's built-in
+            // 1 px / alpha-200 shadow was nearly invisible at 3x.
+            let shadow = std::env::var_os("GC_NO_LABEL_SHADOW")
+                .is_none()
+                .then(|| label_drop_shadow(scale));
+            let mut pass = |fb: &mut Framebuffer, x: i32, y: i32, c: Rgb| match align {
                 LabelAlign::Left => {
-                    font.draw_top(fb, x, y, text, px, tracking, color, shadow);
+                    font.draw_top(fb, x, y, text, px, tracking, c, None);
                 }
                 LabelAlign::Center => {
-                    font.draw_centered(fb, x, y, text, px, tracking, color, shadow);
+                    font.draw_centered(fb, x, y, text, px, tracking, c, None);
                 }
+            };
+            if let Some((off, shade)) = shadow {
+                pass(fb, x + off, y + off, shade);
             }
+            pass(fb, x, y, color);
         } else {
             let big = (scale.round() as i32).clamp(1, 3);
             let w = text.chars().count() as i32 * 8 * big;
@@ -14915,9 +15018,9 @@ impl App {
     /// sub-screen shift: on 130933 the frame's left arm is at x 2170..2250
     /// of the content box, 142 px left of the shifted art.
     fn draw_menu_backdrop_live(&mut self, fb: &mut Framebuffer) {
-        // Same static layer as the main menu (backdrop, detail art, frame,
-        // panel text), composed once per size.
-        self.copy_menu_static(fb);
+        // Same static layer as the main menu (backdrop, detail art, frame),
+        // composed once per size, with an empty panel.
+        self.copy_menu_static(fb, false);
         self.draw_menu_frame_text(fb);
         self.draw_menu_clips(fb);
         // The live menu labels in their idle faces (nothing hovered); the
@@ -15036,17 +15139,8 @@ impl App {
         let width = font.measure(BUILD_FOOTER, px, 0.0);
         let x = ox + (BUILD_FOOTER_RIGHT * scale).round() as i32 - width;
         let top = oy + (BUILD_FOOTER_TOP * scale).round() as i32;
-        let off = scale.round().max(1.0) as i32;
-        font.draw_top(
-            fb,
-            x + off,
-            top + off,
-            BUILD_FOOTER,
-            px,
-            0.0,
-            Rgb::new(0, 0, 0),
-            None,
-        );
+        let (off, shade) = label_drop_shadow(scale);
+        font.draw_top(fb, x + off, top + off, BUILD_FOOTER, px, 0.0, shade, None);
         font.draw_top(
             fb,
             x,
@@ -15061,9 +15155,9 @@ impl App {
 
     /// Title-frame surfaces plus the profile name, as every retail front-end
     /// screen shows them behind its panel.
+    /// The panel stays empty behind sub-screens (see `copy_menu_static`).
     fn draw_menu_frame(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
         self.draw_menu_frame_art(fb, dx, dy);
-        self.draw_menu_panel_text(fb, dx, dy);
         self.draw_menu_frame_text(fb);
     }
 
@@ -20090,5 +20184,121 @@ mod hud_font_tests {
                 "{text}: {w:.1} px vs retail {retail}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod main_menu_hover_tests {
+    use super::{
+        MENU_CLIP_SOURCE_FPS, MenuClip, Rgb, SINGLE_ON_CYCLE_FRAMES, SINGLE_ON_GROW_FRAME,
+        hover_clip_window, label_drop_shadow, main_label_hover_colors, menu_clip_timeline,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn single_on_hover_starts_at_the_small_grid_and_loops_one_cycle() {
+        let (start, frames) = hover_clip_window("singleon").expect("SingleOn window");
+        assert_eq!(
+            (start * MENU_CLIP_SOURCE_FPS).round() as usize,
+            SINGLE_ON_GROW_FRAME
+        );
+        assert_eq!(frames, SINGLE_ON_CYCLE_FRAMES);
+        // The 151-frame clip holds the whole cycle after the grow-in frame,
+        // and the next cycle starts on the same grow-in frame (107).
+        let (aligned, rest, _) = menu_clip_timeline(151.0 / MENU_CLIP_SOURCE_FPS, start);
+        assert_eq!((aligned * MENU_CLIP_SOURCE_FPS).round() as usize, 31);
+        assert!(rest >= frames);
+        assert_eq!(SINGLE_ON_GROW_FRAME + SINGLE_ON_CYCLE_FRAMES, 107);
+        // The other mouse-over clips have no intro and keep the full loop.
+        assert_eq!(hover_clip_window("multion"), None);
+        assert_eq!(hover_clip_window("exiton"), None);
+    }
+
+    fn fake_clip(frozen: bool) -> MenuClip {
+        let info = galaxycraft::video::VideoInfo {
+            codec: "V_VP9".into(),
+            pixel_width: 4,
+            pixel_height: 4,
+            display_width: 4,
+            display_height: 4,
+            duration_ms: Some(10_000),
+            timecode_scale: 1_000_000,
+            has_audio: false,
+            video_tracks: 1,
+            audio_tracks: 0,
+            clusters: 1,
+            bytes: 0,
+        };
+        let mut clip = MenuClip {
+            path: "/nonexistent/singleon.webm".into(),
+            info,
+            rx: None,
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            buffer: Default::default(),
+            current: None,
+            decoded: 0,
+            started: std::time::Instant::now(),
+            fps: 10.5,
+            source_fps: 15.0,
+            chunk: 8,
+            width: 4,
+            frames: 76,
+            start: 31.0 / 15.0,
+            frozen,
+            last_pull: None,
+            has_alpha: false,
+            alpha_known: false,
+        };
+        clip.current = Some(Arc::new(galaxycraft::video::RgbaFrame {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        }));
+        clip.decoded = 40;
+        clip.last_pull = Some(std::time::Instant::now());
+        clip
+    }
+
+    #[test]
+    fn leaving_the_hover_rewinds_the_clip_instead_of_pausing_it() {
+        let mut clip = fake_clip(false);
+        clip.rewind();
+        assert!(
+            clip.current.is_none(),
+            "no stale full-size frame on re-hover"
+        );
+        assert_eq!(clip.decoded, 0, "the next hover plays from frame 0");
+        assert!(clip.last_pull.is_none());
+        // Pinned captures keep their frame.
+        let mut pinned = fake_clip(true);
+        pinned.rewind();
+        assert_eq!(pinned.decoded, 40);
+        assert!(pinned.current.is_some());
+    }
+
+    #[test]
+    fn hover_only_recolours_main_menu_labels() {
+        let (normal, bright, hover) = (
+            Rgb::new(102, 227, 53),
+            Rgb::new(208, 255, 131),
+            Rgb::new(196, 255, 124),
+        );
+        assert_eq!(
+            main_label_hover_colors(false, normal, bright, hover),
+            (normal, bright)
+        );
+        assert_eq!(
+            main_label_hover_colors(true, normal, bright, hover),
+            (hover, bright)
+        );
+    }
+
+    #[test]
+    fn labels_share_the_footer_drop_shadow() {
+        // One UI pixel down-right in opaque black: 3 px at 1440p (measured on
+        // reference 130637), 2 px at 960p, never less than 1 px.
+        assert_eq!(label_drop_shadow(3.0), (3, Rgb::new(0, 0, 0)));
+        assert_eq!(label_drop_shadow(2.0).0, 2);
+        assert_eq!(label_drop_shadow(0.4).0, 1);
     }
 }

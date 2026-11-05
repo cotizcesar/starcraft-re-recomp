@@ -5125,3 +5125,63 @@ and useful to future developers.
 scripts/test_vault_check.py` OK; `python3 scripts/vault_check.py` OK;
 `python3 scripts/progress.py --check` OK; no Rust code changed, so
 `cargo test` / clippy were not run.
+
+## 2026-11-05 (102) — Main menu: SingleOn grid restarts small, labels keep their layout, View Intro asks the game type, no whoosh from the main menu, footer drop shadow, empty panel behind modals
+
+The user reported six main-menu issues against the retail client (one
+attached capture, reference 131005).
+
+- **SingleOn hover clip (FACT, measured).**  `glue/mainmenu/singleon.webm`
+  (151 frames, 15 fps) repeats a 76-frame cycle: alpha coverage of the grid
+  band drops to 0 after frame 17 (and 93), and the grid grows back from 63 %
+  of its width at frame 31 to full width at frame 36 (107..112 in the
+  second cycle).  Frame 0 is mid-cycle with the grid already full size, so
+  a hover that started at frame 0 — or resumed a clock that kept running
+  hidden — showed the big grid.  `multion` / `exiton` have no such intro
+  (best self-similarity periods 120 / 140, no coverage drop).  Change: the
+  live SingleOn clip loops frames 31..106 (`hover_clip_window`), hidden
+  mouse-over clips are no longer pulled, and leaving the hover rewinds the
+  clip (`MenuClip::rewind`) so the next hover starts at the small grid.
+  This **falsifies the 2026-11-04 reading** of the recording ("the
+  mouse-over loop does not restart on hover", frame-40 marker 0.12 s after
+  the hover): INFERENCE now is that retail restarts the clip per hover;
+  falsifier: a retail recording in which a second hover shows the full
+  grid in its first frames.  Pinned captures (`--menu-at`) keep their phase.
+- **Single Player / Multiplayer hover.**  They switched to the extended
+  face on hover (measured on 130704 / 130712); the user sees them move.
+  They now get the footer treatment: same glyph runs, colour only
+  (`main_label_hover_colors`).  `scripts/menu_hover_text.py` covers them and
+  also requires an idle/hover ink IoU >= 0.94: the previous build fails
+  (Single Player 0.927, Multiplayer 0.844-0.894), this one passes 14/14
+  (lowest 0.949).  The gate's ink mask is now relative to the label's peak
+  green and green-dominant, because the hard shadow and the pale hover colour
+  broke the old fixed `g > 120, g > r + 40` threshold.
+- **View Intro.**  Now opens Select Game Type like Single Player
+  (`GameTypeOrigin::ViewIntro` → `GameTypeFollowup::PlayIntro`); Expansion
+  plays `smk/starxintr.webm`, Original `smk/starintr.webm`, then Main.
+  Walkthrough check `view_intro_check` (the previous build fails at step 1:
+  it played `smk/starintr.webm` straight away).
+- **No whoosh when leaving Main.**  `menu::screen_change_swish`: Main →
+  Select Game Type / Options / Collections / Credits / Intro plays only the
+  press (`ui_click`).  Hotkeys was not in the report and keeps `ui_swish`.
+  `menu-walkthrough.txt` steps 1, 19, 63, 73, 98, 142 went from
+  `ui_click+ui_swish` to `ui_click`.
+- **Label shadow (FACT, measured).**  On 130637 the darkest
+  ink-to-background offset of the "Options", "Single Player" and "Show
+  Credits" shadows is (3, 3) px at 1440p, the build footer's one UI pixel.
+  `draw_hd_text` now draws that opaque drop copy (`label_drop_shadow`, also
+  used by the footer) instead of the font's 1 px / alpha-200 shadow.
+- **Collections / modals.**  The "Welcome, Commander" introduction showed
+  through the Collections and Options plates; retail shows the panel empty
+  there (only the offline news spinner).  The main-menu static layer is now
+  cached with and without the panel text, and every modal and sub-screen
+  uses the empty one.  Visual gate: 131005 collections 4.38 → 4.25 mean,
+  3.90 → 3.70 % outliers; 51/51 PASS.  The spinner itself is not drawn (it
+  is the Battle.net news loader; this client has no Battle.net).
+
+**Verification.**  `cargo test` 35 result lines, 0 failed; `cargo clippy
+--all-targets -- -D warnings` clean; `cargo fmt --check` clean;
+`scripts/menu_hover_text.py` 14/14, `scripts/menu_walkthrough.py` PASS,
+`scripts/ui_visual_diff.py` 51/51, `scripts/glue_swish_check.py` PASS.
+Gate outputs refreshed: `menu-hover-text.txt`, `menu-walkthrough.txt`,
+`menu-walkthrough-run.txt`, `ui-visual-diff.txt`.

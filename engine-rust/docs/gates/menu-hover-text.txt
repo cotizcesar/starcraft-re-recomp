@@ -1,12 +1,16 @@
-2560x1440 Options       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
-2560x1440 Collections   glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
-2560x1440 Hotkeys       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
-2560x1440 Show Credits  glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
-2560x1440 View Intro    glyph runs  9/ 9  largest shift   0.5 px  colour change  94  PASS
-3440x1387 Options       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
-3440x1387 Collections   glyph runs 12/12  largest shift   0.0 px  colour change  94  PASS
-3440x1387 Hotkeys       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
-3440x1387 Show Credits  glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
-3440x1387 View Intro    glyph runs  9/ 9  largest shift   0.5 px  colour change  94  PASS
+2560x1440 Single Player  glyph runs 12/12  largest shift   0.0 px  ink IoU 0.962  colour change  94  PASS
+2560x1440 Multiplayer    glyph runs 11/11  largest shift   0.0 px  ink IoU 0.968  colour change  94  PASS
+2560x1440 Options        glyph runs  7/ 7  largest shift   0.5 px  ink IoU 0.975  colour change  94  PASS
+2560x1440 Collections    glyph runs 19/19  largest shift   1.0 px  ink IoU 0.950  colour change  94  PASS
+2560x1440 Hotkeys        glyph runs 16/16  largest shift   0.5 px  ink IoU 0.971  colour change  94  PASS
+2560x1440 Show Credits   glyph runs 15/15  largest shift   0.5 px  ink IoU 0.949  colour change  94  PASS
+2560x1440 View Intro     glyph runs 10/10  largest shift   0.5 px  ink IoU 0.977  colour change  94  PASS
+3440x1387 Single Player  glyph runs 12/12  largest shift   0.0 px  ink IoU 0.949  colour change  94  PASS
+3440x1387 Multiplayer    glyph runs 11/11  largest shift   0.5 px  ink IoU 0.963  colour change  94  PASS
+3440x1387 Options        glyph runs  7/ 7  largest shift   0.5 px  ink IoU 0.970  colour change  94  PASS
+3440x1387 Collections    glyph runs 20/20  largest shift   0.5 px  ink IoU 0.960  colour change  94  PASS
+3440x1387 Hotkeys        glyph runs 12/12  largest shift   0.5 px  ink IoU 0.974  colour change  94  PASS
+3440x1387 Show Credits   glyph runs 14/14  largest shift   0.5 px  ink IoU 0.956  colour change  94  PASS
+3440x1387 View Intro     glyph runs 11/11  largest shift   0.5 px  ink IoU 0.964  colour change  94  PASS
 
-hover text gate: 10/10 PASS
+hover text gate: 14/14 PASS

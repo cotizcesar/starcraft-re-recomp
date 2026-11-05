@@ -59,24 +59,61 @@ pub enum MenuScreen {
     },
 }
 
+/// Main-menu entry that opened the `Select Game Type` dialog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GameTypeOrigin {
+    #[default]
+    SinglePlayer,
+    Multiplayer,
+    /// `View Intro` asks Original / Expansion first, like Single Player
+    /// (user report on the retail client, 2026-11-05), then plays
+    /// `smk/starintr.webm` or `smk/starxintr.webm`.
+    ViewIntro,
+}
+
 /// Where the `Select Game Type` dialog continues.  Retail opens the same
-/// dialog from Single Player and Multiplayer; only the follow-up screen
-/// differs.
+/// dialog from Single Player, Multiplayer and View Intro; only the
+/// follow-up differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameTypeFollowup {
     Registry,
     /// Multiplayer continues to `Select Connection` (retail capture
     /// 2026-11-04 21:11:48, 2.9 s).
     SelectConnection,
+    /// View Intro plays the chosen game's title movie, then returns to the
+    /// main menu.
+    PlayIntro,
 }
 
 /// `Select Game Type` follow-up for the entry that opened the dialog.
-pub const fn gametype_followup(multiplayer: bool) -> GameTypeFollowup {
-    if multiplayer {
-        GameTypeFollowup::SelectConnection
-    } else {
-        GameTypeFollowup::Registry
+pub const fn gametype_followup(origin: GameTypeOrigin) -> GameTypeFollowup {
+    match origin {
+        GameTypeOrigin::SinglePlayer => GameTypeFollowup::Registry,
+        GameTypeOrigin::Multiplayer => GameTypeFollowup::SelectConnection,
+        GameTypeOrigin::ViewIntro => GameTypeFollowup::PlayIntro,
     }
+}
+
+/// Whether a screen change plays the `swishin` transition cue.  Leaving the
+/// main menu through Single Player, Multiplayer, Options, Collections, Show
+/// Credits or View Intro only plays the press (`mousedown2.wav`): no whoosh
+/// (user report on the retail client, 2026-11-05).  Hotkeys was not in the
+/// report and keeps the cue.  Every other change keeps it (2026-11-04
+/// report: classic screen changes whoosh).
+pub fn screen_change_swish(from: &MenuScreen, to: &MenuScreen) -> bool {
+    if std::mem::discriminant(from) == std::mem::discriminant(to) {
+        return false;
+    }
+    let from_main_entry = matches!(from, MenuScreen::Main)
+        && matches!(
+            to,
+            MenuScreen::GameType
+                | MenuScreen::Options { .. }
+                | MenuScreen::Collections
+                | MenuScreen::Credits
+                | MenuScreen::Intro { .. }
+        );
+    !from_main_entry
 }
 
 /// The five retail `Options` tabs.
@@ -1597,15 +1634,46 @@ mod tests {
     #[test]
     fn multiplayer_opens_gametype_before_the_lobby() {
         assert_eq!(
-            gametype_followup(false),
+            gametype_followup(GameTypeOrigin::SinglePlayer),
             GameTypeFollowup::Registry,
             "Single Player -> Select Game Type -> registry"
         );
         assert_eq!(
-            gametype_followup(true),
+            gametype_followup(GameTypeOrigin::Multiplayer),
             GameTypeFollowup::SelectConnection,
             "Multiplayer -> Select Game Type -> Select Connection"
         );
+        assert_eq!(
+            gametype_followup(GameTypeOrigin::ViewIntro),
+            GameTypeFollowup::PlayIntro,
+            "View Intro -> Select Game Type -> the chosen title movie"
+        );
+    }
+
+    #[test]
+    fn leaving_the_main_menu_through_an_entry_does_not_whoosh() {
+        let main = MenuScreen::Main;
+        for to in [
+            MenuScreen::GameType,
+            MenuScreen::Options {
+                tab: OptionsTab::Speed,
+            },
+            MenuScreen::Collections,
+            MenuScreen::Credits,
+        ] {
+            assert!(!screen_change_swish(&main, &to), "{to:?}");
+        }
+        // Classic screen changes keep the cue, and no change has none.
+        assert!(screen_change_swish(
+            &MenuScreen::Registry,
+            &MenuScreen::Episode
+        ));
+        assert!(screen_change_swish(
+            &MenuScreen::GameType,
+            &MenuScreen::Registry
+        ));
+        assert!(screen_change_swish(&MenuScreen::Collections, &main));
+        assert!(!screen_change_swish(&main, &main));
     }
 
     #[test]
@@ -1732,9 +1800,15 @@ mod tests {
     #[test]
     fn menu_flow_round_trip_matches_the_capture_sequence() {
         // Main -> Single Player opens `Select Game Type` in single mode.
-        assert_eq!(gametype_followup(false), GameTypeFollowup::Registry);
+        assert_eq!(
+            gametype_followup(GameTypeOrigin::SinglePlayer),
+            GameTypeFollowup::Registry
+        );
         // Multiplayer goes to the connection/lobby instead.
-        assert_eq!(gametype_followup(true), GameTypeFollowup::SelectConnection);
+        assert_eq!(
+            gametype_followup(GameTypeOrigin::Multiplayer),
+            GameTypeFollowup::SelectConnection
+        );
         // Original starts at Episode I, Expansion at Episode IV.
         assert_eq!(episode_start(false), 0);
         assert_eq!(episode_start(true), 3);
