@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -296,6 +297,46 @@ def campaign_win_check(args) -> None:
           f"games/wins/losses 1/1/0 -> fresh process lists 14 entries ({saves})")
 
 
+# Campaign flow in the client (session log 89): Terran history up to
+# Desperate Alliance, play "2. Backwater Station", win, press Enter on the
+# score screen: the MenuEntry cinematic (PreTerran_1 card + Terran1
+# "Wasteland Patrol") queues with Desperate Alliance pending, and once the
+# films end that mission's briefing opens.
+FLOW_SCRIPT = ",".join(
+    TO_TERRAN_LIST
+    + ["fixture:progress:1=4", "move:1262:666", "click", "key:Down", "key:Down",
+       "key:Enter", "fixture:win", "result:Enter", "intro:end"]
+)
+
+
+def campaign_flow_check(args) -> None:
+    saves = Path(tempfile.mkdtemp(prefix="gc-flow-"))
+    outdir = Path(tempfile.mkdtemp(prefix="gc-flow-walk-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir),
+               GALAXYCRAFT_SAVES=str(saves))
+    proc = subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
+         "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", FLOW_SCRIPT],
+        env=env, text=True, capture_output=True,
+    )
+    if proc.returncode != 0:
+        fail(f"flow check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
+    state = {r["action"]: r["state"] for r in parse_tsv(outdir / "walk.tsv")}
+    want = {
+        "fixture:win": "flow=game map=T: Backwater Station result=Some(true) next=T: Desperate Alliance",
+        "result:Enter": "flow=intro clips=smk/preterran_1.webm+smk/terran1.webm pending=T: Desperate Alliance",
+    }
+    for step, expected in want.items():
+        if expected not in state.get(step, ""):
+            fail(f"flow step {step}: {state.get(step)!r} != {expected!r}")
+    if "flow=briefing map=T: Desperate Alliance" not in state.get("intro:end", ""):
+        fail(f"after the films: {state.get('intro:end')!r}")
+    shutil.rmtree(saves, ignore_errors=True)
+    shutil.rmtree(outdir, ignore_errors=True)
+    print("PASS campaign flow: Backwater Station won -> PreTerran_1 + Terran1 -> "
+          "Desperate Alliance briefing")
+
+
 # Registry IDs and settings across processes (shared temporary save dir):
 # 1. Registry (key R): New ID twice -> Player1, Player2 highlighted; Ok makes
 #    Player2 the profile in use; Options -> Game tab -> Game Timer on -> Ok.
@@ -548,6 +589,7 @@ def main() -> int:
         if not any(frag in st for st in mis):
             fail(f"mission list state after {what} not observed ({frag}); saw {sorted(set(mis))}")
     campaign_win_check(args)
+    campaign_flow_check(args)
     profile_persistence_check(args)
     print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
           "keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls")

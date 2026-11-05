@@ -74,8 +74,11 @@ pub const OWNR_RESCUE_PASSIVE: u8 = 3;
 /// Ticks between two rescue checks (retail order 160 handler resets its
 /// timer at `+0x54` to 15).
 pub const RESCUE_INTERVAL: u64 = 15;
-/// Centre distance at which a rescuable unit is rescued (INFERENCE).
-pub const RESCUE_RANGE_PX: i32 = 96;
+/// Centre distance at which a rescuable unit is rescued.  Retail Wasteland
+/// recording (2026-11-05, `Screencast_20261105_074011`): Raynor changes
+/// hands at 15.7 s with the nearest Marine ~55 px away, not at ~65-75 px
+/// half a second earlier; 2 tiles is the INFERENCE that fits.
+pub const RESCUE_RANGE_PX: i32 = 64;
 
 pub fn build_ticks(build_time: u16) -> i32 {
     ((build_time as u32 * TICKS_PER_SECOND).div_ceil(BUILD_TIME_UNITS)) as i32
@@ -879,6 +882,10 @@ impl World {
             ));
             if let Some(t) = world.triggers.as_mut() {
                 t.unit_properties = scenario.unit_properties.clone();
+                t.forces = scenario.forces;
+                for (p, present) in t.present.iter_mut().enumerate() {
+                    *present = scenario.owners[p] != 0;
+                }
                 t.mission_objectives = vec![None; world.players.len()];
                 t.preserved = vec![vec![false; t.triggers.len()]; world.players.len()];
             }
