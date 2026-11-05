@@ -50,6 +50,10 @@ where it is recorded; open items carry the experiment that settles them.
    - Transmission duration modifiers (`trigger::transmission_ms`).
    - The per-sprite lighting mix and lighting scale uniforms
      (`hd-lighting.md` #10).
+   - Classic glue screen transitions (panels building in on Registry,
+     Saved Games, Replays): direction, duration and easing.  Static RE
+     reached the screen classes but not the animation (session log 83);
+     needs a screen recording of the retail client.
 5. "Matrix A–F": the original definition is not in the repository; it was
    read as the six columns of the tool × capability matrix
    (`rea-capabilities.md`).  Confirm with the project owner.

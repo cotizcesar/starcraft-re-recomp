@@ -4219,3 +4219,39 @@ clippy 0; fmt clean; `ui_visual_diff.py` 51/51 (14 screens better, none
 worse); `menu_time_diff.py` 4/4; `menu_walkthrough.py` PASS (145 steps);
 `menu_hover_text.py` 10/10; `ultrawide_diff.py` 31/31; `progress.py
 --check` OK (96 %, one new open item).
+
+## 2026-11-04 (83) — Glue transition RE: dead end, recorded
+
+Goal: recover the classic-dialog build-in animation (Registry, Saved
+Games, Replays) statically before asking for a retail recording.  All on
+the 32-bit menu dump `research/work/sc_mem_menu_pe.exe` (flat mapping,
+offset = VA − 0x400000) and `build/ghidra-proj32/DumpProj`
+(`CreateFunctionAt.java` + `GhidraDecompileBatch.java`).
+
+- FACT: the only code references to the dialog names are literal copies
+  (`movups`/`movq` of the string): `gluLogin.ui.json` at 0x6ec859,
+  `gluLoad.ui.json` 0x898e80, `gluMain.ui.json` 0x89bb00,
+  `gluCreat.ui.json` 0x8a75ef.
+- FACT: `FUN_00898c30` (Load Saved Game) builds
+  `glues::LoadSavedGameScreen` (`FUN_00897ea0`, vftable 0xd60650; controls
+  1/2/3 = plates, 4/5/7 = buttons) and runs the generic modal loop
+  `FUN_009184a0` (virtuals +0x9c/+0xb4/+0xa4, dialog setup
+  `FUN_00975d10` with the shared handler `FUN_00880030`, which falls back
+  to the classic dialog proc `FUN_00963130`).  No timing or motion code.
+- FACT: the intermediate base `FUN_00922120` (shared with
+  `MainMenuScreen` and `SinglePlayerLoadReplayScreen`) has protected
+  overrides: `FUN_00923420` decompiles to bad data, `FUN_00922940` is an
+  `rdtsc`/`__aullrem` anti-tamper stub; +0xa4/+0xa8 only set/clear a flag
+  (`FUN_007e2770`/`FUN_005e3d10`).
+- Falsified leads: the `Transition`/`BeginTransition` strings are GPU
+  resource transitions (`pm_debug::CmdList`); `push 0xAC/0xAD` (imm8) are
+  −84/−83; the `push 172/173` (imm32) sites decompile to unit/order logic
+  (e.g. `FUN_005b6900`, speed clamps), not glue sounds.  No 47-class RTTI
+  list entry names a login/registry screen (`glues::*`).
+- `gluLogin` (0x6ec4e0) mis-delimits into 3 KB of overlapping code, i.e.
+  the same protected region.
+
+Conclusion: the animation is not recoverable statically from this dump
+with the current tooling; the open item in `PROGRESS.md` stays open and the
+evidence request goes to the user (screen recording of the retail client).
+No engine change in this entry.
