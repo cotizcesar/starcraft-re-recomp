@@ -873,6 +873,52 @@ pub const LOAD_DIALOG: GlueListDialog = GlueListDialog {
     delete: (44.0, 332.0, 164.0, 20.0),
 };
 
+/// Classic glue "swish": the dialog plates slide in when a list dialog
+/// opens and out when it closes.  Measured on a 60 fps recording of the
+/// retail client (2026-11-04, Single Player → Original → Registry → Ok):
+/// - the plates move in steps of 1/30 s;
+/// - in: each plate starts just outside the 16:9 box (the list plate from
+///   the left, Ok from the right, Cancel from the bottom) and the remaining
+///   distance is multiplied by 0.75 per step (1408 px at 1440p, then 1056,
+///   792, 594, 446, 336, 252, 188, ... measured), snapping into place once
+///   under 2 UI px; the text appears when every plate is in place;
+/// - out: the text disappears at once and each plate moves away by
+///   2^n − 1 UI px after n steps (−3, −9, −21, −45, −93, −189, −381 px at
+///   1440p; measured −2, −8, −20, −44, −92, −188, −380); the next screen
+///   appears one step after the farthest plate has left the box.
+pub const SWISH_STEPS_PER_SEC: f32 = 30.0;
+
+/// Remaining offset (UI px) of a plate sliding in from `distance`.
+pub fn swish_in_offset(distance: f32, step: u32) -> f32 {
+    let o = distance * 0.75f32.powi(step.min(64) as i32);
+    if o.abs() < 2.0 {
+        0.0
+    } else {
+        o
+    }
+}
+
+/// Steps until a plate sliding in from `distance` is in place.
+pub fn swish_in_steps(distance: f32) -> u32 {
+    (0..64)
+        .find(|&n| swish_in_offset(distance, n) == 0.0)
+        .unwrap_or(64)
+}
+
+/// Offset (UI px) of a plate sliding out after `step` steps.
+pub fn swish_out_offset(step: u32) -> f32 {
+    2f32.powi(step.min(30) as i32) - 1.0
+}
+
+/// Steps a swish-out lasts: the farthest plate (`distance` UI px to leave
+/// the box) is out, plus one step on the empty backdrop.
+pub fn swish_out_steps(distance: f32) -> u32 {
+    (0..31)
+        .find(|&n| swish_out_offset(n) >= distance)
+        .unwrap_or(30)
+        + 1
+}
+
 /// List rows of the glue list dialogs: first row top `list.y + 16/3` and a
 /// 19 UI px pitch (57 px at 1440p, measured on 130734 / 130848).
 pub const GLUE_LIST_ROW_PITCH: f32 = 19.0;
@@ -1323,6 +1369,30 @@ mod tests {
         let create = load("glucreat");
         assert_eq!(rect(&create, 12), PALNL_OK_BUTTON);
         assert_eq!(rect(&create, 13), PALNL_CANCEL_BUTTON);
+    }
+
+    #[test]
+    fn swish_follows_the_retail_recording() {
+        // In, list plate: 1408 px at 1440p = 469.33 UI px; recording values
+        // in screen px at steps 1..8.
+        let px = |o: f32| (o * 3.0).round();
+        let seen = [1056.0, 792.0, 594.0, 446.0, 336.0, 252.0, 188.0, 144.0];
+        for (n, &want) in seen.iter().enumerate() {
+            let got = px(swish_in_offset(1408.0 / 3.0, n as u32 + 1));
+            assert!((got - want).abs() <= 4.0, "step {}: {got} vs {want}", n + 1);
+        }
+        // Locks at step 19 (measured: last visible offset 8 px at step 18).
+        assert_eq!(swish_in_steps(1408.0 / 3.0), 19);
+        // Ok plate (932 px): 524 px after two steps.
+        assert!((px(swish_in_offset(932.0 / 3.0, 2)) - 524.0).abs() <= 2.0);
+        // Out: 2^n - 1 UI px; measured -2 -8 -20 -44 -92 -188 -380 px.
+        let out = [2.0, 8.0, 20.0, 44.0, 92.0, 188.0, 380.0];
+        for (n, &want) in out.iter().enumerate() {
+            let got = px(swish_out_offset(n as u32 + 1));
+            assert!((got - want).abs() <= 1.0, "out step {}: {got}", n + 1);
+        }
+        // The next screen 10 steps (0.333 s) after the click.
+        assert_eq!(swish_out_steps(1408.0 / 3.0), 10);
     }
 
     #[test]

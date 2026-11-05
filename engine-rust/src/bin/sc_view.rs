@@ -802,6 +802,36 @@ fn send_or_stop(
     }
 }
 
+/// A running classic-dialog swish (`menu::SWISH_STEPS_PER_SEC`).
+#[derive(Clone)]
+enum GlueSwish {
+    /// The current screen's plates sliding in.
+    In { started: Instant },
+    /// The plates of `from` sliding out before the current screen shows.
+    Out { from: MenuScreen, started: Instant },
+}
+
+/// Screens drawn by `draw_glue_list` (the plates that swish).
+fn is_glue_list(screen: &MenuScreen) -> bool {
+    matches!(
+        screen,
+        MenuScreen::Registry | MenuScreen::SavedGames | MenuScreen::Replays
+    )
+}
+
+/// Swish distances in UI px from the measured layout: the list plate's
+/// right edge to the 16:9 box's left edge, the Ok plate's left edge to the
+/// box's right edge, the Cancel plate's top to the box's bottom (1408, 932
+/// and 372 px at 1440p, matching the recording's first steps).
+const SWISH_LIST_UI: f32 = 1408.0 / 3.0;
+const SWISH_OK_UI: f32 = 933.0 / 3.0;
+const SWISH_CANCEL_UI: f32 = 372.0 / 3.0;
+
+/// Steps elapsed since `started`.
+fn swish_step(started: Instant) -> u32 {
+    (started.elapsed().as_secs_f32() * galaxycraft::menu::SWISH_STEPS_PER_SEC) as u32
+}
+
 /// Draw order of the six main-menu clips as `(button, mouse-over)`.  The
 /// hover clip goes under the idle clip for Single Player (capture 130704:
 /// the fleet occludes the `SingleOn` grid) and over it for Multiplayer
@@ -1182,6 +1212,12 @@ struct App {
     menu_layers: Option<MenuLayers>,
     /// Button whose mouse-over clip is running (its clock starts on hover).
     menu_hover_clip: Option<usize>,
+    /// Classic-dialog swish in progress and the screen drawn last frame.
+    glue_swish: Option<GlueSwish>,
+    swish_screen: Option<MenuScreen>,
+    /// Swish phase and step the last dialog frame was drawn with (timed
+    /// `shot:` captures report it).
+    swish_drawn: std::cell::Cell<Option<(bool, u32)>>,
     /// Streamed episode-select art (built lazily; one campaign set at a time).
     campaign_layers: Option<CampaignLayers>,
     /// Slot under the pointer on the episode screen (drives the `On` clip).
@@ -3973,6 +4009,17 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     app.set_progress(p);
                 }
             }
+        } else if let Some(name) = step.strip_prefix("shot:") {
+            // Save the frame as it is now (timed captures of animations).
+            app.swish_drawn.set(None);
+            app.draw_menu(fb);
+            let _ = fb.write_bmp(std::path::Path::new(&format!("{dir}/shot-{name}.bmp")));
+            let swish = match app.swish_drawn.get() {
+                Some((true, n)) => format!("in step {n}"),
+                Some((false, n)) => format!("out step {n}"),
+                None => "settled".to_string(),
+            };
+            eprintln!("shot {name}: {swish}");
         } else if let Some(ms) = step.strip_prefix("wait-draw:") {
             // Real-time menu playback: update and draw at ~60 Hz for `ms`
             // milliseconds, as the window loop does (clip clocks advance).
@@ -4742,6 +4789,9 @@ fn main() {
         lan: LanUi::default(),
         menu_layers,
         menu_hover_clip: None,
+        glue_swish: None,
+        swish_screen: None,
+        swish_drawn: std::cell::Cell::new(None),
         campaign_layers: None,
         episode_hover: None,
         menu_hover: None,
@@ -7656,6 +7706,10 @@ impl App {
     }
 
     fn handle_menu_input(&mut self, input: &MenuInput) {
+        // While a dialog's plates leave, the next screen is not shown yet.
+        if matches!(self.glue_swish, Some(GlueSwish::Out { .. })) {
+            return;
+        }
         // Sub-screen navigation for the retail menu flow.  Each screen uses
         // Up/Down + Enter/Esc; the map-list Tab/R shortcuts stay on Main.
         let screen = self.menu_screen.clone();
@@ -8909,6 +8963,78 @@ impl App {
         mask_pillarbox(fb, cx, cw);
     }
 
+    /// Start, advance and finish the classic-dialog swish from the screen
+    /// changes the input handlers make.  Pinned captures (`--menu-at`,
+    /// `--menu-phase`) draw the settled screen.
+    fn advance_glue_swish(&mut self) {
+        let current = self.menu_screen.clone();
+        let previous = self.swish_screen.replace(current.clone());
+        if self.menu_at.is_some() || !self.menu_phases.is_empty() {
+            self.glue_swish = None;
+            return;
+        }
+        let changed = previous
+            .as_ref()
+            .is_some_and(|p| std::mem::discriminant(p) != std::mem::discriminant(&current));
+        if changed {
+            let now = Instant::now();
+            self.glue_swish = match previous {
+                Some(from) if is_glue_list(&from) => Some(GlueSwish::Out { from, started: now }),
+                _ if is_glue_list(&current) => Some(GlueSwish::In { started: now }),
+                _ => None,
+            };
+        }
+        self.glue_swish = match self.glue_swish.take() {
+            Some(GlueSwish::Out { started, .. })
+                if swish_step(started) >= galaxycraft::menu::swish_out_steps(SWISH_LIST_UI) =>
+            {
+                is_glue_list(&current).then(|| GlueSwish::In {
+                    started: Instant::now(),
+                })
+            }
+            Some(GlueSwish::In { started })
+                if swish_step(started) >= galaxycraft::menu::swish_in_steps(SWISH_LIST_UI) =>
+            {
+                None
+            }
+            other => other,
+        };
+    }
+
+    /// Offset (UI px, away from the box) of a plate `distance` UI px from
+    /// leaving the 16:9 box, for the running swish.
+    fn swish_offset(&self, distance: f32) -> f32 {
+        use galaxycraft::menu::{swish_in_offset, swish_out_offset};
+        match &self.glue_swish {
+            Some(GlueSwish::In { started }) => {
+                let n = swish_step(*started);
+                self.swish_drawn.set(Some((true, n)));
+                swish_in_offset(distance, n)
+            }
+            Some(GlueSwish::Out { started, .. }) => {
+                let n = swish_step(*started);
+                self.swish_drawn.set(Some((false, n)));
+                swish_out_offset(n)
+            }
+            None => {
+                self.swish_drawn.set(None);
+                0.0
+            }
+        }
+    }
+
+    /// Whether the dialog text shows: not while plates move (in: until the
+    /// farthest plate is in place; out: never).
+    fn swish_text_shown(&self) -> bool {
+        match &self.glue_swish {
+            Some(GlueSwish::In { started }) => {
+                galaxycraft::menu::swish_in_offset(SWISH_LIST_UI, swish_step(*started)) == 0.0
+            }
+            Some(GlueSwish::Out { .. }) => false,
+            None => true,
+        }
+    }
+
     fn draw_menu_screen(&mut self, fb: &mut Framebuffer) {
         // Ultrawide pillarbox: the menu content is a 16:9 box, so the side
         // bars are not touched by any sub-screen.  Clear the whole frame
@@ -8923,6 +9049,16 @@ impl App {
         // so stale defaults (scale 2, ox 0) would misplace every panel and
         // entry at any other resolution.  Idempotent in the live path.
         self.update_view(fb);
+        self.advance_glue_swish();
+        if let Some(GlueSwish::Out { from, .. }) = self.glue_swish.clone() {
+            // The previous dialog's plates leave before the new screen shows.
+            match from {
+                MenuScreen::SavedGames => self.draw_saved(fb),
+                MenuScreen::Replays => self.draw_create(fb),
+                _ => self.draw_registry(fb),
+            }
+            return;
+        }
         // Retail menu flow from the 44 original screenshots: dispatch to the
         // active sub-screen.  The Main screen lists all eight retail entries;
         // Episode/Mission/Lobby cover Single/Multi; Options/Hotkeys/
@@ -12988,6 +13124,13 @@ impl App {
         let sx = |x: f32| cx + (x * k).round() as i32;
         let sy = |y: f32| (y * k).round() as i32;
         let sw = |w: f32| (w * k).round().max(1.0) as i32;
+        let (list_dx, ok_dx, cancel_dy) = (
+            -self.swish_offset(SWISH_LIST_UI),
+            self.swish_offset(SWISH_OK_UI),
+            self.swish_offset(SWISH_CANCEL_UI),
+        );
+        let show_text = self.swish_text_shown();
+        let px = |ui: f32| (ui * scale).round() as i32;
         if let Some(glue) = self.glue.as_ref() {
             if let Some(art) = plate(glue) {
                 let w = (art.width as f32 * scale / 4.0).round() as i32;
@@ -12995,18 +13138,33 @@ impl App {
                 let right = ox + ((dialog.plate.0 + dialog.plate.2) * scale).round() as i32;
                 art.draw_scaled(
                     fb,
-                    right - w,
+                    right - w + px(list_dx),
                     oy + (dialog.plate.1 * scale).round() as i32,
                     w,
                     h,
                 );
             }
             if let Some(art) = glue.palnl_ok.as_ref() {
-                art.draw_scaled(fb, sx(1627.0), sy(1006.0), sw(1062.0), sw(214.0));
+                art.draw_scaled(
+                    fb,
+                    sx(1627.0) + px(ok_dx),
+                    sy(1006.0),
+                    sw(1062.0),
+                    sw(214.0),
+                );
             }
             if let Some(art) = glue.palnl_cancel.as_ref() {
-                art.draw_scaled(fb, sx(1734.0), sy(1068.0), sw(940.0), sw(273.0));
+                art.draw_scaled(
+                    fb,
+                    sx(1734.0),
+                    sy(1068.0) + px(cancel_dy),
+                    sw(940.0),
+                    sw(273.0),
+                );
             }
+        }
+        if !show_text {
+            return;
         }
         const TITLE: Rgb = Rgb::new(0xc6, 0xda, 0xff);
         const SELECTED: Rgb = Rgb::new(0xda, 0xff, 0x8c);
@@ -13894,7 +14052,28 @@ impl App {
         // map preview on the right and the slot/game-type panel underneath.
         self.draw_moon_backdrop(fb);
         let replays = matches!(&self.menu_screen, MenuScreen::Replays)
-            || matches!(self.shot_name.as_str(), "replays");
+            || matches!(self.shot_name.as_str(), "replays")
+            || matches!(
+                &self.glue_swish,
+                Some(GlueSwish::Out {
+                    from: MenuScreen::Replays,
+                    ..
+                })
+            );
+        // Load Replay swishes like the classic list dialogs (retail
+        // recording 2026-11-04, 15.95-16.82 s): tree and lower plates from
+        // the left, the information plate and Ok from the right, Cancel from
+        // the bottom.  Offsets in 1440p px.
+        let (from_left, info_dx, ok_dx, cancel_dy) = if replays {
+            (
+                -self.swish_offset(1404.0 / 3.0) * 3.0,
+                self.swish_offset(1041.0 / 3.0) * 3.0,
+                self.swish_offset(SWISH_OK_UI) * 3.0,
+                self.swish_offset(SWISH_CANCEL_UI) * 3.0,
+            )
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         let (scale, uox, uoy) = self.ui_metrics(fb);
         // The shipped plates carry the metal trim, red hairlines and corner
@@ -13920,23 +14099,26 @@ impl App {
         };
         if let Some(glue) = &self.glue {
             if let Some(art) = &glue.create_map2 {
-                place(fb, art, -21.0, 0.0, 1425.0, 879.0);
+                place(fb, art, -21.0 + from_left, 0.0, 1425.0, 879.0);
             }
             if let Some(art) = &glue.create_info {
-                place(fb, art, 1519.0, 0.0, 1065.0, 999.0);
+                place(fb, art, 1519.0 + info_dx, 0.0, 1065.0, 999.0);
             }
             if let Some(art) = &glue.create_slots {
-                place(fb, art, -57.0, 855.0, 1461.0, 579.0);
+                place(fb, art, -57.0 + from_left, 855.0, 1461.0, 579.0);
             }
             // Create/Replays use the classic Ok/Cancel plates: SIFT ranks
             // `pok`/`pcancel` at residual 4.5/6.7 while `twobtnholder` covers
             // only the metal support (unique-pixel residual 67.6).
             if let Some(art) = &glue.palnl_ok {
-                place(fb, art, 1627.0, 1006.0, 1062.0, 214.0);
+                place(fb, art, 1627.0 + ok_dx, 1006.0, 1062.0, 214.0);
             }
             if let Some(art) = &glue.palnl_cancel {
-                place(fb, art, 1734.0, 1068.0, 940.0, 273.0);
+                place(fb, art, 1734.0, 1068.0 + cancel_dy, 940.0, 273.0);
             }
+        }
+        if replays && !self.swish_text_shown() {
+            return;
         }
         let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
         let rgb_green = Rgb::new(120, 235, 120);
