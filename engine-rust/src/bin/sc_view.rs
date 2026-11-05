@@ -9538,6 +9538,9 @@ impl App {
             match key {
                 Key::Enter | Key::Space | Key::S => self.start_briefed_mission(),
                 Key::R => self.enter_ready_room(),
+                Key::T if self.ready.as_ref().is_some_and(|r| r.skip_tutorial) => {
+                    self.skip_tutorial()
+                }
                 Key::Escape | Key::C => {
                     self.play("ui_click");
                     self.ready = None;
@@ -9580,6 +9583,27 @@ impl App {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// "Skip Tutorial": Boot Camp counts as done (campaign progress only,
+    /// no game in the statistics) and the next mission's briefing opens.
+    /// INFERENCE (no retail recording of the button).
+    fn skip_tutorial(&mut self) {
+        self.play("ui_click");
+        self.ready = None;
+        if let (Some(i), Some(mission)) = (self.active_index(), self.map_mission(self.map_index)) {
+            self.profile_store.profiles[i].progress.record_win(mission);
+            self.sync_profiles();
+        }
+        let next = self
+            .map_mission(self.map_index)
+            .and_then(galaxycraft::campaign_progress::after_victory)
+            .and_then(|a| a.next)
+            .and_then(|m| self.campaign_map_index(m));
+        match next {
+            Some(index) => self.start_campaign_mission(index),
+            None => self.open_menu(),
         }
     }
 
@@ -9704,10 +9728,17 @@ impl App {
             .iter()
             .find(|c| c.kind == "HOTBOX")
             .map(|c| c.abs);
+        let skip = self
+            .ready
+            .as_ref()
+            .is_some_and(|r| r.skip_tutorial)
+            .then(|| control(19))
+            .flatten();
         [
             (start_hot, Key::S),
             (control(20), Key::R),
             (control(14), Key::C),
+            (skip, Key::T),
         ]
         .into_iter()
         .find(|(r, _)| r.is_some_and(hit))
@@ -10551,10 +10582,14 @@ impl App {
                 )
             })
         };
+        // Boot Camp's briefing enables "Skip Tutorial" (MBRF action 9):
+        // `gluRdyT-3` on the TutBtn plate (drawn with the RECT art above).
+        let skip = room.skip_tutorial.then(|| centre(19)).flatten();
         for (label, at) in [
             ("Start", start),
             ("Replay", centre(20)),
             ("Cancel", centre(14)),
+            ("Skip Tutorial", skip),
         ] {
             let Some((ux, uy)) = at else {
                 continue;
