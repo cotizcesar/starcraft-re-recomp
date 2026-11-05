@@ -1232,6 +1232,8 @@ struct App {
     /// Trigger cues (Transmission / Play WAV / Display Text) already
     /// handled: an index into the trigger VM's `cues`.
     trigger_cues_seen: usize,
+    /// Rescues (`World::rescues`) already announced.
+    rescues_seen: usize,
     /// Trigger text above the console and its clock.
     trigger_text: galaxycraft::transmission::TextLog,
     trigger_text_epoch: Instant,
@@ -5059,6 +5061,7 @@ fn main() {
         portrait_talk_started: false,
         trigger_portraits_seen: (0, 0),
         trigger_cues_seen: 0,
+        rescues_seen: 0,
         trigger_text: Default::default(),
         trigger_text_epoch: Instant::now(),
         portrait_epoch: Instant::now(),
@@ -5147,7 +5150,7 @@ fn main() {
     }
     app.ais = slots
         .iter()
-        .filter(|s| s.computer)
+        .filter(|s| s.computer && !is_rescuable(&app.world, s.slot))
         .map(|s| SimpleAi::new(s.slot as u8))
         .collect();
     app.center_on_base();
@@ -5808,6 +5811,20 @@ fn clear_menu_frame(fb: &mut Framebuffer) {
 /// menu that shows through on the retail panel).
 const COLLECTIONS_PLATE_ALPHA: u8 = 128;
 
+/// A "Rescue Passive" slot has no AI: its units wait to be rescued.
+fn is_rescuable(world: &World, slot: usize) -> bool {
+    world.players.get(slot).is_some_and(|p| p.rescuable)
+}
+
+/// Bank cue of the rescue sound for a race.
+fn rescue_cue(race: Race) -> &'static str {
+    match race {
+        Race::Zerg => "rescue_zerg",
+        Race::Protoss => "rescue_protoss",
+        _ => "rescue_terran",
+    }
+}
+
 /// Greedy word wrap: lines no wider than `max_w` as measured by `measure`
 /// (a single word wider than the line keeps its own line).
 fn wrap_words(text: &str, max_w: i32, mut measure: impl FnMut(&str) -> i32) -> Vec<String> {
@@ -6171,6 +6188,20 @@ impl App {
             }
         }
         done
+    }
+
+    /// Retail rescue sound (`sound/misc/<race>rescue.wav`, by the local
+    /// player's race) when the local player rescues units.
+    fn follow_rescues(&mut self) {
+        let rescues = &self.world.rescues;
+        let from = self.rescues_seen.min(rescues.len());
+        let mine = rescues[from..]
+            .iter()
+            .any(|&(_, owner)| owner as usize == self.local_player);
+        self.rescues_seen = rescues.len();
+        if mine {
+            self.play(rescue_cue(self.local_race()));
+        }
     }
 
     /// Unit whose portrait the HUD shows: the one talking for a trigger, else
@@ -6549,7 +6580,7 @@ impl App {
         let local = self.local_player;
         self.ais = slots
             .iter()
-            .filter(|s| s.computer && s.slot != local)
+            .filter(|s| s.computer && s.slot != local && !is_rescuable(&world, s.slot))
             .map(|s| SimpleAi::new(s.slot as u8))
             .collect();
         self.campaign_ais.clear();
@@ -6623,6 +6654,7 @@ impl App {
         self.world = world;
         self.trigger_portraits_seen = (0, 0);
         self.trigger_cues_seen = 0;
+        self.rescues_seen = 0;
         self.trigger_text.clear();
         self.replay = None;
         self.save_sel = 0;
@@ -6665,60 +6697,25 @@ impl App {
         self.load_map(index);
     }
 
-    /// Mission number inside its episode (`terran01` -> 1, `expprotoss03` -> 3).
-    fn campaign_order(tag: &CampaignTag) -> Option<usize> {
-        tag.mission
-            .chars()
-            .rev()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-            .parse()
-            .ok()
-    }
-
-    /// Start a campaign mission through its retail cinematic sequence.
-    ///
-    /// The executable's intro table pairs `Pre<Race>_<act>` with the first
-    /// mission of each act and `<Race><act>` with the last one (REA table at
-    /// 0x140ae7ae0).  Brood War episodes open with `starxintr.webm` and their
-    /// `x<Race>.webm` episode movie.
+    /// Start a campaign mission.  The cinematics between missions come from
+    /// the retail `MenuEntry` table (`campaign_progress::after_victory`);
+    /// the first mission of a Brood War campaign opens with
+    /// `starxintr.webm` (INFERENCE kept from the 2026-10-29 intro work).
     fn start_campaign_mission(&mut self, index: usize) {
-        let tag = self.maps.get(index).and_then(|m| m.campaign.clone());
-        let mut clips: Vec<String> = Vec::new();
-        if let Some(tag) = &tag {
-            if let Some(order) = Self::campaign_order(tag) {
-                let expansion = tag.episode.starts_with("exp");
-                if expansion && order == 1 {
-                    clips.push(galaxycraft::video::INTRO_EXPANSION.to_string());
-                    if let Some(intro) = galaxycraft::video::expansion_episode_intro(&tag.episode) {
-                        clips.push(intro.to_string());
-                    }
-                }
-                if let Some(pre) = galaxycraft::video::campaign_cinematic(&tag.episode, order, true)
-                {
-                    clips.push(pre.to_string());
-                }
-            }
-        }
-        if clips.is_empty() {
-            self.load_map(index);
+        let first_expansion = self.map_mission(index).is_some_and(|m| {
+            galaxycraft::campaign_progress::Campaign::of_mission(m).is_some_and(|c| {
+                c.index() >= galaxycraft::campaign_progress::Campaign::ExpProtoss.index()
+                    && c.mission_range().0 == m
+            })
+        });
+        if first_expansion {
+            self.begin_intro(
+                vec![galaxycraft::video::INTRO_EXPANSION.to_string()],
+                Some(index),
+            );
         } else {
-            self.begin_intro(clips, Some(index));
+            self.load_map(index);
         }
-    }
-
-    /// Movie played after the last mission of each act, if the episode has
-    /// one.  Returns the path while the score screen is up.
-    fn post_mission_cinematic(&self) -> Option<&'static str> {
-        let tag = self
-            .maps
-            .get(self.map_index)
-            .and_then(|m| m.campaign.as_ref())?;
-        let order = Self::campaign_order(tag)?;
-        galaxycraft::video::campaign_cinematic(&tag.episode, order, false)
     }
 
     /// Current recording (empty when nothing was issued yet).
@@ -6872,6 +6869,8 @@ impl App {
         self.world = world;
         self.trigger_portraits_seen = (0, 0);
         self.trigger_cues_seen = 0;
+        // A restored game does not replay the rescues it already had.
+        self.rescues_seen = self.world.rescues.len();
         self.trigger_text.clear();
         self.menu = false;
         self.briefing = false;
@@ -8005,9 +8004,11 @@ impl App {
             return;
         };
         self.map_index = idx;
-        match galaxycraft::campaign_progress::cinematic_clip(entry.cinematic) {
-            Some(clip) => self.begin_intro(vec![clip.to_string()], Some(idx)),
-            None => self.start_campaign_mission(idx),
+        let movies = galaxycraft::campaign_progress::cinematic_movies(entry.cinematic);
+        if movies.is_empty() {
+            self.start_campaign_mission(idx);
+        } else {
+            self.begin_intro(movies.iter().map(|m| m.to_string()).collect(), Some(idx));
         }
     }
 
@@ -9320,41 +9321,23 @@ impl App {
     fn handle_result(&mut self, window: &Window) {
         for key in window.get_keys_pressed(KeyRepeat::No) {
             match key {
-                Key::Enter | Key::Space if self.game_result == Some(true) => match self.next_map {
-                    Some(index) => {
-                        self.play("ui_swish");
-                        // Act movies: the current mission's `<Race><act>`
-                        // then the next act's `Pre<Race>_<act>` play before
-                        // the next mission loads.
-                        let mut clips: Vec<String> = Vec::new();
-                        if let Some(post) = self.post_mission_cinematic() {
-                            clips.push(post.to_string());
-                        }
-                        if let Some(tag) = self.maps.get(index).and_then(|m| m.campaign.as_ref()) {
-                            if let Some(order) = Self::campaign_order(tag) {
-                                if let Some(pre) = galaxycraft::video::campaign_cinematic(
-                                    &tag.episode,
-                                    order,
-                                    true,
-                                ) {
-                                    clips.push(pre.to_string());
-                                }
-                            }
-                        }
-                        if clips.is_empty() {
-                            self.start_campaign_mission(index);
-                        } else {
-                            self.begin_intro(clips, Some(index));
-                        }
+                Key::Enter | Key::Space if self.game_result == Some(true) => {
+                    self.play("ui_swish");
+                    // Retail progression: the cinematic entry before the
+                    // next mission (or the campaign's closing one) plays
+                    // first, then the next mission's briefing.
+                    let movies: Vec<String> = self
+                        .map_mission(self.map_index)
+                        .and_then(galaxycraft::campaign_progress::after_victory)
+                        .map(|a| a.movies.iter().map(|m| m.to_string()).collect())
+                        .unwrap_or_default();
+                    match (self.next_map, movies.is_empty()) {
+                        (Some(index), true) => self.start_campaign_mission(index),
+                        (Some(index), false) => self.begin_intro(movies, Some(index)),
+                        (None, false) => self.begin_intro(movies, None),
+                        (None, true) => self.open_menu(),
                     }
-                    None => {
-                        if let Some(post) = self.post_mission_cinematic() {
-                            self.begin_intro(vec![post.to_string()], None);
-                        } else {
-                            self.open_menu();
-                        }
-                    }
-                },
+                }
                 Key::Enter | Key::Space | Key::Escape | Key::M => self.open_menu(),
                 Key::R => self.restart(),
                 Key::Q => self.quit = true,
@@ -9364,9 +9347,9 @@ impl App {
     }
 
     /// Resolve the next mission.  Distribution missions (Enslavers) carry a
-    /// `Next Scenario` trigger string; retail campaign missions instead
-    /// advance through the episode list, because the campaign progression is
-    /// stored in the campaign definition rather than the CHK.
+    /// `Next Scenario` trigger string; retail campaign missions advance
+    /// through `arr/mapdata.tbl`, because the campaign progression is stored
+    /// in the campaign definition rather than the CHK.
     fn resolve_next_map(&self) -> Option<usize> {
         if let Some(index) = self.world.triggers.as_ref().and_then(|t| t.next_scenario) {
             let raw = self.scenario.strings.get(index as usize)?.trim();
@@ -9381,10 +9364,11 @@ impl App {
                 }
             }
         }
-        let current = self.maps.get(self.map_index)?.campaign.as_ref()?;
-        let next = self.map_index + 1;
-        let following = self.maps.get(next)?.campaign.as_ref()?;
-        (following.episode == current.episode).then_some(next)
+        // The mapdata order, not the storage order: Norad II is followed
+        // by The Trump Card, never by the unused `terran07`.
+        let mission = self.map_mission(self.map_index)?;
+        let next = galaxycraft::campaign_progress::after_victory(mission)?.next?;
+        self.campaign_map_index(next)
     }
 
     fn draw_menu(&mut self, fb: &mut Framebuffer) {
@@ -11069,6 +11053,7 @@ impl App {
         }
         self.follow_trigger_portraits();
         let _ = self.follow_trigger_cues();
+        self.follow_rescues();
         // Drop dead selections.
         self.selected
             .retain(|id| self.world.unit(*id).is_some_and(|u| u.alive));

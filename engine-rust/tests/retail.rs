@@ -78,7 +78,7 @@ fn casc_returns_the_documented_retail_files() {
     }
     assert_eq!(install.content_size("arr/units.dat"), Some(19_876));
 
-    // The ten effects the mixer uses are read from the user's CASC storage.
+    // The thirteen effects the mixer uses are read from the user's CASC storage.
     let sounds: &[(&str, &str)] = &[
         (
             "ui_click",
@@ -95,6 +95,18 @@ fn casc_returns_the_documented_retail_files() {
         (
             "ui_swish_out",
             "e5566d7bceb503af6686b3d5c146055307ccf3d4644a985d5e8aaa7c178a26ca",
+        ),
+        (
+            "rescue_terran",
+            "684820e266ea7bba0d0b1282c6fdc19256794e353e505c7e092459aedcef082b",
+        ),
+        (
+            "rescue_zerg",
+            "0010672e317cac148a3a3162642849b1eeb3ec020ac88982e8af6406e5f39b61",
+        ),
+        (
+            "rescue_protoss",
+            "ad352c0fc3986607ff87fb42264bf425ddecfe80eefed1cf89ec6965e693c106",
         ),
         (
             "transmission",
@@ -421,7 +433,7 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
     assert!(sprites.has(galaxycraft::ids::unit::ZEALOT));
     assert!(sprites.has(galaxycraft::ids::unit::ZERGLING));
     let sounds = SoundBank::load(&dir.join("sound"));
-    assert_eq!(sounds.len(), 10);
+    assert_eq!(sounds.len(), 13);
 
     // Retail console plates, command icons, wireframes and the UI layouts.
     let console = ConsoleArt::load(&dir, Race::Terran).expect("terran console");
@@ -516,7 +528,11 @@ fn retail_campaign_enumerates_every_shipped_mission() {
     assert_eq!(counts, vec![13, 11, 11, 9, 16, 8], "{counts:?}");
     let total: usize = counts.iter().sum();
     assert_eq!(total, 68);
-    assert_eq!(episodes[0].missions[0].name, "Terran Tutorial");
+    // Retail missions carry their `gluhist` title (`Tutorial: Boot Camp`,
+    // `9. New Gettysburg`: the CHK's first string on `terran11` is a
+    // trigger text).
+    assert_eq!(episodes[0].missions[0].name, "Boot Camp");
+    assert_eq!(episodes[0].missions[11].name, "New Gettysburg");
     assert_eq!(episodes[0].missions[1].name, "Wasteland");
     assert_eq!(episodes[0].missions[4].name, "The Jacobs Installation");
 

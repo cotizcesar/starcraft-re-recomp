@@ -4431,3 +4431,69 @@ clippy 0; fmt clean; `ui_visual_diff.py` 51/51; `menu_time_diff.py` 4/4;
 walkthrough PASS (146 steps); `menu_hover_text.py` 10/10;
 `ultrawide_diff.py` 31/31; `glue_swish_check.py` PASS; `progress.py
 --check` OK.
+
+## 2026-11-05 (87) — Episode I campaign flow against the retail tables
+
+Goal (user): campaign 1 (Terran, *Rebel Yell*) must work exactly like the
+retail game.  No retail recording of campaign play exists yet; the work
+below fixes what the shipped tables and maps prove, and a headless probe
+of all Episode I missions (5 min each, AI on, no player input) found the
+rest.
+
+- **Mission order (FACT, `arr/mapdata.tbl` in `MAPDATA`).**  Rebel Yell
+  plays `tutorial, terran01..06, terran08, terran09, terran11, terran12`.
+  `resolve_next_map` advanced by storage order (`map_index + 1`), so Norad
+  II led to the unused `terran07` "Biting the Bullet" and The Big Push to
+  `terran10` "Operation Silent Scream".  Now `campaign_progress::
+  after_victory` (mapdata + the `MenuEntry` table) is the only
+  progression.
+- **Titles (FACT).**  `terran11`'s first `STR` string is "Kerrigan has been
+  killed."; `SPRP` holds beta names ("The Antigan Revolt", "New Year's
+  Day").  The retail list (reference 131132) shows the `gluhist` labels,
+  so `mission_title` strips them ("Boot Camp", "New Gettysburg").
+- **Cinematics (FACT for the pairing, INFERENCE for playing both).**  The
+  `MenuEntry` table puts cinematic 6 (`Terran1`, Wasteland Patrol) before
+  mission 4, 7 before 7, 8 before 10, 9 after 11; `video::campaign_act`'s
+  three-mission acts put each film one mission late and `Pre*` before the
+  wrong missions.  Every `Pre<Race>_<n>` is the location card of
+  `<Race><n>` (PreTerran_1 "Perimeter Patrol ... Mar Sara", PreTerran_2
+  "Norad II", PreTerran_3 "Tarsonis", PreTerran_4 "Coronation"; Zerg 2-4
+  Amerigo/Char/Aiur, Protoss 1-3 Fenix/Char/Aiur; none for Zerg1 and
+  Protoss4), so `cinematic_movies` plays card + film.  The act functions
+  are removed.  Cinematics 25-27 (`x<Race>`) close the Brood War
+  campaigns, so they no longer open them.
+- **Rescue Passive (FACT for the cause; INFERENCE for range/rescuer).**
+  Backwater Station and The Jacobs Installation defeat the player when
+  "All Players command at most 0 Raynor"; Raynor belongs to player 2,
+  `OWNR` 3.  Tick-by-tick trace: the player's own Marines/Firebats
+  targeted him (any other owner was an enemy) and killed him in 8.8 s.
+  New `Player::rescuable`, `World::hostile` (auto-acquire, spider mines,
+  bunker occupants) and `update_rescues`: every 15 ticks (the retail order
+  160 handler resets `+0x54` to `0xf`; its callees sit in the old
+  `0x7a…` mapping and could not be decompiled in the current dumps) a
+  unit of a rescuable player joins the first human player with a unit
+  within 96 px.  Computers do not rescue (in Wasteland the Zerg next to
+  Raynor took him first).  `sound/misc/{t,z,p}rescue.wav` (sha256
+  684820e2…, 0010672e…, ad352c0f…) play for the local player's rescues.
+  Falsifier: a retail recording of the Wasteland rescue distance.
+- **Trigger-only victory (INFERENCE, UMS semantics).**  `check_victory`
+  set `winner` when one player had units, which stops `step()` and the
+  map's own closing triggers.  Scenarios with placed forces and triggers
+  now set `World::trigger_victory`.
+- **Transmission blocks (INFERENCE, public CHK spec).**  The Trump Card's
+  three opening lines all fired at 1.2 s; a Transmission now holds its
+  trigger for `transmission_ms` (1.2 / 8.7 / 17.5 s).
+- **SimpleAi** no longer drives rescuable slots.
+
+Probe after the fixes: no early defeat in any mission; Wasteland Raynor
+waits to be found; Backwater opens with Raynor's "Glad to see you, boys"
+transmission; heroes of Jacobs, Revolution, Norad II, The Big Push are the
+player's.  Not covered by evidence: briefing pacing, transmission audio
+timing, the score screen sequence (needs a retail recording).
+
+**Verification.**  `cargo test` (with `SC_INSTALL`) 461 passed, 0 failed
+(new `tests/campaign_episode1.rs` 2/2);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51, `menu_time_diff.py` 4/4,
+walkthrough PASS (146 steps, campaign win), `ultrawide_diff.py` 31/31,
+gate outputs byte-identical; `progress.py --check` OK.
+

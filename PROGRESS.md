@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 24 | 24 | 100 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 25 | 26 | 96 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **75** | **77** | **97 %** |
+| **Overall (weighted)** | **100** | **76** | **79** | **96 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -81,6 +81,8 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Remastered main menu, Select Game Type and Registry, visual gate 43/43 — `engine-rust/docs/gates/ui-visual-diff.txt`, `scripts/ui_visual_diff.py`
 - [x] Options, Hotkeys (220 actions, 88 units), Collections and Credits screens — `engine-rust/docs/gates/ui-hotkeys-16.txt`, `research/docs/hotkeys-data.md`
 - [x] Campaign episode screen, mission modal and briefings — `engine-rust/docs/proof-sheets/REPORT.md`
+- [x] Episode I follows the retail campaign table: `mapdata` order (Norad II → The Trump Card; unused `terran07`/`terran10` never played), `gluhist` mission titles, `Pre<Race>_<n>` card + film between the missions the `MenuEntry` table names (Wasteland Patrol after Backwater Station), closing films at campaign end; Rescue Passive players (Raynor in Backwater Station / The Jacobs Installation is rescued, not shot), trigger-only victory in missions, Transmissions that hold their trigger — `campaign_progress::tests::episode_one_follows_the_retail_mission_table`, `tests/campaign_episode1.rs`, `sim::tests::rescuable_units_are_nobodys_target_and_join_the_first_comer`, session log 2026-11-05 (87)
+- [ ] Episode I compared 1:1 with a retail recording (briefing pacing, transmission timing, rescue range, victory → score → next briefing)
 - [x] Menu walkthrough gate: transitions, retail UI sounds, mouse on every screen — `engine-rust/docs/gates/menu-walkthrough.txt`
 - [x] In-game HUD per race, minimap, selection, command card and hotkeys — `tests/render.rs`
 - [x] Pause, victory, defeat and score screens — `sc_view --shot-screen pause|score`

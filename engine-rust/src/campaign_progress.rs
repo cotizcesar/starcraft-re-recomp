@@ -311,6 +311,102 @@ pub fn mission_key(mission: u16) -> Option<(&'static str, &'static str)> {
     MAPDATA.get((mission as usize).checked_sub(1)?).copied()
 }
 
+/// Mapdata mission of a campaign map (`terran`, `terran11` -> 10).  The
+/// shipped storage also carries maps the retail campaign never plays
+/// (`terran07` "Biting the Bullet", `terran10` "Operation Silent
+/// Scream"): they have no mapdata index.
+pub fn mission_of(dir: &str, key: &str) -> Option<u16> {
+    MAPDATA
+        .iter()
+        .position(|&(d, k)| d == dir && k == key)
+        .map(|i| i as u16 + 1)
+}
+
+impl Campaign {
+    /// Campaign whose playable range holds `mission`.
+    pub fn of_mission(mission: u16) -> Option<Campaign> {
+        Campaign::ALL.into_iter().find(|c| {
+            let (lo, hi) = c.mission_range();
+            (lo..=hi).contains(&mission)
+        })
+    }
+}
+
+/// Retail mission title: the `gluhist` label of its entry without the list
+/// number (`9. New Gettysburg` -> `New Gettysburg`, `Tutorial: Boot Camp`
+/// -> `Boot Camp`).  The CHK's first string is not reliable (`terran11`
+/// stores a trigger text there, `SPRP` keeps beta names).
+pub fn mission_title(mission: u16) -> Option<&'static str> {
+    let entry = Campaign::of_mission(mission)?
+        .entries()
+        .iter()
+        .find(|e| e.mission == mission && e.cinematic == 0 && !e.label.is_empty())?;
+    let label = entry.label;
+    let rest = label
+        .strip_prefix("Tutorial: ")
+        .or_else(|| {
+            let (num, rest) = label.split_once(". ")?;
+            num.chars()
+                .all(|c| c.is_ascii_alphanumeric())
+                .then_some(rest)
+        })
+        .unwrap_or(label);
+    Some(rest)
+}
+
+/// Movies of a cinematic entry: the location card `Pre<Race>_<n>` (when the
+/// install ships one) then the film `<Race><n>`.  Every card names the
+/// place of its film (`PreTerran_1` "Perimeter Patrol ... Mar Sara" before
+/// `Terran1` "Wasteland Patrol"; `Zerg1` and `Protoss4` have none).
+pub fn cinematic_movies(cinematic: u16) -> Vec<&'static str> {
+    let Some(film) = cinematic_clip(cinematic) else {
+        return Vec::new();
+    };
+    let card = film
+        .strip_prefix("smk/")
+        .and_then(|f| f.strip_suffix(".webm"))
+        .and_then(|f| {
+            let n = f.find(|c: char| c.is_ascii_digit())?;
+            let (race, act) = f.split_at(n);
+            let card = format!("smk/pre{race}_{act}.webm");
+            crate::video::CAMPAIGN_CINEMATICS
+                .iter()
+                .find(|c| **c == card)
+                .copied()
+        });
+    card.into_iter().chain(std::iter::once(film)).collect()
+}
+
+/// What follows a won campaign mission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Advance {
+    /// Movies to play first (card + film of the entry that precedes the
+    /// next mission, or the campaign's closing cinematic).
+    pub movies: Vec<&'static str>,
+    /// Next mapdata mission, `None` when the campaign is complete.
+    pub next: Option<u16>,
+}
+
+/// The retail progression after a victory in `mission`: the next mapdata
+/// index of the same campaign, preceded by the cinematic entry that names
+/// it (Backwater Station -> `Wasteland Patrol` -> Desperate Alliance).
+/// After the last mission the closing entry plays (`The Inauguration`,
+/// whose mission number is already the next campaign's first).
+pub fn after_victory(mission: u16) -> Option<Advance> {
+    let campaign = Campaign::of_mission(mission)?;
+    let next = mission + 1;
+    let movies = campaign
+        .entries()
+        .iter()
+        .find(|e| e.mission == next && e.cinematic != 0)
+        .map(|e| cinematic_movies(e.cinematic))
+        .unwrap_or_default();
+    Some(Advance {
+        movies,
+        next: (next <= campaign.mission_range().1).then_some(next),
+    })
+}
+
 /// Retail cinematic enum -> movie.  2..=23 are the shipped
 /// `Pre<Race>_<act>` / `<Race><act>` movies in `video::CAMPAIGN_CINEMATICS`
 /// order (6 = `terran1` "Wasteland Patrol"); 24 is the Brood War intro and
@@ -592,6 +688,88 @@ impl ProgressBook {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn episode_one_follows_the_retail_mission_table() {
+        use super::{after_victory, mission_of, mission_title, Advance};
+        // Rebel Yell plays tutorial, terran01..06, 08, 09, 11, 12.
+        let keys: Vec<&str> = (1..=11)
+            .map(|m| super::mission_key(m).expect("terran mission").1)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "tutorial", "terran01", "terran02", "terran03", "terran04", "terran05", "terran06",
+                "terran08", "terran09", "terran11", "terran12"
+            ]
+        );
+        assert_eq!(mission_of("terran", "terran07"), None, "unused map");
+        assert_eq!(mission_of("terran", "terran10"), None, "unused map");
+        assert_eq!(mission_of("terran", "terran11"), Some(10));
+        assert_eq!(mission_title(1), Some("Boot Camp"));
+        assert_eq!(mission_title(8), Some("The Trump Card"));
+        assert_eq!(mission_title(10), Some("New Gettysburg"));
+        // Wasteland Patrol (card + film) between Backwater Station and
+        // Desperate Alliance; Norad II after Revolution; Open Rebellion
+        // after The Big Push; The Inauguration closes the episode.
+        let film = |a: &'static str, b: &'static str| vec![a, b];
+        assert_eq!(
+            after_victory(2).unwrap(),
+            Advance {
+                movies: vec![],
+                next: Some(3)
+            }
+        );
+        assert_eq!(
+            after_victory(3).unwrap(),
+            Advance {
+                movies: film("smk/preterran_1.webm", "smk/terran1.webm"),
+                next: Some(4)
+            }
+        );
+        assert_eq!(after_victory(4).unwrap().movies, Vec::<&str>::new());
+        assert_eq!(
+            after_victory(6).unwrap().movies,
+            film("smk/preterran_2.webm", "smk/terran2.webm")
+        );
+        assert_eq!(
+            after_victory(7).unwrap().next,
+            Some(8),
+            "Norad II -> Trump Card"
+        );
+        assert_eq!(
+            after_victory(9).unwrap().movies,
+            film("smk/preterran_3.webm", "smk/terran3.webm")
+        );
+        assert_eq!(
+            after_victory(11).unwrap(),
+            Advance {
+                movies: film("smk/preterran_4.webm", "smk/terran4.webm"),
+                next: None
+            }
+        );
+    }
+
+    #[test]
+    fn cinematic_cards_pair_with_their_films() {
+        use super::cinematic_movies;
+        assert_eq!(cinematic_movies(13), ["smk/zerg1.webm"], "no PreZerg_1");
+        assert_eq!(
+            cinematic_movies(14),
+            ["smk/prezerg_2.webm", "smk/zerg2.webm"]
+        );
+        assert_eq!(
+            cinematic_movies(20),
+            ["smk/preprotoss_1.webm", "smk/protoss1.webm"]
+        );
+        assert_eq!(
+            cinematic_movies(23),
+            ["smk/protoss4.webm"],
+            "no PreProtoss_4"
+        );
+        assert_eq!(cinematic_movies(26), ["smk/xterran.webm"]);
+        assert!(cinematic_movies(0).is_empty());
+    }
+
     use super::*;
 
     fn labels(p: &Progress, c: Campaign) -> Vec<&'static str> {

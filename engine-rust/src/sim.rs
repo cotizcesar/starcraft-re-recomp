@@ -69,6 +69,13 @@ pub const MEDIC_HEAL_PER_TICK: i32 = 200;
 pub const MEDIC_HEAL_COST_PER_TICK: i32 = 100;
 /// Creep spreads/recedes one maturity step every 8 logical ticks.
 pub const CREEP_GROW_INTERVAL: u32 = 8;
+/// `OWNR` value of a "Rescue Passive" player.
+pub const OWNR_RESCUE_PASSIVE: u8 = 3;
+/// Ticks between two rescue checks (retail order 160 handler resets its
+/// timer at `+0x54` to 15).
+pub const RESCUE_INTERVAL: u64 = 15;
+/// Centre distance at which a rescuable unit is rescued (INFERENCE).
+pub const RESCUE_RANGE_PX: i32 = 96;
 
 pub fn build_ticks(build_time: u16) -> i32 {
     ((build_time as u32 * TICKS_PER_SECOND).div_ceil(BUILD_TIME_UNITS)) as i32
@@ -473,6 +480,9 @@ pub struct Player {
     pub upgrades: [u8; 61],
     pub defeated: bool,
     pub is_computer: bool,
+    /// `OWNR` 3 "Rescue Passive": the player's units are nobody's enemy
+    /// and change hands when another player's unit reaches them.
+    pub rescuable: bool,
     /// Resources ever gathered, used by the "accumulate" trigger condition.
     pub minerals_gathered: i32,
     pub gas_gathered: i32,
@@ -501,6 +511,7 @@ impl Player {
             upgrades: [0; 61],
             defeated: false,
             is_computer: false,
+            rescuable: false,
             minerals_gathered: 0,
             gas_gathered: 0,
             kills: 0,
@@ -558,6 +569,14 @@ pub struct World {
     pub next_id: u32,
     pub tick: u64,
     pub winner: Option<u8>,
+    /// Victory and defeat come only from the scenario's triggers (a mission
+    /// or use-map scenario with placed forces), never from the melee
+    /// "last player standing" rule, which would stop the world before the
+    /// map's closing transmissions and `Victory` action run.
+    pub trigger_victory: bool,
+    /// Rescues so far, in order: (unit id, new owner).  Append-only so the
+    /// client can follow it like the trigger cues (rescue sound).
+    pub rescues: Vec<(u32, u8)>,
     /// Deterministic LCG state for effects that use randomness.
     pub rng: u64,
     /// Scenario trigger VM, when the map has a `TRIG` section.
@@ -608,6 +627,8 @@ impl World {
             next_id: 1,
             tick: 0,
             winner: None,
+            rescues: Vec::new(),
+            trigger_victory: false,
             triggers: None,
             projectiles: Vec::new(),
             vision: None,
@@ -637,6 +658,10 @@ impl World {
         for (i, race) in races.iter().enumerate() {
             world.players[i].race = *race;
         }
+        for (i, p) in world.players.iter_mut().enumerate() {
+            p.rescuable = scenario.owners.get(i) == Some(&OWNR_RESCUE_PASSIVE);
+        }
+        world.trigger_victory = scenario.has_placed_force() && !scenario.triggers.is_empty();
         let mut serial_to_index: HashMap<u32, usize> = HashMap::new();
         for mu in &scenario.units {
             // Start-location markers are metadata, not units.
@@ -2404,6 +2429,9 @@ impl World {
         self.update_larva();
         self.update_vision();
         self.resolve_deaths();
+        if self.tick.is_multiple_of(RESCUE_INTERVAL) {
+            self.update_rescues();
+        }
         self.check_victory();
         if self.triggers.is_some() {
             let mut triggers = self.triggers.take();
@@ -2897,6 +2925,54 @@ impl World {
         }
     }
 
+    /// Whether units of `a` and `b` fight.  There are no alliances yet, so
+    /// any two owners are enemies except a rescuable player, whose units
+    /// nobody targets (they wait to be rescued).
+    pub fn hostile(&self, a: u8, b: u8) -> bool {
+        let rescuable = |p: u8| self.players.get(p as usize).is_some_and(|p| p.rescuable);
+        a != b && !rescuable(a) && !rescuable(b)
+    }
+
+    /// `Rescue Passive` (order 160): every [`RESCUE_INTERVAL`] ticks a unit
+    /// of a rescuable player joins the first human (not computer, not
+    /// rescuable) player with a unit within [`RESCUE_RANGE_PX`].  The
+    /// cadence is the retail handler's (`+0x54 = 0xf`, FACT); range and
+    /// rescuer rule are INFERENCE (the Wasteland enemy sits near Raynor and
+    /// must not take him; falsifier: a retail recording of that rescue).
+    fn update_rescues(&mut self) {
+        if !self.players.iter().any(|p| p.rescuable) {
+            return;
+        }
+        let range = (RESCUE_RANGE_PX * fp(1)) as i64;
+        for i in 0..self.units.len() {
+            let u = &self.units[i];
+            if !u.alive
+                || !self
+                    .players
+                    .get(u.owner as usize)
+                    .is_some_and(|p| p.rescuable)
+            {
+                continue;
+            }
+            let (x, y) = (u.x as i64, u.y as i64);
+            let rescuer = self.units.iter().find(|o| {
+                o.alive
+                    && (o.owner as usize) < 8
+                    && !self
+                        .players
+                        .get(o.owner as usize)
+                        .is_none_or(|p| p.rescuable || p.defeated || p.is_computer)
+                    && !is_resource_type(o.type_id)
+                    && o.type_id != uid::START_LOCATION
+                    && (o.x as i64 - x).pow(2) + (o.y as i64 - y).pow(2) <= range * range
+            });
+            if let Some(owner) = rescuer.map(|o| o.owner) {
+                self.units[i].owner = owner;
+                self.rescues.push((self.units[i].id, owner));
+            }
+        }
+    }
+
     fn acquire_target(&self, i: usize) -> Option<u32> {
         let u = &self.units[i];
         let ty = self.data.unit(u.type_id);
@@ -2914,10 +2990,7 @@ impl World {
         let max_fp = acq_range * fp(1);
         let mut best: Option<(i32, u32)> = None;
         for (other_idx, other) in self.units.iter().enumerate() {
-            if !other.alive
-                || other.owner == u.owner
-                || other.status.hallucination && other.owner == u.owner
-            {
+            if !other.alive || !self.hostile(u.owner, other.owner) {
                 continue;
             }
             if u.in_transport == Some(other.id) {
@@ -3745,6 +3818,9 @@ impl World {
     }
 
     fn check_victory(&mut self) {
+        if self.trigger_victory {
+            return;
+        }
         // A sandbox with a single owner (unit tests, spell labs) has no
         // opposing side and therefore no victory condition.
         let owners: std::collections::HashSet<u8> = self.units.iter().map(|u| u.owner).collect();
@@ -5287,7 +5363,7 @@ impl World {
             if self.tick as i64 >= u.mine_armed_at {
                 let enemy = self.units.iter().enumerate().any(|(ni, n)| {
                     n.alive
-                        && n.owner != u.owner
+                        && self.hostile(u.owner, n.owner)
                         && !self.is_air_unit(ni)
                         && (n.x - u.x).abs() <= fp(32)
                         && (n.y - u.y).abs() <= fp(32)
@@ -5342,7 +5418,7 @@ impl World {
                 }
                 let mut best: Option<(usize, u8, WeaponType, i32)> = None;
                 for j in 0..self.units.len() {
-                    if !self.units[j].alive || self.units[j].owner == owner {
+                    if !self.units[j].alive || !self.hostile(owner, self.units[j].owner) {
                         continue;
                     }
                     let Some((wid, w)) = self.weapon_for(o, j) else {
@@ -5692,6 +5768,55 @@ mod tests {
             Terrain::open(64, 64),
             2,
         )
+    }
+
+    #[test]
+    fn rescuable_units_are_nobodys_target_and_join_the_first_comer() {
+        let mut w = World::new(
+            Arc::new(GameData::bundled().unwrap()),
+            Terrain::open(64, 64),
+            3,
+        );
+        w.players[2].rescuable = true;
+        w.players[1].is_computer = true;
+        // Positions in pixels: Raynor 20 px from the Marine, the other
+        // rescuable unit ~2500 px away.
+        let marine = w.spawn(0, uid::MARINE, 100, 100).unwrap();
+        // units.dat 20: Jim Raynor (Marine), as placed by `terran04`.
+        let raynor = w.spawn(2, 20, 120, 100).unwrap();
+        let far = w.spawn(2, uid::MARINE, 1900, 1900).unwrap();
+        // A computer enemy next to a rescuable unit does not take it.
+        let held = w.spawn(2, uid::MARINE, 1000, 1000).unwrap();
+        w.spawn(1, uid::MARINE, 1020, 1000).unwrap();
+        let hp = w.units[raynor].hp;
+        assert!(!w.hostile(0, 2) && !w.hostile(2, 1) && w.hostile(0, 1));
+        // The retail handler polls every 15 ticks; until then Raynor waits
+        // next to the Marine without being shot.
+        for _ in 0..14 {
+            w.step();
+        }
+        assert_eq!(w.units[raynor].owner, 2);
+        assert_eq!(w.units[marine].target, None);
+        w.step();
+        assert_eq!(w.units[raynor].owner, 0, "rescued by the adjacent Marine");
+        assert_eq!(w.units[raynor].hp, hp, "never attacked");
+        assert_eq!(w.units[far].owner, 2, "nobody within reach");
+        assert_eq!(w.units[held].owner, 2, "computers never rescue");
+        assert_eq!(w.rescues, vec![(w.units[raynor].id, 0)]);
+    }
+
+    #[test]
+    fn mission_worlds_leave_victory_to_the_triggers() {
+        for trigger_victory in [false, true] {
+            let mut w = open_world();
+            w.trigger_victory = trigger_victory;
+            w.spawn(0, uid::MARINE, 10, 10).unwrap();
+            let enemy = w.spawn(1, uid::MARINE, 50, 50).unwrap();
+            w.units[enemy].alive = false;
+            w.step();
+            let want = if trigger_victory { None } else { Some(0) };
+            assert_eq!(w.winner, want, "trigger_victory = {trigger_victory}");
+        }
     }
 
     #[test]
