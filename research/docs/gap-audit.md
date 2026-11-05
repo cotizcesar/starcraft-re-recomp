@@ -1,5 +1,8 @@
 # Visual parity audit vs `docs/original_screenshots` (44 refs, 3440x1440)
 
+> Historical audit (2026-11-04); the gaps it lists are closed or tracked in
+> [`PROGRESS.md`](../../PROGRESS.md).
+
 > **Status note (2026-11-04).**  The tables below record the 2026-10-29
 > rounds and are kept as history; most "Missing" cells have since been
 > closed (Options, Hotkeys, Collections, Credits, Objectives, Tips, Game

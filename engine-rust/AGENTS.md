@@ -12,9 +12,9 @@ Rust crate: deterministic StarCraft 1.23 gameplay engine + playable `sc_view` cl
 - `python3 tools/oracle.py fixtures` — table differential oracle; `cargo run --quiet --bin sc_orders` — 189-row order table check.
 - Retail (needs install): `SC_INSTALL=/path/to/StarCraft cargo test --test retail`, `cargo run --release --bin sc_assets -- --install "$SC_INSTALL" verify`, `cargo run --release --bin sc_view -- --install "$SC_INSTALL"`.
 
-## Bins (autodiscovered; `Cargo.toml` lists only 3)
+## Bins (autodiscovered from `src/bin/`; listed in `README.md`)
 
-`sc_view` (client), `sc_match`, `sc_campaign`, `sc_assets`, `sc_sim`, `sc_replay`, `sc_lan`, `sc_shot`, `sc_audit`, `sc_orders`, `sc_handlers`, `sc_regions`, `sc_list`, `sc_animsheet`.
+`sc_view` (client), `sc_lan`, `sc_match`, `sc_campaign`, `sc_assets`, `sc_list`, `sc_dump`, `sc_replaytool`, `sc_replay`, `sc_shot`, `sc_sim`, `sc_audit`, `sc_orders`, `sc_handlers`, `sc_regions`, `sc_animsheet`.
 
 ## Retail / headless gotchas
 
@@ -32,7 +32,7 @@ Rust crate: deterministic StarCraft 1.23 gameplay engine + playable `sc_view` cl
 
 ## Rules for changes
 
-- One behavior = one implementation (`replay_to` reuse, not a copy); no Battle.net/online, no map editor (see `features.md` non-goals); each new file must serve a planned task.
+- One behavior = one implementation (`replay_to` reuse, not a copy); no Battle.net/online, no map editor (out of scope, see `../PROGRESS.md`); each new file must serve a planned task.
 - Every fix/feature ships a test that fails without it (unit in `src/` or integration in `tests/`); `expect` only in tests, no `unwrap` on user-data load paths (return `Option`/`Result`).
 - Done = `cargo test` green (incl. new tests) + clippy 0 + `cargo build --bin sc_view` (+ headless shot if UI touched).
 

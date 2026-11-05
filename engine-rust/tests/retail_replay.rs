@@ -14,15 +14,11 @@ fn replay_dirs() -> Vec<PathBuf> {
     if let Ok(dir) = std::env::var("SC_REPLAY_DIR") {
         out.push(PathBuf::from(dir));
     }
-    let base = std::env::var("SC_REPLAY_BASE").unwrap_or_else(|_| {
-        format!(
-            "{}/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays",
-            std::env::var("HOME").unwrap_or_default()
-        )
-    });
-    out.push(PathBuf::from(&base));
-    out.push(PathBuf::from(&base).join("AutoSave/20261027"));
-    out.push(PathBuf::from(&base).join("AutoSave/20261025"));
+    if let Some(base) = galaxycraft::retail_replay::default_replay_base() {
+        out.push(base.join("AutoSave/20261027"));
+        out.push(base.join("AutoSave/20261025"));
+        out.push(base);
+    }
     out
 }
 

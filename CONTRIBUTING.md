@@ -28,6 +28,9 @@ practical summary.
 
 ## Setup
 
+`rust-toolchain.toml` pins Rust 1.99.1 (rustup installs it on the first
+`cargo` call); you also need a C compiler and, for video, `ffmpeg`.
+
 ```bash
 git clone https://github.com/cotizcesar/starcraft-re-recomp.git
 cd starcraft-re-recomp/engine-rust

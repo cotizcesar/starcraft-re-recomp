@@ -3,7 +3,7 @@
 # b = AppImage built by scripts/package_appimage.sh from a clean staged tree (no fixtures), FFMPEG = BtbN n8.1 LGPL
 
 a: engine-rust/target/release/sc_view
-b: /tmp/gc-dist-ff/GalaxyCraft-0.1.0-x86_64.AppImage
+b: dist/GalaxyCraft-0.1.0-x86_64.AppImage (built with bundled ffmpeg)
 
 screen                       changed px
 menu                         0

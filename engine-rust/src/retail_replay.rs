@@ -330,18 +330,31 @@ fn c_strings(data: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// The retail client's replay folder: `SC_REPLAY_BASE`, else
+/// `<drive_c>/users/<user>/Documents/StarCraft/Maps/Replays` next to a Wine
+/// or Proton `SC_INSTALL` (`<drive_c>/Program Files (x86)/StarCraft`).
+pub fn default_replay_base() -> Option<std::path::PathBuf> {
+    if let Some(base) = std::env::var_os("SC_REPLAY_BASE") {
+        return Some(base.into());
+    }
+    let install = std::path::PathBuf::from(std::env::var_os("SC_INSTALL")?);
+    let users = install.parent()?.parent()?.join("users");
+    std::fs::read_dir(users)
+        .ok()?
+        .flatten()
+        .map(|u| u.path().join("Documents/StarCraft/Maps/Replays"))
+        .find(|p| p.is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn autosave() -> Option<Vec<u8>> {
-        let root = std::env::var("SC_REPLAY_DIR").unwrap_or_else(|_| {
-            format!(
-                "{}/Games/battlenet/drive_c/users/steamuser/Documents/StarCraft/Maps/Replays/AutoSave/20261027",
-                std::env::var("HOME").unwrap_or_default()
-            )
-        });
-        let path = std::path::Path::new(&root).join("135033,(8)The Hunters.rep");
+        let root = std::env::var_os("SC_REPLAY_DIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| default_replay_base().map(|b| b.join("AutoSave/20261027")))?;
+        let path = root.join("135033,(8)The Hunters.rep");
         std::fs::read(path).ok()
     }
 

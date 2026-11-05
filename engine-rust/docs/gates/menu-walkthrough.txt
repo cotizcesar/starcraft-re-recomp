@@ -2,13 +2,13 @@ step	action	screen	sounds	state
 0	move:700:700	Main	ui_move	
 1	click	GameType	ui_click+ui_swish	
 2	move:1103:618	GameType		
-3	key:L	Lan	ui_click+ui_swish	lan_sel=0 entries=0 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-4	fixture:lan-peer	Lan		lan_sel=0 entries=1 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-5	fixture:lan-peer	Lan		lan_sel=0 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-6	move:1000:763	Lan	ui_move	lan_sel=0 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-7	click	Lan	ui_click	lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-8	move:1000:763	Lan		lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=no games found (H to host)
-9	click	Lan		lan_sel=1 entries=2 lobby= net= map=/home/cotizcesar/.cache/galaxycraft/retail-864772b9/maps/campaign/(1)Enslavers01.chk status=join failed: Connection refused (os error 111)
+3	key:L	Lan	ui_click+ui_swish	lan_sel=0 entries=0 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+4	fixture:lan-peer	Lan		lan_sel=0 entries=1 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+5	fixture:lan-peer	Lan		lan_sel=0 entries=2 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+6	move:1000:763	Lan	ui_move	lan_sel=0 entries=2 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+7	click	Lan	ui_click	lan_sel=1 entries=2 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+8	move:1000:763	Lan		lan_sel=1 entries=2 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
+9	click	Lan		lan_sel=1 entries=2 lobby= net= map=(1)Enslavers01.chk status=join failed: Connection refused (os error 111)
 10	key:Escape	GameType	ui_click+ui_swish	
 11	move:1103:618	GameType		
 12	click	Lobby	ui_click+ui_swish	races=[Random, Random, Random, Random, Random, Random, Random, Random]

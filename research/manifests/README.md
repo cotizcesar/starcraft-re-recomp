@@ -5,7 +5,7 @@ install and every result is written to `research/`.
 
 | Field | Value |
 |---|---|
-| Path | `$SC_INSTALL` (`.../Games/battlenet/drive_c/Program Files (x86)/StarCraft`) |
+| Path | `$SC_INSTALL` (a Wine/Proton Battle.net install) |
 | Origin | Battle.net (Lutris, Wine prefix) |
 | Version | 1.23.10.13515 (`.build.info`, Build Key `864772b9ff94f6d372aa4ee90ee2f8ab`) |
 | Files | 724 |

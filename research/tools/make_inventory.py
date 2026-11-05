@@ -17,12 +17,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-GAME_ROOT = Path(
-    os.environ.get(
-        "GAME_ROOT",
-        str(Path.home() / "Games/battlenet/drive_c/Program Files (x86)/StarCraft"),
-    )
-).resolve()
+_root = os.environ.get("GAME_ROOT") or os.environ.get("SC_INSTALL")
+if not _root:
+    sys.exit("set SC_INSTALL (or GAME_ROOT) to the StarCraft installation")
+GAME_ROOT = Path(_root).resolve()
 OUT_DIR = Path(os.environ.get("RE_OUT", str(Path(__file__).resolve().parent.parent))).resolve()
 
 # Provisional classification by extension (refined in phase 1/2 with `file`)

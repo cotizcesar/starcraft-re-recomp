@@ -1,5 +1,8 @@
 # Evidence ledger
 
+> Historical record: one section per reconstruction pass, with the numbers
+> measured on that date.  Current status: [`PROGRESS.md`](../../PROGRESS.md).
+
 This document records what was recovered from the retail StarCraft
 1.23.10.13515 installation, how it was recovered, and what remains unknown.
 The raw REA evidence records used for the first table/damage pass are stored

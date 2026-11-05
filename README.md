@@ -34,7 +34,8 @@ player's own legal StarCraft installation at runtime and never modifies it
   retail game (Boot Camp, Wasteland, Backwater Station) and pinned by
   tests against the shipped maps (`tests/campaign_episode1.rs`).
 - **LAN multiplayer**: command-only lockstep over TCP or UDP, with discovery,
-  a lobby and resync. Two processes stay hash-identical over 2400 ticks.
+  a lobby for up to 8 players and resync. Two processes stay hash-identical
+  over 2400 ticks.
 - **Reverse-engineering notes** with FACT vs INFERENCE discipline: memory
   dumps, Ghidra projects, an architecture map and a dated log
   ([research/docs](research/docs/README.md)).
@@ -46,7 +47,7 @@ player's own legal StarCraft installation at runtime and never modifies it
 | [`engine-rust/`](engine-rust/README.md) | The engine and every binary (`sc_view`, `sc_lan`, `sc_assets`, …). Crate rules are in [`engine-rust/AGENTS.md`](engine-rust/AGENTS.md) |
 | [`scripts/`](scripts/README.md) | Harnesses: visual gates, headless renders, LAN acceptance, `progress.py` |
 | [`research/`](research/docs/README.md) | Reverse engineering: docs, install manifests, Ghidra/capture tools, history of the removed C engine |
-| [`PROGRESS.md`](PROGRESS.md) | What we have and what is missing, with percentages |
+| [`PROGRESS.md`](PROGRESS.md) | Every feature: done, missing and planned (step-by-step list) |
 | [`AGENTS.md`](AGENTS.md) | The project contract: principles, rules, Definition of Done |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to build, test and submit changes |
 | [`CHANGELOG.md`](CHANGELOG.md) | Notable changes |
@@ -58,7 +59,7 @@ zip, macOS app; see [`engine-rust/packaging/README.md`](engine-rust/packaging/RE
 It finds your StarCraft: Remastered install in the platform's default folder,
 or takes `--install DIR` / `SC_INSTALL`. No game data is included.
 
-**Developers:** Rust (stable, 2021 edition), a C compiler (for the vendored
+**Developers:** Rust 1.99.1 (pinned in `rust-toolchain.toml`, edition 2024), a C compiler (for the vendored
 PKWARE DCL decoder) and, to play, your own StarCraft: Remastered
 installation. Audio is ALSA on Linux, WinMM on Windows and CoreAudio on
 macOS, all loaded at run time; video needs `ffmpeg`.

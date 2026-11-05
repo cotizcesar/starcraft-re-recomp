@@ -12,6 +12,7 @@ PASS hotkeys: SCV cell + Move card + H rebind (collision flagged), restore dialo
 PASS campaign win: New Gettysburg won -> profiles.bin Terran next=11, games/wins/losses 1/1/0 -> fresh process lists 14 entries (temporary artifacts)
 PASS campaign flow: Backwater Station won -> victory dialog -> score (Units tab) -> PreTerran_1 + Terran1 -> Desperate Alliance establishing shot -> ready room -> Start -> game
      ready room at 1 s: episode=1 len=5 sel=2 top=0 profile=REA next=[4, 12, 22, 32, 40, 49] result=None flow=ready map=T: Desperate Alliance t=1000 portraits=[None, None, None, Some(106)] speaking=Some(3) line="Receiving incoming trans" objectives="- Survive for 30 minutes." finished=false
+PASS campaign skip tutorial: Boot Camp ready room -> T -> Wasteland briefing
 PASS profiles: 2 new IDs + active + Game Timer survive a restart; deleting the active ID survives another (temporary artifacts)
 PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls
 PASS lobby: race dropdowns set [Terran, Zerg, Random, Random, Random, Random, Random, Random]

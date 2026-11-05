@@ -13,7 +13,7 @@ Phase 0 (discovery) record. Read-only commands; raw detail in
 | CPU | AMD Ryzen 7 9800X3D (8 cores / 16 threads) |
 | RAM | 30 GiB (20 GiB available at check time) |
 | Swap | 15 GiB |
-| Disk `/var/home` | 929 G, 559 G free (40 % used) |
+| Disk (home volume) | 929 G, 559 G free (40 % used) |
 | GPU | NVIDIA GeForce RTX 5070 Ti 16 GB (driver 615.78.08) + AMD Radeon 610M iGPU |
 
 ## Tool runtime

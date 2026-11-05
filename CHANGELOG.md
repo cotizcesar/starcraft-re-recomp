@@ -4,6 +4,21 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Toolchain, dependencies and documentation
+
+### Changed
+- Rust 1.99.1 pinned (`rust-toolchain.toml`, `rust-version`), edition 2024,
+  latest crates (`libloading` 0.9, `cc` 1.11, …), latest GitHub Actions,
+  release ffmpeg 9.0, CI Python 3.14.
+- `PROGRESS.md` is now the complete feature list (done, missing, planned),
+  including gaps found while validating (alliances, cheat codes, game
+  types, chat, observer) and the planned controller support; the overall
+  figure drops to 75 % because the list now covers the whole game.
+- Documentation simplified and checked against the code: new
+  `engine-rust/README.md`, one-page `PROJECT-STATUS.md`; `features.md` and
+  `docs/COVERAGE.md` merged into `PROGRESS.md`; no personal paths in
+  tracked files (tests derive retail replay folders from `SC_INSTALL`).
+
 ## 2026-11-05 — Episode I (Rebel Yell) campaign flow
 
 ### Added

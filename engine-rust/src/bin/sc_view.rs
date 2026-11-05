@@ -4793,9 +4793,12 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                         app.status
                     ))
                     .unwrap_or_default(),
+                // File name only: walk logs are committed gate outputs and
+                // must not carry the machine's cache path.
                 app.maps
                     .get(app.lan.map_index)
-                    .map(|m| m.path.display().to_string())
+                    .and_then(|m| m.path.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default(),
                 app.lan.status
             ),
