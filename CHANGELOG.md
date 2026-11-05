@@ -22,6 +22,13 @@ status is in [PROGRESS.md](PROGRESS.md).
   and resources spent (also what trigger Score conditions read).
 
 ### Fixed
+- Score screen motion: the empty frame slides in from the left, then rows
+  and numbers appear and count up (again on every tab change), as on the
+  retail recording.
+- In-game trigger text in the retail face and place (was the 8x8 bitmap
+  font), map padding removed, blank lines kept, at most 6 lines, lifetime
+  by line count; Waits and Transmissions resume on the tick they end
+  instead of the next 30-tick trigger cycle.
 - Triggers owned by a force (`FORC`) run for its players and groups 18-21
   count the force: Boot Camp, Desperate Alliance, New Gettysburg and The
   Hammer Falls ran none of their scripts.  Triggers first run at game

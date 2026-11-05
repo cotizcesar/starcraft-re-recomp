@@ -12,29 +12,46 @@
 
 use std::path::{Path, PathBuf};
 
-/// How long a Display Text Message stays on screen.  Measured on the retail
-/// client (2026-11-04, 1 Wasteland, screenshots every ~0.95 s): the opening
-/// `TIP` stayed 9.5-11.2 s; this is the midpoint.  The earlier 7 s guess is
-/// falsified.  INFERENCE for other texts (one sample); falsifier: a longer
-/// or shorter retail Display Text.
-pub const TEXT_MS: u64 = 10_400;
-/// Shortest time a Transmission's text stays (it stays at least as long as
-/// the transmission itself).  Measured: the `TERRAN SCV` transmission
-/// (4 920 ms) stayed 6.7-8.5 s, consistent with this floor; INFERENCE (one
-/// sample).
-pub const TRANSMISSION_MIN_MS: u64 = 7_000;
+/// How long trigger text stays, by the lines it takes: a base plus a
+/// time per line.  Retail Wasteland recordings (2026-11-05): TIP (6 lines
+/// with its blank one) 10.1 s, the TERRAN SCV transmission (4 lines,
+/// 4920 ms) 7.2 s, "NEW MISSION OBJECTIVE" (2 lines) 4.0 s.  Falsified
+/// earlier model: one 10.4 s Display Text and a 7 s transmission floor
+/// (the NEW MISSION text left after 4.0 s).  Not explained: Raynor's
+/// 3-line, 3956 ms transmission during Pause Game left after 4.0 s (this
+/// gives 5.5 s).
+pub const TEXT_BASE_MS: u64 = 950;
+pub const TEXT_PER_LINE_MS: u64 = 1_525;
 
-/// On-screen lifetime of a trigger text: Display Text (`transmission_ms`
-/// 0) or a Transmission of `transmission_ms`.
-pub fn text_life_ms(transmission_ms: u32) -> u64 {
-    if transmission_ms == 0 {
-        TEXT_MS
-    } else {
-        (transmission_ms as u64).max(TRANSMISSION_MIN_MS)
+/// On-screen lifetime of a trigger text of `lines` lines: Display Text
+/// (`transmission_ms` 0) or a Transmission, which stays at least as long
+/// as it talks.
+pub fn text_life_ms(transmission_ms: u32, lines: usize) -> u64 {
+    let by_lines = TEXT_BASE_MS + TEXT_PER_LINE_MS * lines as u64;
+    by_lines.max(transmission_ms as u64)
+}
+/// Lines visible at once above the console (oldest scroll away first):
+/// the SCV transmission (4 lines) pushes the TIP's first 4 of 6 lines out
+/// (recording, 90 s).
+pub const MAX_LINES: usize = 6;
+
+/// Display lines of a trigger string: as [`clean_lines`], but a blank line
+/// between text lines keeps its slot (the TIP's gap line).
+pub fn text_lines(raw: &str) -> Vec<String> {
+    let lines: Vec<String> = raw
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .map(|line| line.chars().filter(|c| !c.is_control()).collect::<String>())
+        .map(|line| line.trim_end().to_string())
+        .collect();
+    let first = lines.iter().position(|l| !l.trim().is_empty());
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+    match (first, last) {
+        (Some(a), Some(b)) => lines[a..=b].to_vec(),
+        _ => Vec::new(),
     }
 }
-/// Lines visible at once above the console (oldest scroll away first).
-pub const MAX_LINES: usize = 8;
 
 /// Printable lines of a trigger string.
 pub fn clean_lines(raw: &str) -> Vec<String> {
@@ -86,7 +103,7 @@ pub struct TextLog {
 impl TextLog {
     /// Add every line of `raw` at time `now_ms`, visible for `life_ms`.
     pub fn push(&mut self, raw: &str, now_ms: u64, life_ms: u64) {
-        for line in clean_lines(raw) {
+        for line in text_lines(raw) {
             self.lines.push((line, now_ms + life_ms));
         }
         let excess = self.lines.len().saturating_sub(MAX_LINES);
@@ -156,14 +173,32 @@ mod tests {
 
     #[test]
     fn text_lifetimes_follow_the_retail_measurement() {
-        // 1 Wasteland: TIP (Display Text) 9.5-11.2 s, the 4 920 ms SCV
-        // transmission 6.7-8.5 s.
-        assert!((9_500..=11_200).contains(&text_life_ms(0)));
-        assert!((6_700..=8_500).contains(&text_life_ms(4_920)));
+        // 1 Wasteland recordings: TIP (6 lines) 10.1 s, SCV transmission
+        // (4 lines, 4 920 ms) 7.2 s, NEW MISSION OBJECTIVE (2 lines) 4.0 s.
+        let near = |got: u64, want: u64| got.abs_diff(want) <= 250;
+        assert!(near(text_life_ms(0, 6), 10_100));
+        assert!(near(text_life_ms(4_920, 4), 7_200));
+        assert!(near(text_life_ms(0, 2), 4_000));
         assert_eq!(
-            text_life_ms(20_000),
+            text_life_ms(20_000, 3),
             20_000,
             "long transmissions keep their length"
+        );
+    }
+
+    #[test]
+    fn a_blank_line_keeps_its_slot() {
+        let tip = "TIP\r\n  You can select\r\n\r\nAlternatively\r\n";
+        assert_eq!(
+            text_lines(tip),
+            vec!["TIP", "  You can select", "", "Alternatively"]
+        );
+        let mut log = TextLog::default();
+        log.push(tip, 0, 1_000);
+        log.push("TERRAN SCV\r\na\r\nb\r\nc", 10, 1_000);
+        assert_eq!(
+            log.visible(20),
+            vec!["", "Alternatively", "TERRAN SCV", "a", "b", "c"]
         );
     }
 
@@ -175,7 +210,7 @@ mod tests {
         assert_eq!(log.visible(900), vec!["one", "two", "three"]);
         assert_eq!(log.visible(1_000), vec!["three"]);
         for i in 0..20 {
-            log.push(&format!("l{i}"), 2_000, TEXT_MS);
+            log.push(&format!("l{i}"), 2_000, 10_000);
         }
         let v = log.visible(2_001);
         assert_eq!(v.len(), MAX_LINES);

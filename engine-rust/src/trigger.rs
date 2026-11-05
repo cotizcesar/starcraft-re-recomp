@@ -328,7 +328,24 @@ impl TriggerSystem {
         // Triggers first run at game start (elapsed time 0: `terran04`
         // sets its objectives on "Elapsed Time at most 0"), then on the
         // 30-tick cadence.
-        if world.tick != 1 && !world.tick.is_multiple_of(TRIGGER_INTERVAL) {
+        // Conditions are evaluated on the 30-tick cadence, but a running
+        // Wait / Transmission resumes on the tick it ends (retail
+        // Wasteland: the 3956 ms "Howdy" line plus a 2000 ms Wait put
+        // "NEW MISSION OBJECTIVE" exactly 6.0 s after it).
+        let cycle = world.tick == 1 || world.tick.is_multiple_of(TRIGGER_INTERVAL);
+        if !cycle {
+            if self.state.fired.len() == world.players.len() {
+                for player in 0..world.players.len() {
+                    if world.tick < self.state.wait_until[player] {
+                        continue;
+                    }
+                    if let Some((ti, start)) = self.state.resume[player].take() {
+                        if let Some(trigger) = self.triggers.get(ti).cloned() {
+                            self.run_actions(world, player, ti, &trigger, start);
+                        }
+                    }
+                }
+            }
             return;
         }
         if self.state.fired.len() != world.players.len() {
@@ -1799,6 +1816,29 @@ mod tests {
         w.tick = 1;
         t.process(&mut w);
         assert_eq!(w.players[0].minerals, 5);
+    }
+
+    #[test]
+    fn a_wait_resumes_on_the_tick_it_ends() {
+        // Wait 2000 ms (48 ticks) then set minerals: retail resumes at
+        // the end of the wait, not at the next 30-tick trigger cycle.
+        let mut r = record(22, 4, 0);
+        r[320 + 12..320 + 16].copy_from_slice(&2000u32.to_le_bytes());
+        let a1 = add_action(&mut r, 1, 26);
+        r[a1 + 20..a1 + 24].copy_from_slice(&777u32.to_le_bytes());
+        r[a1 + 27] = 7;
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        for tick in 2..=48 {
+            w.tick = tick;
+            t.process(&mut w);
+            assert_ne!(w.players[0].minerals, 777, "still waiting at {tick}");
+        }
+        w.tick = 49;
+        t.process(&mut w);
+        assert_eq!(w.players[0].minerals, 777, "resumed at tick 1 + 48");
     }
 
     #[test]
