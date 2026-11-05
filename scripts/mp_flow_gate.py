@@ -69,7 +69,9 @@ FLOW = ",".join([
 # makes the game, puts a computer on the Away Team and waits; the joiner
 # finds it in the Games list, joins, picks Protoss and waits; the host
 # starts and both must run the same lockstep game (the host compares every
-# turn's state hash; a mismatch sets desync=true).
+# turn's state hash; a mismatch sets desync=true).  The joiner also picks
+# Green, which both games must draw it in, and must show the host's
+# "Starting in" countdown before the game.
 LAN_HOST = ",".join([
     "move:1140:700", "click", "move:1543:618", "click", "wait-draw:900",
     "move:1060:361", "click", "wait-draw:1300", "move:2311:1182", "click",
@@ -88,8 +90,11 @@ LAN_CLIENT = ",".join([
     "move:1060:303", "click", "wait-draw:300", "key:Enter",  # join row 0
     "wait-draw:2500",
     "move:1433:215", "click", "move:1433:328", "click",   # own race: Protoss
-    "wait-draw:9000", "wait:6000",
+    "move:1655:214", "click", "move:1655:645", "click",   # own colour: Green
+    # One log row per second, so the host's countdown shows in the log.
+    *["wait-draw:1000"] * 9, "wait:6000",
 ])
+GREEN = 11  # COLOR_CHOICES index
 
 # Headless step renders and the recording time (s) they reproduce.
 SHOTS = [
@@ -179,6 +184,16 @@ def lan_check(install: str, out: Path, lines: list[str]) -> None:
                      "teams=[0, 0, 0, 0, 1, 1, 1, 1]"):
             if need not in state:
                 fail(f"LAN {who}: '{need}' missing in: {state}")
+    joiner_rows = [r.split("\t")[4] for r in (client_dir / "walk.tsv").read_text().splitlines()[1:]
+                   if len(r.split("\t")) > 4]
+    if not any("countdown=true" in r and "in_game=false" in r for r in joiner_rows):
+        fail("the joiner never showed the host's countdown")
+    lines.append("PASS LAN joiner showed the host's countdown before the game")
+    for who, state in (("host", h), ("joiner", c)):
+        colors = state.split("colors=[")[1].split("]")[0].split(", ")
+        if int(colors[1]) != GREEN:
+            fail(f"LAN {who}: the joiner's slot is not Green in game: colors=[{', '.join(colors)}]")
+    lines.append("PASS LAN joiner's Green colour is in both games (players[1].color = 11)")
     ticks = [int(x.split("tick=")[1].split()[0]) for x in (h, c)]
     if min(ticks) < 48:
         fail(f"LAN game did not advance: ticks {ticks}")

@@ -258,11 +258,13 @@ fn saves_carry_the_lobby_setup_and_still_read_version_1() {
                 occupant: SetupOccupant::Human { peer: 0 },
                 race: Race::Protoss,
                 team: 0,
+                color: 2,
             },
             SetupSlot {
                 occupant: SetupOccupant::Computer,
                 race: Race::Zerg,
                 team: 1,
+                color: 2,
             },
         ],
     };
@@ -308,7 +310,7 @@ fn saves_carry_the_lobby_setup_and_still_read_version_1() {
     save.save(&path).unwrap();
     let mut bytes = std::fs::read(&path).unwrap();
     let n = bytes.len();
-    let race_at = n - 32 - 4 + 2; // second slot's race byte
+    let race_at = n - 32 - 5 + 2; // second slot's race byte (5-byte slots)
     bytes[race_at] = 9;
     let digest = Sha256::digest(&bytes[6..n - 32]);
     bytes[n - 32..].copy_from_slice(&digest);

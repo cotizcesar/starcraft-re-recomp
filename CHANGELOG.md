@@ -159,6 +159,10 @@ status is in [PROGRESS.md](PROGRESS.md).
 - Engine score bookkeeping (build, kill and razing scores; produced and
   constructed counts) as OpenBW credits them.
 - Gate `scripts/mp_flow_gate.py` (`engine-rust/docs/gates/mp-flow.txt`).
+- Lobby colours: the colour dropdown offers the free colours, and the
+  pick colours the player's units, buildings, minimap blips and score bars.
+- Joined players see the host's "Starting in: N seconds" countdown and the
+  launch swish (`LobbyCountdown`), and send colour picks (`LobbyColor`).
 
 ### Fixed
 - Melee triggers: Victory/Defeat apply to the player running the trigger
@@ -167,6 +171,9 @@ status is in [PROGRESS.md](PROGRESS.md).
   Victory Players are resolved in count conditions.
 - Kills are credited to the attacker (the attacker's index was stored as
   its unit id).
+- Mining takes 75 frames per mineral trip (37 in a refinery) and a field
+  serves one worker at a time, as in OpenBW; harvesting on arrival made
+  income ~2.5x retail.
 
 ## 2026-11-04 — Front-end fidelity and ultrawide
 

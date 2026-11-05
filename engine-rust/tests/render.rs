@@ -249,6 +249,7 @@ fn minimap_blips_are_outlined_and_prepainted_backgrounds_survive() {
         placement: (128, 96),
         building: true,
         resource: false,
+        color: galaxycraft::render::PLAYER_COLORS[0],
     };
     let draw = |mode| {
         let mut fb = Framebuffer::new(w as usize, h as usize);

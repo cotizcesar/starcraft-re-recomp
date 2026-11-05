@@ -67,6 +67,7 @@ fn setup(teams: &[u8]) -> GameSetup {
                 occupant: SetupOccupant::Computer,
                 race: Race::Terran,
                 team,
+                color: 2,
             })
             .collect(),
     }
@@ -236,11 +237,13 @@ fn lobby_computers_run_identically_on_every_peer_and_after_a_resync() {
                 occupant: SetupOccupant::Human { peer: 0 },
                 race: Race::Terran,
                 team: 0,
+                color: 14,
             },
             SetupSlot {
                 occupant: SetupOccupant::Computer,
                 race: Race::Zerg,
                 team: 1,
+                color: 2,
             },
         ],
     };
@@ -282,4 +285,74 @@ fn lobby_computers_run_identically_on_every_peer_and_after_a_resync() {
     let (mut c, mut lock_c) = build();
     apply_resync(&mut c, &mut lock_c, lock_a.turn, &lock_a.recording());
     assert_eq!(state_hash(&c), state_hash(&a), "resync reproduces the game");
+}
+
+#[test]
+fn lobby_colours_reach_the_game_and_its_drawing() {
+    use galaxycraft::multiplayer::{
+        COLOR_CHOICES, DEFAULT_COLORS, Lobby, Occupant, RaceChoice, color_rgb, color_score_group,
+        score_group,
+    };
+    use galaxycraft::render::{PLAYER_COLORS, player_rgb};
+
+    let mut l = Lobby::new_host("LinKa", "Boxer", 2, GameType::Melee, (1, 1));
+    l.slots[0].race = RaceChoice::Protoss;
+    l.set_occupant(1, Occupant::Computer);
+    // Slot 1 picks Red, slot 0's default: Red is no longer offered to slot 0
+    // and slot 0 (Random) falls to the first free colour.
+    let red = COLOR_CHOICES.iter().position(|c| *c == "Red").unwrap();
+    let green = COLOR_CHOICES.iter().position(|c| *c == "Green").unwrap();
+    assert_eq!(DEFAULT_COLORS[0], red);
+    assert!(l.free_colors(1).contains(&red));
+    l.slots[1].color = red;
+    assert!(
+        !l.free_colors(0).contains(&red),
+        "a taken colour is not offered"
+    );
+    assert!(l.free_colors(0).contains(&0), "Random is always offered");
+    let resolved = l.resolved_colors();
+    assert_eq!(resolved[1], red);
+    assert_ne!(resolved[0], red);
+    l.slots[0].color = green;
+    let setup = l.resolve(1);
+    assert_eq!(
+        setup
+            .slots
+            .iter()
+            .map(|s| s.color as usize)
+            .collect::<Vec<_>>(),
+        [green, red]
+    );
+    assert_eq!(GameSetup::decode(&setup.encode()), Some(setup.clone()));
+    let mut w = boxer(&setup.races(), &setup.occupied());
+    // Before the setup: classic slot colours.
+    assert_eq!(player_rgb(&w, 0), PLAYER_COLORS[0]);
+    setup.apply(&mut w);
+    assert_eq!(
+        player_rgb(&w, 0),
+        color_rgb(green),
+        "units drawn in the lobby colour"
+    );
+    assert_eq!(player_rgb(&w, 1), color_rgb(red));
+    let dots = w.minimap_units(0, false);
+    let enemy = dots.iter().find(|d| d.owner == 1 && !d.resource).unwrap();
+    assert_eq!(enemy.color, color_rgb(red), "minimap blips too");
+    // The eight default colours keep the classic look and their score bars.
+    for (slot, &c) in DEFAULT_COLORS.iter().enumerate() {
+        assert_eq!(color_rgb(c), PLAYER_COLORS[slot]);
+        assert_eq!(
+            color_score_group(c),
+            slot,
+            "score bar group of {}",
+            COLOR_CHOICES[c]
+        );
+    }
+    assert_eq!(color_score_group(green), 8);
+    // Extra colours fall to the nearest group (Lime -> a yellow-green one).
+    let lime = COLOR_CHOICES.iter().position(|c| *c == "Lime").unwrap();
+    assert!([7, 8, 9].contains(&score_group(color_rgb(lime))));
+    // A setup without a colour (0 = unresolved Random) is malformed.
+    let mut bad = setup.encode();
+    bad[6] = 0;
+    assert_eq!(GameSetup::decode(&bad), None);
 }

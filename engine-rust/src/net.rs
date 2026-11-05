@@ -83,6 +83,16 @@ pub enum Msg {
     LobbyRace {
         race: u8,
     },
+    /// Joined client -> host: the colour it picked
+    /// ([`crate::multiplayer::COLOR_CHOICES`] index, 0 = Random).
+    LobbyColor {
+        color: u8,
+    },
+    /// Host -> joined clients: Ok started the countdown (`on`) or Cancel
+    /// stopped it, so every lobby shows "Starting in: N seconds".
+    LobbyCountdown {
+        on: bool,
+    },
     /// Host reporting a hash disagreement at `turn`.
     Desync {
         turn: u32,
@@ -183,6 +193,14 @@ impl Msg {
             Msg::LobbyRace { race } => {
                 w_u8(&mut out, 12);
                 w_u8(&mut out, *race);
+            }
+            Msg::LobbyColor { color } => {
+                w_u8(&mut out, 13);
+                w_u8(&mut out, *color);
+            }
+            Msg::LobbyCountdown { on } => {
+                w_u8(&mut out, 14);
+                w_u8(&mut out, *on as u8);
             }
             Msg::Turn { turn, acts } => {
                 w_u8(&mut out, 3);
@@ -310,6 +328,20 @@ impl Msg {
                 }
             }
             12 => Msg::LobbyRace { race: c.u8()? },
+            13 => {
+                let color = c.u8()?;
+                if color as usize >= crate::multiplayer::COLOR_CHOICES.len() {
+                    return None;
+                }
+                Msg::LobbyColor { color }
+            }
+            14 => Msg::LobbyCountdown {
+                on: match c.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return None,
+                },
+            },
             3 => {
                 let turn = c.u32()?;
                 let n = c.u32()? as usize;
@@ -1835,11 +1867,13 @@ mod tests {
                             occupant: crate::multiplayer::SetupOccupant::Human { peer: 0 },
                             race: Race::Protoss,
                             team: 0,
+                            color: 2,
                         },
                         crate::multiplayer::SetupSlot {
                             occupant: crate::multiplayer::SetupOccupant::Human { peer: 1 },
                             race: Race::Zerg,
                             team: 1,
+                            color: 14,
                         },
                     ],
                 }),
@@ -1855,6 +1889,9 @@ mod tests {
                 ),
             },
             Msg::LobbyRace { race: 3 },
+            Msg::LobbyColor { color: 13 },
+            Msg::LobbyCountdown { on: true },
+            Msg::LobbyCountdown { on: false },
             Msg::Turn {
                 turn: 5,
                 acts: acts.clone(),
@@ -1884,6 +1921,15 @@ mod tests {
     fn bad_frames_are_rejected() {
         assert!(Msg::decode(&[]).is_none());
         assert!(Msg::decode(&[1, 0, 99]).is_none()); // unknown tag
+        let p = PROTOCOL.to_le_bytes();
+        assert!(
+            Msg::decode(&[p[0], p[1], 13, 23]).is_none(),
+            "colour out of range"
+        );
+        assert!(
+            Msg::decode(&[p[0], p[1], 14, 2]).is_none(),
+            "countdown flag not 0/1"
+        );
         let mut m = Msg::Chat {
             from: 0,
             text: "hi".into(),

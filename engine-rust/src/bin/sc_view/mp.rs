@@ -55,6 +55,7 @@ pub(super) enum Drop {
     Teams,
     Player(usize),
     Race(usize),
+    Color(usize),
     Observer(usize),
 }
 
@@ -1497,31 +1498,14 @@ impl App {
                         24.0,
                     );
                     let colour = mpl::COLOR_CHOICES[slot.color.min(mpl::COLOR_CHOICES.len() - 1)];
-                    // INFERENCE: colour picks are not applied in game yet
-                    // (players keep their slot colour); the control is shown
-                    // read-only.
-                    let cr = Self::mp_rect(fb, (1114.0, y, 202.0, 44.0));
-                    Self::mp_shade(fb, cr, 150);
-                    Self::mp_border(fb, cr, CEF_BORDER);
-                    self.mp_text(
+                    self.mp_dropdown(
                         fb,
+                        (1114.0, y, 202.0, 44.0),
                         colour,
-                        1125.0,
-                        y + 14.0,
-                        24.0,
-                        Face::Reg,
                         VALUE,
-                        Align::Left,
-                    );
-                    let (_, k) = Self::mp_k(fb);
-                    Self::mp_triangle(
-                        fb,
-                        cr.0 + cr.2 - (33.0 * k) as i32,
-                        cr.1 + cr.3 / 2 + 1,
-                        (28.0 * k) as i32,
-                        (15.0 * k) as i32,
-                        true,
-                        ARROW,
+                        editable && (me || is_host && slot.occupant == Occupant::Computer),
+                        Drop::Color(i),
+                        24.0,
                     );
                 }
                 y += 50.67;
@@ -1810,6 +1794,15 @@ impl App {
         if matches!(self.menu_screen, MenuScreen::MpLobby) {
             if self.mp.client.is_some() {
                 self.mp_poll_client();
+                // The joiner runs the host's countdown and launch swish,
+                // then stays black until the host's `Setup` arrives.
+                if let Some(t) = self.mp.countdown
+                    && countdown::finished(t.elapsed().as_secs_f32())
+                {
+                    self.mp.countdown = None;
+                    self.mp.launching = Some(Instant::now());
+                    self.mp.open = None;
+                }
                 return;
             }
             self.mp_poll_host();
@@ -1873,6 +1866,15 @@ impl App {
                         && r != RaceChoice::Unselected
                     {
                         lobby.slots[slot].race = r;
+                        changed = true;
+                    }
+                }
+                Msg::LobbyColor { color } => {
+                    if let Some(lobby) = self.mp.lobby.as_mut()
+                        && let Some(slot) = lobby.slot_of_peer(peer)
+                        && lobby.free_colors(slot).contains(&(color as usize))
+                    {
+                        lobby.slots[slot].color = color as usize;
                         changed = true;
                     }
                 }
@@ -1959,6 +1961,10 @@ impl App {
                     self.mp.lobby = Some(lobby);
                 }
                 Ok(Some(Msg::Chat { text, .. })) => self.mp.chat.push(text),
+                Ok(Some(Msg::LobbyCountdown { on })) => {
+                    self.mp.countdown = on.then(Instant::now);
+                    self.mp.open = None;
+                }
                 Ok(Some(Msg::Setup {
                     races, you, setup, ..
                 })) => {
@@ -2143,6 +2149,9 @@ impl App {
                     self.play("ui_click");
                     self.mp.countdown = Some(Instant::now());
                     self.mp.open = None;
+                    if let Some(q) = self.lan.queue.as_mut() {
+                        q.send_all(&Msg::LobbyCountdown { on: true });
+                    }
                 }
             }
             _ => {}
@@ -2164,7 +2173,14 @@ impl App {
                 }
             }
             MenuScreen::MpLobby => match self.mp.countdown.map(|t| t.elapsed().as_secs_f32()) {
-                Some(e) if countdown::cancel_enabled(e) => self.mp.countdown = None,
+                // A joiner cannot stop the host's countdown.
+                Some(_) if self.mp.client.is_some() => {}
+                Some(e) if countdown::cancel_enabled(e) => {
+                    self.mp.countdown = None;
+                    if let Some(q) = self.lan.queue.as_mut() {
+                        q.send_all(&Msg::LobbyCountdown { on: false });
+                    }
+                }
                 Some(_) => {}
                 None => self.mp_enter_games(),
             },
@@ -2288,6 +2304,16 @@ impl App {
                     .collect();
                 self.mp_open(which, slot_rect(i, 892.0, 202.0), items);
             }
+            Drop::Color(i) => {
+                let items = lobby
+                    .as_ref()
+                    .map(|l| l.free_colors(i))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|&c| mpl::COLOR_CHOICES[c].to_string())
+                    .collect();
+                self.mp_open(which, slot_rect(i, 1114.0, 202.0), items);
+            }
             Drop::Observer(i) => {
                 let x = if i % 2 == 0 { 470.0 } else { 974.0 };
                 let y = if i < 2 { 846.0 } else { 898.0 };
@@ -2333,6 +2359,20 @@ impl App {
                             race: mpl::race_choice_byte(*r),
                         });
                     }
+                }
+            }
+            Drop::Color(s) => {
+                let Some(l) = self.mp.lobby.as_mut() else {
+                    return;
+                };
+                let Some(&color) = l.free_colors(s).get(i) else {
+                    return;
+                };
+                if let Some(slot) = l.slots.get_mut(s) {
+                    slot.color = color;
+                }
+                if let Some(c) = self.mp.client.as_mut() {
+                    let _ = c.link.send(&Msg::LobbyColor { color: color as u8 });
                 }
             }
             Drop::Observer(s) => {
@@ -2640,7 +2680,15 @@ impl App {
                 let r = Self::mp_rect(fb, (448.0, band_y * 3.0 + 66.0, 84.0, 42.0));
                 img.draw_scaled(fb, r.0, r.1, r.2, r.3);
             }
-            let colour_index = line.player as usize % 12;
+            let colour_index = match self
+                .world
+                .players
+                .get(line.player as usize)
+                .and_then(|p| p.color)
+            {
+                Some(c) => mpl::color_score_group(c as usize),
+                None => line.player as usize % 12,
+            };
             for (c, (&value, &max)) in line.values.iter().zip(&maxes).enumerate() {
                 let x = 320.0 + (188.0 + 104.0 * c as f32) * 3.0;
                 let y = (80.0 + 40.0 * row as f32) * 3.0;
@@ -2855,8 +2903,20 @@ impl App {
             ),
             None => "none".to_string(),
         };
+        let colors: Vec<i32> = self
+            .world
+            .players
+            .iter()
+            .map(|p| p.color.map(i32::from).unwrap_or(-1))
+            .collect();
+        let lobby_colors: Vec<usize> = self
+            .mp
+            .lobby
+            .as_ref()
+            .map(|l| l.slots.iter().map(|s| s.color).collect())
+            .unwrap_or_default();
         format!(
-            "net={net} defeated={defeated} units={units:?} winner={:?} in_game={} tick={} lobby_game={} local={} computers={} ais={} teams={:?} countdown={} result={:?}",
+            "colors={colors:?} lobby_colors={lobby_colors:?} net={net} defeated={defeated} units={units:?} winner={:?} in_game={} tick={} lobby_game={} local={} computers={} ais={} teams={:?} countdown={} result={:?}",
             self.world.winner,
             !self.menu,
             self.world.tick,

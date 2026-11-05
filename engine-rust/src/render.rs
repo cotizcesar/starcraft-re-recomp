@@ -38,6 +38,15 @@ impl Rgb {
     }
 }
 
+/// Colour `owner`'s units, buildings and minimap blips are drawn in: its
+/// lobby colour, else the classic slot colour.
+pub fn player_rgb(world: &crate::sim::World, owner: u8) -> Rgb {
+    match world.players.get(owner as usize).and_then(|p| p.color) {
+        Some(c) => crate::multiplayer::color_rgb(c as usize),
+        None => PLAYER_COLORS[owner as usize % PLAYER_COLORS.len()],
+    }
+}
+
 pub const PLAYER_COLORS: [Rgb; 12] = [
     Rgb::new(255, 35, 35),
     Rgb::new(0, 80, 255),
@@ -749,6 +758,8 @@ pub struct MinimapDot {
     pub placement: (i32, i32),
     pub building: bool,
     pub resource: bool,
+    /// The owner's colour ([`player_rgb`]) for other players' blips.
+    pub color: Rgb,
 }
 
 /// Minimap blip of a unit in whole tiles `(tx, ty, w, h)`: OpenBW's
@@ -1504,7 +1515,7 @@ impl Tileset {
                 } else if d.owner == owner {
                     MINIMAP_SELF
                 } else {
-                    PLAYER_COLORS[d.owner as usize % PLAYER_COLORS.len()]
+                    d.color
                 };
                 (px, py, bw, bh, c)
             })
@@ -1933,6 +1944,7 @@ mod minimap_blip_tests {
             placement,
             building,
             resource: false,
+            color: super::PLAYER_COLORS[0],
         }
     }
 

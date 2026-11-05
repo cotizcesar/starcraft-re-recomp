@@ -675,3 +675,55 @@ fn a_joiner_leaving_the_lobby_reopens_its_slot() {
     assert_eq!(queue.players(), 1);
     assert_eq!(lobby.first_open(), Some(1));
 }
+
+/// The joiner's colour pick reaches the host, and the host's countdown
+/// (start and cancel) reaches the joiner, so both lobbies show "Starting in".
+#[test]
+fn colour_picks_and_the_countdown_cross_the_lobby_link() {
+    use galaxycraft::multiplayer::COLOR_CHOICES;
+    use galaxycraft::net::{JoinQueue, Msg, Transport, connect_lobby};
+    use std::time::{Duration, Instant};
+
+    let hash = [7u8; 32];
+    let host = Lobby::bind("127.0.0.1:0", hash, galaxycraft::net::WORLD_SEED).unwrap();
+    let addr = host.local_addr().unwrap().to_string();
+    let mut queue = JoinQueue::new(2);
+    let mut link = connect_lobby(
+        &addr,
+        hash,
+        galaxycraft::net::WORLD_SEED,
+        Race::Zerg,
+        "Kerrigan",
+    )
+    .unwrap();
+    host.poll_join(&mut queue, true).unwrap().expect("joined");
+
+    let green = COLOR_CHOICES.iter().position(|c| *c == "Green").unwrap() as u8;
+    link.send(&Msg::LobbyColor { color: green }).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let msgs = loop {
+        let (m, gone) = queue.poll_lobby();
+        assert!(gone.is_empty());
+        if !m.is_empty() {
+            break m;
+        }
+        assert!(Instant::now() < deadline, "no colour message");
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(msgs, vec![(1, Msg::LobbyColor { color: green })]);
+
+    let mut next = || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(m) = link.try_recv().unwrap() {
+                return m;
+            }
+            assert!(Instant::now() < deadline, "nothing from the host");
+            thread::sleep(Duration::from_millis(5));
+        }
+    };
+    queue.send_all(&Msg::LobbyCountdown { on: true });
+    assert_eq!(next(), Msg::LobbyCountdown { on: true });
+    queue.send_all(&Msg::LobbyCountdown { on: false });
+    assert_eq!(next(), Msg::LobbyCountdown { on: false });
+}

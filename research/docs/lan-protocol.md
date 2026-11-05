@@ -66,7 +66,11 @@ only enabled for LAN) -> Registry -> Games -> Create -> "Creating game..."
 - Protocol 3 messages: `Join { .., name }` (Registry name); host ->
   client `LobbyState { you, lobby }` on join, on every change and once a
   second (`multiplayer::Lobby::encode`, slots/teams/observers, names
-  capped at 32 bytes); client -> host `LobbyRace { race }`; `Chat` relayed
+  capped at 32 bytes); client -> host `LobbyRace { race }` and
+  `LobbyColor { color }` (applied only when the colour is free); host ->
+  clients `LobbyCountdown { on }` when Ok starts or Cancel stops the
+  countdown, so joiners show "Starting in" and the launch swish and then
+  wait, black, for `Setup`; `Chat` relayed
   by the host; `Setup { .., setup }` carries the resolved
   `multiplayer::GameSetup` (races by slot, occupants, teams), from which
   each peer finds its slot (`slot_of_peer`).  The joiner reads with
