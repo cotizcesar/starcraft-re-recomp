@@ -578,7 +578,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v19 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates, swish-out sound, retail mission titles, rescue sounds)\n";
+            b"galaxycraft retail cache v19 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates, swish-out sound, retail mission titles, rescue sounds, terran ready room + slot frames + projector)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1294,6 +1294,28 @@ pub const GLUE_ART: &[&str] = &[
     "glue/battlenet/credits_a.dds",
     // Metal-room backdrop the credits scroll over.
     "glue/battlenet/backgnd.dds",
+    // Terran ready room (`glurdyt.ui.json`): metal-room backdrop, the
+    // portrait/objective/button frames and the Start glow clip.
+    "glue/palrt/backgnd.dds",
+    "glue/palrt/pcancel.dds",
+    "glue/readyt/p1terr.dds",
+    "glue/readyt/p2terr.dds",
+    "glue/readyt/p3terr.dds",
+    "glue/readyt/p4terr.dds",
+    "glue/readyt/objterr.dds",
+    "glue/readyt/butterr.dds",
+    "glue/readyt/tutbtn.dds",
+    "glue/readyt/tframe1.dds",
+    "glue/readyt/tframe2.dds",
+    "glue/readyt/tframe3.dds",
+    "glue/readyt/tframe4.dds",
+    "glue/readyt/tframeh1.dds",
+    "glue/readyt/tframeh2.dds",
+    "glue/readyt/tframeh3.dds",
+    "glue/readyt/tframeh4.dds",
+    "glue/readyt/start.webm",
+    "glue/readyt/proj.webm",
+    "glue/readyt/proloop.webm",
     "glue/scoretd/pmain.dds",
     "glue/scoretd/pinset.dds",
     "glue/scoretd/scorebox.dds",

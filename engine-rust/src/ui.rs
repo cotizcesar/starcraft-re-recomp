@@ -49,6 +49,8 @@ pub const UI_JSON: &[&str] = &[
     "lmission",
     "wmission",
     "titledlg",
+    // Terran ready room (mission briefing with portraits).
+    "glurdyt",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

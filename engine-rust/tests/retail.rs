@@ -406,8 +406,9 @@ fn materialised_assets_load_without_the_bundled_asset_directory() {
         "{} console files",
         report.console_files
     );
-    // 32 dialogs + `minimap`, `objctdlg` and `tips_dlg` (in-game HUD).
-    assert_eq!(report.ui_files, 35);
+    // 33 dialogs (with the `glurdyt` ready room) + `minimap`, `objctdlg`
+    // and `tips_dlg` (in-game HUD).
+    assert_eq!(report.ui_files, 36);
     assert_eq!(report.music_files, 23);
     assert!(report.voice_files > 1000, "{} voices", report.voice_files);
     assert!(report.missing_sounds.is_empty());

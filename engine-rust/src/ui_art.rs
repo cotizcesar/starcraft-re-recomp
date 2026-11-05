@@ -744,6 +744,15 @@ pub struct GlueArt {
     pub menu: Option<UiDialog>,
     pub score: Option<UiDialog>,
     pub mission: Option<UiDialog>,
+    /// Terran ready room: `glurdyt.ui.json`, its `palrt` backdrop and the
+    /// HD art of each `RECT` control (`glue\\ReadyT\\P1Terr.pcx` ->
+    /// `glue/readyt/p1terr.dds`), in layout order.
+    pub ready_t: Option<UiDialog>,
+    pub ready_backdrop: Option<DdsImage>,
+    pub ready_art: Vec<(i32, DdsImage)>,
+    /// Portrait-slot frames over each portrait: `tframe<n>` idle and
+    /// `tframeh<n>` (bright red) while the slot speaks.
+    pub ready_slot_frames: Vec<(Option<DdsImage>, Option<DdsImage>)>,
 }
 
 impl GlueArt {
@@ -785,6 +794,25 @@ impl GlueArt {
             menu: load_ui(root, "glumain"),
             score: load_ui(root, "gluscore"),
             mission: load_ui(root, "msnstats"),
+            ready_t: load_ui(root, "glurdyt"),
+            ready_backdrop: load_dds(root, "glue/palrt/backgnd.dds"),
+            ready_slot_frames: (1..=4)
+                .map(|n| {
+                    (
+                        load_dds(root, &format!("glue/readyt/tframe{n}.dds")),
+                        load_dds(root, &format!("glue/readyt/tframeh{n}.dds")),
+                    )
+                })
+                .collect(),
+            ready_art: load_ui(root, "glurdyt")
+                .map(|d| {
+                    d.controls
+                        .iter()
+                        .filter(|c| c.kind == "RECT")
+                        .filter_map(|c| Some((c.id, load_dds(root, &glue_dds_path(&c.content)?)?)))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -813,6 +841,13 @@ impl GlueArt {
         let variant = if victory { "v" } else { "d" };
         root.join(format!("glue/score{suffix}{variant}/pmain.dds"))
     }
+}
+
+/// HD surface of an authored glue `.pcx` (`glue\\ReadyT\\P1Terr.pcx` ->
+/// `glue/readyt/p1terr.dds`).
+pub fn glue_dds_path(authored: &str) -> Option<String> {
+    let lower = authored.replace('\\', "/").to_ascii_lowercase();
+    Some(format!("{}.dds", lower.strip_suffix(".pcx")?))
 }
 
 /// Draw a UI rectangle after scaling the classic 640x480 coordinate space.

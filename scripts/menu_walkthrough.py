@@ -305,7 +305,8 @@ def campaign_win_check(args) -> None:
 FLOW_SCRIPT = ",".join(
     TO_TERRAN_LIST
     + ["fixture:progress:1=4", "move:1262:666", "click", "key:Down", "key:Down",
-       "key:Enter", "fixture:win", "result:Enter", "intro:end"]
+       "key:Enter", "fixture:win", "result:Enter", "intro:end",
+       "briefing-key:Enter", "ready-at:1000", "briefing-key:S"]
 )
 
 
@@ -331,10 +332,17 @@ def campaign_flow_check(args) -> None:
             fail(f"flow step {step}: {state.get(step)!r} != {expected!r}")
     if "flow=briefing map=T: Desperate Alliance" not in state.get("intro:end", ""):
         fail(f"after the films: {state.get('intro:end')!r}")
+    # Establishing shot -> ready room (MBRF script) -> Start -> the game.
+    room = state.get("ready-at:1000", "")
+    if "flow=ready map=T: Desperate Alliance" not in room or "objectives=" not in room:
+        fail(f"ready room: {room!r}")
+    if "flow=game map=T: Desperate Alliance result=None" not in state.get("briefing-key:S", ""):
+        fail(f"Start: {state.get('briefing-key:S')!r}")
     shutil.rmtree(saves, ignore_errors=True)
     shutil.rmtree(outdir, ignore_errors=True)
     print("PASS campaign flow: Backwater Station won -> PreTerran_1 + Terran1 -> "
-          "Desperate Alliance briefing")
+          "Desperate Alliance establishing shot -> ready room -> Start -> game")
+    print(f"     ready room at 1 s: {room}")
 
 
 # Registry IDs and settings across processes (shared temporary save dir):
