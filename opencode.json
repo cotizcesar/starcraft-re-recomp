@@ -1,0 +1,33 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "obsidian/OBSIDIAN.md"
+  ],
+  "mcp": {
+    "servers": {
+      "obsidian-screcomp": {
+        "command": [
+          "npx",
+          "-y",
+          "obsidian-local-rest-mcp",
+          "--vault",
+          "obsidian"
+        ],
+        "cwd": ".",
+        "type": "local"
+      }
+    }
+  },
+  "permissions": [
+    {
+      "action": "read",
+      "effect": "allow",
+      "resource": "obsidian/*"
+    },
+    {
+      "action": "edit",
+      "effect": "allow",
+      "resource": "obsidian/*"
+    }
+  ]
+}

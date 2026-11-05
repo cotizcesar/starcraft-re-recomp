@@ -28,12 +28,18 @@ starcraft-re-recomp/
     tools/                       # Ghidra scripts (Java) + memory capture
     re-c.bundle                  # git history of the removed C engine
   .github/                       # CI, issue/PR templates
+  obsidian/                      # working-notes vault (OBSIDIAN.md = its rules);
+                                 # curated docs above stay the source of truth
+  .opencode/skills/              # OpenCode skills for the vault (sesion, investigar, ...)
+  opencode.json                  # portable OpenCode project config (vault MCP, instructions)
 ```
 
 Local-only (gitignored, never commit): `research/analysis/`,
 `research/build/` (Ghidra projects), `research/work/` (memory dumps),
 `research/logs/`, `engine-rust/assets/`, `engine-rust/fixtures/*` data,
 `engine-rust/docs/evidence/`, screenshots and every other retail-derived file.
+Also local: `.opencode/opencode.json` (personal OpenCode overrides such as
+absolute plugin paths) and the Obsidian workspace/cache.
 
 - The original install (`$SC_INSTALL`) is **read-only**. Nothing writes there.
 - No parallel paths: the only checkout path is the repository itself. Never
