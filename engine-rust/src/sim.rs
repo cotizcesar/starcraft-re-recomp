@@ -30,6 +30,17 @@ use crate::tech as tree;
 use crate::vision::Vision;
 
 pub const TICKS_PER_SECOND: u32 = 24;
+/// Real duration of one tick at the retail Fastest speed.  FACT (Desperate
+/// Alliance recording): the 1800-second countdown (28,800 ticks of 16, see
+/// `trigger::GAME_SECOND_TICKS`) ran from the first game frame (127.25 s)
+/// to "Sons of Korhal" (1337.0 s), 1209.75 s, i.e. 42.0 ms per tick; the
+/// score screen's "Elapsed Time: 20:20" is that real time.
+pub const TICK_MS: u64 = 42;
+
+/// Real seconds of `ticks` at Fastest (the score screen's Elapsed Time).
+pub fn real_seconds(ticks: u64) -> u64 {
+    ticks * TICK_MS / 1000
+}
 /// `units.dat` build times are in 1/15 second units.
 pub const BUILD_TIME_UNITS: u32 = 15;
 /// `upgrades.dat` research times are in 1/60 second units.
@@ -5874,6 +5885,15 @@ mod tests {
             w.rescues,
             vec![(w.units[raynor].id, 0), (w.units[late].id, 0)]
         );
+    }
+
+    #[test]
+    fn ticks_are_42_ms_of_real_time() {
+        // Retail Desperate Alliance: game start 127.25 s, victory dialog
+        // 1347.37 s, score "Elapsed Time: 20:20" (1220 s).
+        let ticks = ((1347.37 - 127.25) * 1000.0 / TICK_MS as f64) as u64;
+        assert_eq!(real_seconds(ticks), 1220);
+        assert_eq!(real_seconds(28_800), 1209, "the 30-minute countdown");
     }
 
     #[test]

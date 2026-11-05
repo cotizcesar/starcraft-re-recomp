@@ -4874,3 +4874,42 @@ compatible.
   `engine-rust/README.md` rewritten; `PROJECT-STATUS.md` one page;
   `features.md` and `docs/COVERAGE.md` removed (merged); historical docs
   (`EVIDENCE.md`, `gap-audit.md`, `parity-report.md`) labelled as such.
+
+## 2026-11-05 (99) — Desperate Alliance against its retail recording
+
+Source: `Desperate Alliance.webm` (user recording, 1362 s, video only):
+ready room 0-126 s, game from 127.25 s, victory dialog 1347.37 s, score
+"Elapsed Time: 20:20".
+
+- **Countdown speed (FACT, bug).**  The on-screen countdown reads 25:43 /
+  18:17 / 10:51 / 3:24 at 300 / 600 / 900 / 1200 s: 446-447 timer seconds
+  per 300 real seconds, one every 16.0 ticks at Fastest.  The VM took one
+  per 30-tick trigger cycle, so the mission's 30 minutes would last 37.5
+  real minutes instead of ~20.  `trigger::GAME_SECOND_TICKS` = 16 drives
+  the countdown (every 16th tick, independent of the trigger cadence) and
+  Elapsed Time (was 24 ticks per second).  The same unit explains
+  Wasteland's "Elapsed Time at least 8" SCV line: tick-150 cycle, 6.25 s
+  (retail 6.5; the old model gave 8.75).
+- **Tick length (FACT).**  The 1800-second countdown (28,800 ticks) ran
+  from the first game frame (127.25 s) to "Sons of Korhal" (1337.0 s):
+  1209.75 s, 42.0 ms per tick.  `sim::TICK_MS` = 42 paces the client (was
+  24 ticks/s = 41.7 ms) and gives the score screen's Elapsed Time
+  (1220 s = 20:20 for this game, as retail).
+- **Countdown display (FACT).**  Not drawn before.  Retail: Eurostile, ink
+  1359..1477 x 16..46 for "25:43" and 1373..1464 for "3:24", centred on x
+  1418 content px, lavender, `m:ss`, still shown at 0:00.  Ours (45.5
+  px/em): ink 1360..1475 x 16..45 (`--shot-screen countdown`).
+- **Mission flow (FACT, matches).**  Ready room: six transmissions within
+  0.45 s of the recording.  Trigger 0 scripts VULTURE (+1.45 s) and MARINE
+  (22.3 s later; ours 22.08 s).  Ending: "One minute" at 1297.6 s, "Sons
+  of Korhal" 1337.0 s (ours 0.83 s after 0:00), the pilot +5.2 s (ours
+  +4.83), the victory dialog +5.17 s after the pilot (ours +4.55).
+  `desperate_alliance_follows_the_retail_recording` pins all of it.
+- **Environment note.**  `materialised_assets_load_without_the_bundled_asset_directory`
+  failed once on "intro poster decodes": the per-user `/tmp` quota
+  (12.47 GB) was full after materialising; it passes once space is freed.
+
+**Verification.**  `cargo test` 490 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 12/12); clippy 0; fmt clean;
+`ui_visual_diff.py` 51/51; walkthrough PASS; ultrawide 31/31; menu
+timing 4/4; `progress.py --check` OK.
