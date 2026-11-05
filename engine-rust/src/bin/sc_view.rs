@@ -3015,6 +3015,21 @@ const BW_PLAYER_COLOURS: [Rgb; 8] = [
     Rgb::new(252, 252, 56),
 ];
 
+/// Ticks per real second at the retail Fastest speed (42 ms per tick).
+const TICKS_PER_REAL_SECOND: f32 = 1000.0 / galaxycraft::sim::TICK_MS as f32;
+
+/// Countdown display (content px): ink widths 119 px ("25:43") and 92 px
+/// ("3:24") fit Eurostile at 45.5 px/em; centre and baseline from the
+/// Desperate Alliance recording.
+const COUNTDOWN_PX: f32 = 45.5;
+const COUNTDOWN_CENTRE_X: f32 = 1418.25;
+const COUNTDOWN_BASE: f32 = 46.0;
+
+/// `m:ss`, as the retail timer ("25:43", "3:24", "0:00").
+fn countdown_text(seconds: u32) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
 /// Retail in-game error line (`stat_txt.tbl`): baseline and colour from
 /// the Wasteland recording; how long it stays is INFERENCE (the recording
 /// keeps clicking, so its end is not visible).
@@ -5951,6 +5966,16 @@ fn main() {
                 }
                 app.draw(&mut fb);
             }
+            "countdown" => {
+                // Desperate Alliance with 25:43 left (retail frame at 300 s).
+                app.load_map(app.map_index);
+                app.briefing = false;
+                if let Some(t) = app.world.triggers.as_mut() {
+                    t.countdown_shown = true;
+                    t.countdown_timer = 1543;
+                }
+                app.draw(&mut fb);
+            }
             "game-error" => {
                 app.load_map(app.map_index);
                 app.briefing = false;
@@ -7696,7 +7721,7 @@ impl App {
         let now = Instant::now();
         let dt = now.duration_since(self.last_step).as_secs_f32().min(0.1);
         self.last_step = now;
-        self.accumulator += dt * 24.0 * self.speed;
+        self.accumulator += dt * TICKS_PER_REAL_SECOND * self.speed;
         let need = net.lock.ticks_per_turn as f32;
         if self.accumulator < need {
             self.net = Some(net);
@@ -9841,7 +9866,7 @@ impl App {
         let now = Instant::now();
         let dt = now.duration_since(self.last_step).as_secs_f32().min(0.1);
         self.last_step = now;
-        self.accumulator += dt * 24.0 * self.speed;
+        self.accumulator += dt * TICKS_PER_REAL_SECOND * self.speed;
         let mut steps = 0;
         let target = self.replay.as_ref().map(|r| r.save.tick).unwrap_or(0);
         while self.accumulator >= 1.0 && steps < 24 {
@@ -11411,7 +11436,7 @@ impl App {
             }
         }
         if let Some(r) = ctl(9) {
-            let secs = self.world.tick / galaxycraft::sim::TICKS_PER_SECOND as u64;
+            let secs = galaxycraft::sim::real_seconds(self.world.tick);
             let text = format!("Elapsed Time: {:02}:{:02}", secs / 60, secs % 60);
             self.glue_text_face(
                 fb,
@@ -11448,8 +11473,8 @@ impl App {
     /// and neutral ones, in slot order.
     fn score_rows(&mut self) -> Vec<ScoreRow> {
         let slots = self.scenario.player_slots();
-        let minutes = (self.world.tick as f64 / galaxycraft::sim::TICKS_PER_SECOND as f64 / 60.0)
-            .max(1.0 / 60.0);
+        let minutes =
+            (self.world.tick as f64 * galaxycraft::sim::TICK_MS as f64 / 60_000.0).max(1.0 / 60.0);
         let actions = self.world.recorder.as_ref().map_or(0, |r| r.cmds.len());
         let mut rows = Vec::new();
         for s in slots.iter().filter(|s| s.active && (s.human || s.computer)) {
@@ -12305,7 +12330,7 @@ impl App {
         let now = Instant::now();
         let dt = now.duration_since(self.last_step).as_secs_f32().min(0.1);
         self.last_step = now;
-        self.accumulator += dt * 24.0 * self.speed;
+        self.accumulator += dt * TICKS_PER_REAL_SECOND * self.speed;
         let mut steps = 0;
         while self.accumulator >= 1.0 && steps < 12 {
             let enemy_base = self
@@ -12962,6 +12987,7 @@ impl App {
             );
         }
         self.draw_trigger_leaderboard(fb);
+        self.draw_countdown(fb);
         // Retail error line, centred over the console (recording: ink
         // 962..1595 x 894..921 content px, near white).
         if let Some((text, at)) = self.game_error.clone() {
@@ -13808,6 +13834,27 @@ impl App {
                 );
             }
         }
+    }
+
+    /// The trigger countdown at the top of the screen once a map sets it
+    /// (retail Desperate Alliance: "25:43", Eurostile, ink centred on
+    /// x 1418 content px, rows 16..46, also shown at 0:00).
+    fn draw_countdown(&mut self, fb: &mut Framebuffer) {
+        let Some(t) = self.world.triggers.as_ref().filter(|t| t.countdown_shown) else {
+            return;
+        };
+        let text = countdown_text(t.countdown_timer);
+        let w = self.glue_measure(&text, COUNTDOWN_PX, GlueFace::Big);
+        self.glue_text_face(
+            fb,
+            COUNTDOWN_CENTRE_X - w / 2.0,
+            COUNTDOWN_BASE,
+            &text,
+            COUNTDOWN_PX,
+            HUD_TEXT_COLOR,
+            None,
+            GlueFace::Big,
+        );
     }
 
     /// `statlb.ui.json` compact leaderboard (L).
@@ -19302,6 +19349,14 @@ mod menu_frame_tests {
         }
         // Boot Camp's 4-line welcome is still at 3 s (retail screenshot).
         assert_eq!(ready_text_scroll(2_000, 8_449, 4.0 * READY_TEXT_PITCH), 0.0);
+    }
+
+    #[test]
+    fn countdown_reads_minutes_and_seconds() {
+        use super::countdown_text;
+        assert_eq!(countdown_text(1543), "25:43");
+        assert_eq!(countdown_text(204), "3:24");
+        assert_eq!(countdown_text(0), "0:00");
     }
 
     #[test]

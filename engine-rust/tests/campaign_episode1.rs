@@ -533,3 +533,134 @@ fn backwater_station_opens_with_raynor_on_the_first_frame() {
         galaxycraft::transmission::text_life_ms(ms, galaxycraft::transmission::text_chars(text));
     assert!(life.abs_diff(4_300) <= 200, "{life} ms on screen vs 4.3 s");
 }
+
+#[test]
+fn desperate_alliance_follows_the_retail_recording() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Desperate Alliance.webm` (2026-11-05, video only).
+    let (sc, mut w, human) = mission(&install, 4);
+    let secs = |t: u64| t as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32;
+    // Ready room: six transmissions; from the first, the others start at
+    // +4.8, +21.2, +52.3, +82.7, +104.5 s and the last ends at +115.1 s.
+    let mut room = galaxycraft::ready_room::ReadyRoom::from_scenario(&sc, human).expect("MBRF");
+    let mut starts = Vec::new();
+    let mut end = 0;
+    for t in (0..200_000u64).step_by(50) {
+        room.advance(t);
+        if let Some(l) = room.transmission {
+            if starts.last() != Some(&l.start_ms) {
+                starts.push(l.start_ms);
+            }
+            end = l.start_ms + l.ms as u64;
+        }
+        if room.finished() {
+            break;
+        }
+    }
+    let retail = [0.0, 4.8, 21.2, 52.3, 82.7, 104.5];
+    assert_eq!(starts.len(), retail.len(), "{starts:?}");
+    for (s, r) in starts.iter().zip(retail) {
+        let got = (*s - starts[0]) as f32 / 1000.0;
+        assert!((got - r).abs() <= 0.5, "room line at +{got:.2} s vs +{r}");
+    }
+    let last = (end - starts[0]) as f32 / 1000.0;
+    // Line ends read 0.3-0.5 s late on the recording (the box fades), so
+    // the end gets 0.6 s.
+    assert!((last - 115.1).abs() <= 0.6, "room ends +{last:.2} s");
+    // In game: VULTURE then MARINE 22.3 s later (both scripted at start);
+    // the countdown starts at 30:00 and shows 29:56 at +2.75 s.
+    let mut seen = 0;
+    let mut lines: Vec<(u64, String)> = Vec::new();
+    let take = |w: &World, seen: &mut usize, lines: &mut Vec<(u64, String)>| {
+        let t = w.triggers.as_ref().expect("triggers");
+        for c in &t.cues[*seen..] {
+            if let TriggerCue::Text { player, string, .. } = *c
+                && player == human
+            {
+                lines.push((
+                    w.tick,
+                    sc.string(string).unwrap_or("").trim_start().to_string(),
+                ));
+            }
+        }
+        *seen = t.cues.len();
+    };
+    for _ in 0..24 * 30 {
+        w.step();
+        take(&w, &mut seen, &mut lines);
+        if w.tick == 65 {
+            assert_eq!(
+                w.triggers.as_ref().expect("triggers").countdown_timer,
+                1796,
+                "29:56"
+            );
+        }
+    }
+    let vulture = lines
+        .iter()
+        .find(|l| l.1.starts_with("VULTURE"))
+        .expect("VULTURE")
+        .0;
+    let marine = lines
+        .iter()
+        .find(|l| l.1.starts_with("MARINE"))
+        .expect("MARINE")
+        .0;
+    let gap = secs(marine - vulture);
+    assert!((gap - 22.3).abs() <= 0.6, "MARINE {gap:.2} s after VULTURE");
+    // The end: 60 s left -> "One minute"; at 0 -> "Sons of Korhal"
+    // (retail +1.0 s after 0:00), the pilot +5.2 s later, the victory
+    // dialog +5.2 s after the pilot.
+    // Fast-forward the countdown through the 10- and 5-minute warnings so
+    // they are spent before the last minute, as in a full game.
+    for left in [605, 305] {
+        w.triggers.as_mut().expect("triggers").countdown_timer = left;
+        for _ in 0..24 * 10 {
+            w.step();
+        }
+    }
+    take(&w, &mut seen, &mut lines);
+    w.triggers.as_mut().expect("triggers").countdown_timer = 64;
+    lines.clear();
+    let mut zero = None;
+    let mut won = None;
+    for _ in 0..24 * 90 {
+        w.step();
+        take(&w, &mut seen, &mut lines);
+        if zero.is_none() && w.triggers.as_ref().expect("triggers").countdown_timer == 0 {
+            zero = Some(w.tick);
+        }
+        if w.winner == Some(human as u8) {
+            won = Some(w.tick);
+            break;
+        }
+    }
+    let at = |head: &str| lines.iter().find(|l| l.1.contains(head)).map(|l| l.0);
+    let zero = zero.expect("countdown reaches 0");
+    let one = at("One minute").expect("One minute");
+    assert!(
+        secs(zero - one) > 37.0,
+        "One minute at 1:00 left (retail 1297.6 s, about 38.4 s before 0:00)"
+    );
+    let sons = at("Sons of Korhal").expect("Sons of Korhal");
+    assert!(
+        secs(sons - zero) <= 1.3,
+        "Sons of Korhal {:.2} s after 0:00",
+        secs(sons - zero)
+    );
+    let pilot = at("DROPSHIP PILOT").expect("pilot");
+    assert!(
+        (secs(pilot - sons) - 5.2).abs() <= 0.6,
+        "pilot +{:.2} s",
+        secs(pilot - sons)
+    );
+    let won = won.expect("victory");
+    assert!(
+        (secs(won - pilot) - 5.2).abs() <= 0.8,
+        "victory +{:.2} s",
+        secs(won - pilot)
+    );
+}

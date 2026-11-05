@@ -4,6 +4,18 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Desperate Alliance against its retail recording
+
+### Fixed
+- The trigger countdown and Elapsed Time count game seconds of 16 ticks
+  (were 30 and 24): Desperate Alliance's 30 minutes last 20 real minutes
+  as in retail, not 37.5.
+- The client advances at 42 ms per tick (was 41.7) and the score screen's
+  Elapsed Time is real time.
+
+### Added
+- The countdown timer at the top of the screen, as retail.
+
 ## 2026-11-05 — Toolchain, dependencies and documentation
 
 ### Changed

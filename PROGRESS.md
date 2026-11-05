@@ -18,14 +18,14 @@ restating status.
 | [Simulation rules](#simulation-rules) | 25 | 14 | 16 | 88 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 6 | 7 | 86 % |
-| [Campaign](#campaign) | 15 | 6 | 10 | 60 % |
+| [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
 | [In-game client](#in-game-client) | 10 | 6 | 8 | 75 % |
 | [Persistence](#persistence) | 5 | 4 | 5 | 80 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 3 | 6 | 50 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **57** | **75** | **75 %** |
+| **Overall (weighted)** | **100** | **60** | **78** | **76 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -91,7 +91,10 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Victory/defeat dialog and score screen with slide-in and count-up — `score_count_up_follows_the_retail_curve`, `--shot-screen win-dialog|victory`
 - [x] Episode I audited against the shipped maps (every trigger, briefing action and AI script used) — `every_episode_one_ready_room_runs_to_the_end_with_real_portraits`
 - [x] Boot Camp, Wasteland and Backwater Station match retail recordings (openings, rescues, endings, victory timing) — `tests/campaign_episode1.rs` (11 tests)
-- [ ] Episode I missions 4–11 compared with retail recordings
+- [x] Desperate Alliance matches its retail recording: ready room (six lines within 0.5 s), scripted VULTURE/MARINE lines, the 30-minute countdown at 16 ticks per game second, the "One minute" / "Sons of Korhal" / pilot / victory ending — `desperate_alliance_follows_the_retail_recording`, `the_countdown_and_elapsed_time_run_on_16_tick_game_seconds`
+- [x] Countdown timer drawn as retail (Eurostile, centred at x 1418, `m:ss`) — `countdown_reads_minutes_and_seconds`, `--shot-screen countdown`
+- [x] Real-time pace of 42 ms per tick (Fastest); score Elapsed Time in real seconds — `sim::tests::ticks_are_42_ms_of_real_time`
+- [ ] Episode I missions 5–11 compared with retail recordings
 - [ ] Audio timing (briefing voices, transmissions, rescue and victory sounds) against a recording with sound
 - [ ] Zerg and Protoss ready rooms (`glurdyz` / `glurdyp`)
 - [ ] Episodes II–VI (Zerg, Protoss, Brood War) compared with retail recordings

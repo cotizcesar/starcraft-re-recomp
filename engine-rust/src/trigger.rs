@@ -13,6 +13,13 @@ use crate::sim::{Order, World};
 
 pub const RECORD_SIZE: usize = 2400;
 pub const TRIGGER_INTERVAL: u64 = 30;
+/// Ticks per trigger "game second" (Countdown Timer, Elapsed Time).  FACT
+/// (Desperate Alliance retail recording): the countdown loses 446-447
+/// seconds every 300 real seconds at Fastest (23.81 ticks/s), one every
+/// 16.0 ticks; Wasteland's "Elapsed Time at least 8" SCV line then lands
+/// on the tick-150 cycle, 6.25 s in (retail 6.5 s; the old 24-tick second
+/// gave 8.75 s).
+pub const GAME_SECOND_TICKS: u64 = 16;
 
 /// `(player, four-byte script id, optional centre)` queued by trigger action
 /// 15/16.
@@ -134,6 +141,9 @@ pub struct TriggerSystem {
     pub state: TriggerState,
     pub switches: [bool; 256],
     pub countdown_timer: u32,
+    /// A Set Countdown Timer action has run: the client shows the timer
+    /// from then on, also at 0:00 (retail Desperate Alliance).
+    pub countdown_shown: bool,
     /// Trigger actions that start or relocate an AI script.  The match runner
     /// consumes these after the trigger VM runs.
     pub pending_ai_scripts: Vec<PendingAiScript>,
@@ -176,6 +186,7 @@ impl Default for TriggerSystem {
             state: TriggerState::default(),
             switches: [false; 256],
             countdown_timer: 0,
+            countdown_shown: false,
             pending_ai_scripts: Vec::new(),
             paused: false,
             timer_paused: false,
@@ -305,6 +316,7 @@ impl TriggerSystem {
             state: TriggerState::default(),
             switches: [false; 256],
             countdown_timer: 0,
+            countdown_shown: false,
             pending_ai_scripts: Vec::new(),
             paused: false,
             timer_paused: false,
@@ -325,6 +337,11 @@ impl TriggerSystem {
     }
 
     pub fn process(&mut self, world: &mut World) {
+        // The countdown runs on game seconds, independently of the
+        // trigger cadence, unless action 54 (Pause Timer) is in force.
+        if world.tick > 0 && world.tick.is_multiple_of(GAME_SECOND_TICKS) && !self.timer_paused {
+            self.countdown_timer = self.countdown_timer.saturating_sub(1);
+        }
         // Triggers first run at game start (elapsed time 0: `terran04`
         // sets its objectives on "Elapsed Time at most 0"), then on the
         // 30-tick cadence.
@@ -354,11 +371,6 @@ impl TriggerSystem {
             self.state.resume = vec![None; world.players.len()];
             self.preserved = vec![vec![false; self.triggers.len()]; world.players.len()];
             self.mission_objectives = vec![None; world.players.len()];
-        }
-        // The countdown timer advances once per trigger evaluation (30 ticks)
-        // unless action 54 (Pause Timer) is in force.
-        if !self.timer_paused {
-            self.countdown_timer = self.countdown_timer.saturating_sub(1);
         }
         for player in 0..world.players.len() {
             if world.tick < self.state.wait_until[player] {
@@ -532,7 +544,7 @@ impl TriggerSystem {
                 .get(c.quantity as usize)
                 .copied()
                 .unwrap_or(false) as i32,
-            12 => (world.tick / crate::sim::TICKS_PER_SECOND as u64) as i32,
+            12 => (world.tick / GAME_SECOND_TICKS) as i32,
             13 => return false,
             14 => {
                 let alive = world
@@ -950,6 +962,7 @@ impl TriggerSystem {
             }
             14 => {
                 // Set Countdown Timer: time, modifier (7 set, 8 add, 9 sub).
+                self.countdown_shown = true;
                 let t = action.time as i64;
                 self.countdown_timer = match action.num {
                     7 => t.max(0) as u32,
@@ -1902,6 +1915,31 @@ mod tests {
             w.players[0].minerals, 777,
             "runs on the next cycle after the wait"
         );
+    }
+
+    #[test]
+    fn the_countdown_and_elapsed_time_run_on_16_tick_game_seconds() {
+        // Retail Desperate Alliance: 446-447 countdown seconds per 300 real
+        // seconds at 23.81 ticks/s, i.e. one per 16 ticks.
+        let mut t = TriggerSystem::parse(&record(22, 0, 0), &[]);
+        let mut w = world();
+        t.countdown_timer = 1800;
+        for tick in 1..=24 * 300 {
+            w.tick = tick;
+            t.process(&mut w);
+        }
+        assert_eq!(1800 - t.countdown_timer, 450, "7200 ticks / 16");
+        // Elapsed Time at least 10 game seconds: true from tick 160.
+        let c = TriggerCondition {
+            kind: 12,
+            comparison: 0,
+            quantity: 10,
+            ..TriggerCondition::default()
+        };
+        w.tick = 159;
+        assert!(!t.condition_holds(&w, 0, &c));
+        w.tick = 160;
+        assert!(t.condition_holds(&w, 0, &c), "160 ticks = 10 game seconds");
     }
 
     #[test]
