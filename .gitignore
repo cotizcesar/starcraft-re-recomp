@@ -54,3 +54,13 @@ research/docs/rea-evidence-c.md
 
 # Release packages (scripts/package_*.sh)
 dist/
+
+# Obsidian vault: notes are versioned, the local workspace/cache is not
+obsidian/.obsidian/workspace*.json
+obsidian/.obsidian/cache/
+obsidian/.obsidian/hotkeys.json
+
+# Personal OpenCode overrides (absolute paths, local plugins); the shared
+# project config is the portable opencode.json at the root
+.opencode/opencode.json
+.opencode/opencode.jsonc

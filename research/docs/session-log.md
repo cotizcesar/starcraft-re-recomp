@@ -4497,6 +4497,23 @@ clippy 0; fmt clean; `ui_visual_diff.py` 51/51, `menu_time_diff.py` 4/4,
 walkthrough PASS (146 steps, campaign win), `ultrawide_diff.py` 31/31,
 gate outputs byte-identical; `progress.py --check` OK.
 
+## 2026-11-05 (88) — Controller (gamepad) support plan
+
+Planning only, no code changed.  New document
+[`engine-rust/docs/controller-support.md`](../../engine-rust/docs/controller-support.md).
+
+- **FACT (tree read).**  `minifb` 0.29 has no gamepad API and no gamepad
+  crate is a dependency; `sc_view` reads `&Window` directly in 7 handlers
+  (29 call sites); `MenuInput` + `--menu-script` is the existing
+  snapshot pattern to generalise.
+- **INFERENCE.**  Retail 1.23.10.13515 ships no gamepad support; weak
+  evidence only (no `xinput*`/`dinput*` in the install inventory).
+  Falsifier: REA import table of the retail executable.
+- **Proposal.**  One `InputFrame` for keyboard/mouse/script/gamepad,
+  `gilrs` behind a `gamepad` cargo feature, virtual cursor, radial
+  command card, 4 phases; the simulation and `src/net.rs` stay untouched
+  (commands still enter through `World::issue`).  PROGRESS.md items are
+  added only when the plan is approved (listed in §9 of the document).
 
 ## 2026-11-05 (89) — Episode I against the retail recordings: forces, ready room, end of mission
 
@@ -4795,3 +4812,21 @@ retail measurements and their tests; `research/docs/architecture.md` the
 trigger runtime semantics; `PROJECT-STATUS.md` item 29;
 `unresolved-questions.md` text lifetimes resolved, audio timing and the
 rescue/Skip Tutorial inferences open.
+
+## 2026-11-05 (97) — Vault, OpenCode project config and the controller plan versioned
+
+The user asked to upload everything pending.  Reviewed first: no secrets
+in any file.  Versioned: the Obsidian vault (`obsidian/`, notes and
+templates; its rules file `OBSIDIAN.md` translated to English and the
+names of the user's other projects dropped), the vault skills
+(`.opencode/skills/`), the controller plan of entry 88
+(`engine-rust/docs/controller-support.md`, written by another session) and
+`opencode.json`.  `opencode.json` held personal absolute paths (vault,
+permissions, a plugin under `~/.config`), which `AGENTS.md` forbids: the
+committed file now uses `obsidian` / `obsidian/*`, and the plugin plus
+the original absolute permissions live in a git-ignored
+`.opencode/opencode.json`, which OpenCode merges above it.  Verified:
+`opencode mcp list` shows `obsidian-screcomp connected` and
+`opencode debug config` still loads the plugin.  `AGENTS.md` layout lists
+the three new paths; `.gitignore` keeps the vault workspace/cache and the
+personal override local.
