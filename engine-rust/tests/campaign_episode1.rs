@@ -143,3 +143,44 @@ fn every_episode_one_mission_sets_its_objectives_at_the_start() {
         assert!(text.contains("\n-"), "mission {m} objectives: {text:?}");
     }
 }
+
+#[test]
+fn wasteland_ready_room_follows_the_retail_recording() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail recording `Screencast_20261105_073713` (script time 0 at
+    // 9.10 s): the Adjutant (CC portrait, slot 3) first, Duke in slot 0 at
+    // ~36.5 s (27.5 s of script), the Adjutant's closing line at ~63.8 s,
+    // "End of Briefing." last.
+    let (sc, _, human) = mission(&install, 2);
+    let mut room = galaxycraft::ready_room::ReadyRoom::from_scenario(&sc, human)
+        .expect("terran01 has an MBRF briefing");
+    room.advance(0);
+    assert_eq!(
+        room.portraits[3],
+        Some(106),
+        "Adjutant (Command Center portrait)"
+    );
+    assert!(room.objectives.is_some());
+    room.advance(27_468);
+    assert_eq!(room.portraits[0], None);
+    room.advance(27_469);
+    assert_eq!(room.portraits[0], Some(23), "Duke at 27.5 s of script");
+    // His line runs 27 969..55 763 ms (retail: text gone at 64.90 s =
+    // 9.10 + 55.8) and he leaves after the following 500 ms Wait (65.6 s).
+    room.advance(55_763);
+    assert_eq!(room.transmission, None, "text cleared at the line's end");
+    assert_eq!(room.portraits[0], Some(23));
+    room.advance(56_263);
+    assert_eq!(room.portraits[0], None, "Duke leaves after the Wait");
+    assert_eq!(room.speaking.map(|s| s.0), Some(3), "the Adjutant closes");
+    room.advance(68_797);
+    let end = room.message.expect("End of Briefing");
+    assert!(sc
+        .string(end.string)
+        .unwrap_or("")
+        .contains("End of Briefing"));
+    assert!(room.finished());
+}

@@ -100,6 +100,9 @@ pub struct Scenario {
     /// `FORC` force (0..=3) of players 1..8; all in force 1 without the
     /// section.
     pub forces: [u8; 8],
+    /// `MBRF` mission-briefing triggers (`TRIG` layout, briefing actions;
+    /// see `crate::ready_room`).
+    pub briefing_triggers: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,8 +159,8 @@ fn i32_at(d: &[u8], o: usize) -> i32 {
 const KNOWN_SECTIONS: &[&str] = &[
     "TYPE", "VER", "IVER", "IVE2", "VCOD", "OWNR", "ERA", "DIM", "SIDE", "MTXM", "TILE", "MASK",
     "UNIT", "PUNI", "PUPx", "UPGR", "UPRP", "UPUS", "UPRe", "PTEC", "PTEx", "ISOM", "DD2", "THG2",
-    "STR", "MRGN", "TRIG", "FORC", "SPRP", "WAV", "CMP", "UNIS", "UNIx", "UPGS", "UPGx", "TECS",
-    "TECx", "COLR", "CRGB",
+    "STR", "MRGN", "TRIG", "MBRF", "FORC", "SPRP", "WAV", "CMP", "UNIS", "UNIx", "UPGS", "UPGx",
+    "TECS", "TECx", "COLR", "CRGB",
 ];
 
 /// Locate one section by scanning for its four-byte name.
@@ -449,6 +452,7 @@ impl Scenario {
             sides,
             triggers: sections.get("TRIG").map(|s| s.to_vec()).unwrap_or_default(),
             forces,
+            briefing_triggers: sections.get("MBRF").map(|s| s.to_vec()).unwrap_or_default(),
         })
     }
 

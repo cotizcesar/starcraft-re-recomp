@@ -317,6 +317,9 @@ pub struct BriefingPage {
     /// `</SCREENLOWERLEFT>` places the establishing-shot text at the lower
     /// left instead of the centre.
     pub screen_lower_left: bool,
+    /// `</DISPLAYTIME ms>`: how long the page stays before the next one
+    /// (the establishing shots use 5000).
+    pub display_ms: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -343,6 +346,7 @@ pub fn parse_script(source: &str) -> BriefingScript {
     let mut font: Option<String> = None;
     let mut textbox = false;
     let mut lower_left = false;
+    let mut display_ms: Option<u32> = None;
 
     for raw in source.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
         let line = raw.trim_end();
@@ -368,6 +372,7 @@ pub fn parse_script(source: &str) -> BriefingScript {
                     font = non_empty(arg).map(|s| s.to_string());
                 }
                 "TEXTBOX" => textbox = true,
+                "DISPLAYTIME" => display_ms = arg.parse().ok(),
                 "SCREENLOWERLEFT" => lower_left = true,
                 "VIDEO" | "VIDEOAUTOPROCEED" => {
                     current.video = non_empty(arg).map(|s| s.to_string());
@@ -400,6 +405,7 @@ pub fn parse_script(source: &str) -> BriefingScript {
         page.font = font.clone();
         page.textbox = textbox;
         page.screen_lower_left = lower_left;
+        page.display_ms = display_ms;
         page.text = page.text.trim().to_string();
     }
     // A page's `TEXTBOX`/`SCREENLOWERLEFT` state applies from the directive

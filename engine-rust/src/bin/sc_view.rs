@@ -1108,6 +1108,22 @@ struct App {
     /// Pages of the retail `est*.txt` briefing (empty for map-authored text).
     briefing_pages: Vec<BriefingPage>,
     briefing_page: usize,
+    /// When the current briefing page appeared (`DISPLAYTIME` clock).
+    briefing_page_epoch: Instant,
+    /// The mission's ready-room script (`MBRF`), pristine for Replay.
+    ready_script: Option<galaxycraft::ready_room::ReadyRoom>,
+    /// The running ready room, after the establishing shot.
+    ready: Option<galaxycraft::ready_room::ReadyRoom>,
+    ready_epoch: Instant,
+    /// Script time pinned by `--menu-script ready-at:<ms>` / captures.
+    ready_at: Option<u64>,
+    /// One portrait player per ready-room slot.
+    ready_players: [galaxycraft::portrait::PortraitPlayer; 4],
+    /// The Start button's planet hologram (`glue/readyt/start.webm`).
+    ready_glow: Option<MenuClip>,
+    /// The projector behind Start: `proj.webm` once, then `proloop.webm`.
+    ready_proj: Option<MenuClip>,
+    ready_proloop: Option<MenuClip>,
     /// Retail backdrop named by the briefing script, plus the cached fit.
     briefing_art: Option<galaxycraft::dds::DdsImage>,
     briefing_fit: Option<(usize, usize, galaxycraft::dds::DdsImage)>,
@@ -3498,6 +3514,32 @@ enum GlueFace {
     Hud,
 }
 
+/// Ready-room text (content px): portrait face inside a slot (UI px
+/// offset/size), transmission/objective text size, first baseline and
+/// pitch, and the "Objectives" heading.  First fit on the retail Wasteland
+/// recording frame at 50 s (`Screencast_20261105_073713`).
+/// Faces fitted by ink width: transmission `blizzard-regular` 35.1 px/em
+/// ("Alpha Squadron. The Confederacy has" = 630 px), objectives 30.7
+/// ("- Build a Barracks." = 265 px, 45 px pitch), heading Eurostile 46.7
+/// ("Objectives" = 198 px); text colour the glue lavender.
+/// The retail room fades in at 8.05 s of the Wasteland recording and its
+/// first portrait shows at 9.10 s (script time 0), the first line at
+/// 10.10 s (after the script's 1000 ms Wait).
+const READY_SCRIPT_DELAY_MS: u64 = 1050;
+/// Portrait inside a slot, filling the `tframe` red border (UI px from
+/// the slot origin): border 440..779 x 305..634 content px for slot 0.
+const READY_PORTRAIT_FACE: (f32, f32, f32, f32) = (7.0, 3.5, 113.0, 110.0);
+/// Darkening of the scanline rows (alpha of black).
+const READY_SCANLINE_DIM: u8 = 120;
+const READY_TEXT_PX: f32 = 35.1;
+const READY_TEXT_BASE: f32 = 16.0;
+const READY_TEXT_PITCH: f32 = 54.0;
+const READY_OBJ_PX: f32 = 30.7;
+const READY_OBJ_BASE: f32 = 30.0;
+const READY_OBJ_PITCH: f32 = 45.0;
+const READY_HEAD_PX: f32 = 46.7;
+const READY_HEAD_BASE: f32 = 50.0;
+
 /// Glue `RC_SMALLTEXT` / plain `FLCBTN` labels (BlizzardGlobal), fitted on
 /// 131132: title 33.4 px/em (ink 747..1086), Ok/Cancel 34.0 px/em.
 const GLUE_SMALL_PX: f32 = 33.4;
@@ -4243,6 +4285,8 @@ fn script_key(name: &str) -> Key {
         "L" => Key::L,
         "R" => Key::R,
         "H" => Key::H,
+        "S" => Key::S,
+        "C" => Key::C,
         _ => Key::Unknown,
     }
 }
@@ -4281,6 +4325,12 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
         } else if let Some(name) = step.strip_prefix("result:") {
             // Score screen key, through the same handler as the keyboard.
             app.result_key(script_key(name));
+        } else if let Some(ms) = step.strip_prefix("ready-at:") {
+            // Pin the ready-room script clock and run it to that time.
+            app.ready_at = ms.parse().ok();
+            app.update_briefing();
+        } else if let Some(name) = step.strip_prefix("briefing-key:") {
+            app.briefing_key(script_key(name));
         } else if step == "intro:end" {
             // The playing movie list runs to its end (as after the last
             // film): the pending mission loads.
@@ -5046,6 +5096,17 @@ fn main() {
         briefing: false,
         briefing_pages: Vec::new(),
         briefing_page: 0,
+        briefing_page_epoch: Instant::now(),
+        ready_script: None,
+        ready: None,
+        ready_epoch: Instant::now(),
+        ready_at: None,
+        ready_players: std::array::from_fn(|i| {
+            galaxycraft::portrait::PortraitPlayer::new(i as u32 + 1)
+        }),
+        ready_glow: None,
+        ready_proj: None,
+        ready_proloop: None,
         briefing_art: None,
         briefing_fit: None,
         paused: false,
@@ -5605,6 +5666,14 @@ fn main() {
                 } else {
                     app.draw_tips_panel(&mut fb);
                 }
+            }
+            "ready" => {
+                // Ready room at script time `--menu-at` seconds.
+                app.load_map(app.map_index);
+                app.briefing = true;
+                app.ready_at = Some((app.menu_at.unwrap_or(0.0) * 1000.0) as u64);
+                app.enter_ready_room();
+                app.draw(&mut fb);
             }
             "briefing" => {
                 app.load_map(app.map_index);
@@ -6636,6 +6705,20 @@ impl App {
             show_retail || (scenario.has_placed_force() && briefing_content(&scenario).is_some());
         self.briefing_pages = briefing_pages;
         self.briefing_page = 0;
+        self.briefing_page_epoch = Instant::now();
+        // The ready room follows the establishing shot when the mission has
+        // an `MBRF` script and the race's room art is installed (Terran).
+        let human = scenario
+            .player_slots()
+            .iter()
+            .position(|s| s.active && s.human)
+            .unwrap_or(self.local_player);
+        self.ready_script = (races.get(human) == Some(&Race::Terran)
+            && self.glue.as_ref().is_some_and(|g| g.ready_t.is_some()))
+        .then(|| galaxycraft::ready_room::ReadyRoom::from_scenario(&scenario, human))
+        .flatten();
+        self.ready = None;
+        self.ready_at = None;
         self.briefing_art = briefing_art;
         self.briefing_fit = None;
         // Decoded briefing intermission: the first page that names a
@@ -9125,19 +9208,51 @@ impl App {
     }
 
     fn handle_briefing(&mut self, window: &Window) {
-        let retail = !self.briefing_pages.is_empty();
+        if self.ready.is_some() {
+            if window.get_mouse_down(MouseButton::Left) && !self.mouse_was_down {
+                if let Some((mx, my)) = self.pointer {
+                    if let Some(key) = self.ready_button_at(mx, my) {
+                        self.briefing_key(key);
+                    }
+                }
+            }
+            self.mouse_was_down = window.get_mouse_down(MouseButton::Left);
+        }
         for key in window.get_keys_pressed(KeyRepeat::No) {
+            self.briefing_key(key);
+        }
+    }
+
+    /// One briefing key (also `--menu-script briefing-key:<Key>`).  In the
+    /// ready room: Start (Enter/S), Replay (R), Cancel (Esc/C), as the
+    /// `glurdyt` hotkeys.
+    fn briefing_key(&mut self, key: Key) {
+        if self.ready.is_some() {
+            match key {
+                Key::Enter | Key::Space | Key::S => self.start_briefed_mission(),
+                Key::R => self.enter_ready_room(),
+                Key::Escape | Key::C => {
+                    self.play("ui_click");
+                    self.ready = None;
+                    self.open_menu();
+                }
+                _ => {}
+            }
+            return;
+        }
+        let retail = !self.briefing_pages.is_empty();
+        {
             match key {
                 Key::Enter | Key::Space => {
                     if retail && self.briefing_page + 1 < self.briefing_pages.len() {
                         self.briefing_page += 1;
+                        self.briefing_page_epoch = Instant::now();
                         self.refresh_briefing_poster();
                         self.play("transmission");
+                    } else if self.ready_script.is_some() {
+                        self.enter_ready_room();
                     } else {
-                        self.briefing = false;
-                        self.last_step = Instant::now();
-                        self.play("transmission");
-                        self.status("Mission started");
+                        self.start_briefed_mission();
                     }
                 }
                 Key::Right | Key::Down if retail => {
@@ -9159,6 +9274,138 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    /// Leave the briefing and start the mission.
+    fn start_briefed_mission(&mut self) {
+        self.ready = None;
+        self.briefing = false;
+        self.last_step = Instant::now();
+        self.play("ui_click");
+        self.status("Mission started");
+    }
+
+    /// Start (or Replay) the ready-room script from its first action.
+    fn enter_ready_room(&mut self) {
+        self.ready = self.ready_script.clone();
+        self.ready_epoch = Instant::now();
+        self.ready_players =
+            std::array::from_fn(|i| galaxycraft::portrait::PortraitPlayer::new(i as u32 + 1));
+        let headless = self.headless;
+        if self.ready_glow.is_none() {
+            self.ready_glow = MenuClip::open_at(
+                self.assets_root.join("glue/readyt/start.webm"),
+                0.0,
+                headless,
+            );
+        }
+        // The projector intro plays once per room; captures and pinned
+        // scripts past its 4 s show the loop.
+        self.ready_proj = (!headless && self.ready_at.is_none_or(|t| t < 4000))
+            .then(|| MenuClip::open_at(self.assets_root.join("glue/readyt/proj.webm"), 0.0, false))
+            .flatten();
+        if self.ready_proloop.is_none() {
+            self.ready_proloop = MenuClip::open_at(
+                self.assets_root.join("glue/readyt/proloop.webm"),
+                0.0,
+                headless,
+            );
+        }
+        if self.ready.is_some() {
+            self.update_briefing();
+        }
+    }
+
+    /// Ready-room script clock (ms), pinned in scripted runs.  The script
+    /// starts [`READY_SCRIPT_DELAY_MS`] after the room appears.
+    fn ready_clock_ms(&self) -> u64 {
+        self.ready_at.unwrap_or_else(|| {
+            (self.ready_epoch.elapsed().as_millis() as u64).saturating_sub(READY_SCRIPT_DELAY_MS)
+        })
+    }
+
+    /// Whether the ready-room script has started (after the fade-in).
+    fn ready_script_running(&self) -> bool {
+        self.ready_at.is_some()
+            || self.ready_epoch.elapsed().as_millis() as u64 >= READY_SCRIPT_DELAY_MS
+    }
+
+    /// Advance the briefing: establishing-shot pages leave after their
+    /// `DISPLAYTIME`, then the ready-room script runs and plays its WAVs.
+    fn update_briefing(&mut self) {
+        if self.ready.is_none() {
+            let shown = self.briefing_page_epoch.elapsed().as_millis() as u64;
+            let due = self
+                .briefing_pages
+                .get(self.briefing_page)
+                .and_then(|p| p.display_ms)
+                .is_some_and(|ms| shown >= ms as u64);
+            if due && self.ready_at.is_none() && !self.headless {
+                if self.briefing_page + 1 < self.briefing_pages.len() {
+                    self.briefing_page += 1;
+                    self.briefing_page_epoch = Instant::now();
+                    self.refresh_briefing_poster();
+                } else if self.ready_script.is_some() {
+                    self.enter_ready_room();
+                }
+            }
+            return;
+        }
+        if !self.ready_script_running() {
+            return;
+        }
+        let now = self.ready_clock_ms();
+        let events = self
+            .ready
+            .as_mut()
+            .map(|r| r.advance(now))
+            .unwrap_or_default();
+        for galaxycraft::ready_room::ReadyEvent::Wav { string } in events {
+            let samples = self
+                .scenario
+                .string(string)
+                .zip(self.maps.get(self.map_index))
+                .and_then(|(raw, map)| {
+                    galaxycraft::transmission::find_map_wav(
+                        &map.path,
+                        raw,
+                        self.game_options.original_voice_overs,
+                    )
+                })
+                .and_then(|p| std::fs::read(p).ok())
+                .and_then(|bytes| galaxycraft::audio::decode_sound(&bytes));
+            if let Some(samples) = samples {
+                self.audio.play(Some(&samples));
+            }
+        }
+    }
+
+    /// Ready-room button under a window point: Start, Replay or Cancel
+    /// (`glurdyt` FLCBTN 13 hot box, 20 and 14), as the key it stands for.
+    fn ready_button_at(&self, mx: i32, my: i32) -> Option<Key> {
+        let dialog = self.glue.as_ref()?.ready_t.as_ref()?;
+        let (cx, _, _, ch) = self.content_box;
+        let k = ch as f32 / 1440.0;
+        let hit = |r: UiRect| {
+            let x0 = cx + ((320 + r.x * 3) as f32 * k) as i32;
+            let y0 = (r.y as f32 * 3.0 * k) as i32;
+            let (w, h) = ((r.w as f32 * 3.0 * k) as i32, (r.h as f32 * 3.0 * k) as i32);
+            mx >= x0 && mx < x0 + w && my >= y0 && my < y0 + h
+        };
+        let control = |id: i32| dialog.controls.iter().find(|c| c.id == id).map(|c| c.abs);
+        let start_hot = dialog
+            .controls
+            .iter()
+            .find(|c| c.kind == "HOTBOX")
+            .map(|c| c.abs);
+        [
+            (start_hot, Key::S),
+            (control(20), Key::R),
+            (control(14), Key::C),
+        ]
+        .into_iter()
+        .find(|(r, _)| r.is_some_and(hit))
+        .map(|(_, k)| k)
     }
 
     fn refresh_briefing_poster(&mut self) {
@@ -9384,6 +9631,26 @@ impl App {
                 self.intro_clips.join("+"),
                 name(self.intro_pending_map)
             )
+        } else if let Some(room) = self.ready.as_ref().filter(|_| self.briefing) {
+            let line = room
+                .transmission
+                .and_then(|l| self.scenario.string(l.string))
+                .map(|t| t.trim().chars().take(24).collect::<String>())
+                .unwrap_or_default();
+            let objectives = room
+                .objectives
+                .and_then(|s| self.scenario.string(s))
+                .and_then(|t| t.lines().find(|l| !l.trim().is_empty()).map(str::to_string))
+                .unwrap_or_default();
+            format!(
+                "flow=ready map={} t={} portraits={:?} speaking={:?} line={line:?} objectives={:?} finished={}",
+                name(Some(self.map_index)),
+                self.ready_clock_ms(),
+                room.portraits,
+                room.speaking.map(|s| s.0),
+                objectives.trim(),
+                room.finished()
+            )
         } else if self.briefing {
             let first = self
                 .briefing_pages
@@ -9572,6 +9839,10 @@ impl App {
     }
 
     fn draw_briefing(&mut self, fb: &mut Framebuffer) {
+        if self.ready.is_some() {
+            self.draw_ready_room(fb);
+            return;
+        }
         if !self.briefing_pages.is_empty() {
             self.draw_retail_briefing(fb);
             return;
@@ -9632,6 +9903,312 @@ impl App {
             Rgb::new(150, 180, 210),
             1,
         );
+    }
+
+    /// The Terran ready room (`glurdyt.ui.json`, 640x480 at 3x in the 16:9
+    /// content box): `palrt` backdrop, the four portrait slots, the HD
+    /// frames (anchored top-left, or top-right with `RC_ANCHOR_TOPRIGHT`,
+    /// the HD art being wider than the SD rect), the transmission box, the
+    /// objectives and the Start / Replay / Cancel labels.
+    fn draw_ready_room(&mut self, fb: &mut Framebuffer) {
+        fb.clear(Rgb::new(0, 0, 0));
+        let Some(glue) = self.glue.take() else {
+            return;
+        };
+        self.draw_ready_room_with(fb, &glue);
+        self.glue = Some(glue);
+    }
+
+    fn draw_ready_room_with(&mut self, fb: &mut Framebuffer, glue: &GlueArt) {
+        let (cx, _cy, cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let Some(dialog) = glue.ready_t.as_ref() else {
+            return;
+        };
+        if let Some(bg) = &glue.ready_backdrop {
+            bg.draw_scaled(fb, cx, 0, cw, ch);
+        }
+        let sx = |ux: f32| cx + ((320.0 + ux * 3.0) * k).round() as i32;
+        let sy = |uy: f32| (uy * 3.0 * k).round() as i32;
+        let sl = |u: f32| (u * 3.0 * k).round() as i32;
+        // Start hologram: `rez/flc.json` places `glue\ReadyT\start.webm`
+        // at [28, -50, 197, 289] from FLCBTN 13; it is `FLC_FADED` (half
+        // alpha, fitted on the recording: 17.7 -> 14.5 in the region) until
+        // the pointer is on Start.
+        if let Some(button) = dialog.controls.iter().find(|c| c.id == 13).map(|c| c.abs) {
+            let hot = self
+                .pointer
+                .and_then(|(mx, my)| self.ready_button_at(mx, my))
+                == Some(Key::S);
+            // Projector: the one-shot intro until it ends, then the loop.
+            let proj_running = self.ready_proj.as_ref().is_some_and(|c| {
+                c.started.elapsed().as_secs_f32() < c.info.duration_ms.unwrap_or(0) as f32 / 1000.0
+            });
+            let proj = if proj_running {
+                self.ready_proj.as_mut()
+            } else {
+                self.ready_proloop.as_mut()
+            };
+            if let Some(frame) = proj.and_then(|c| c.frame()) {
+                // Opaque wall-and-projector footage (alpha 255 throughout):
+                // drawn over the backdrop, never added to it.
+                let (ux, uy) = (button.x as f32 + 42.0, button.y as f32 - 50.0);
+                draw_poster_rgba_additive(
+                    fb,
+                    frame,
+                    (sx(ux), sy(uy), sl(197.0), sl(289.0)),
+                    0.0,
+                    false,
+                );
+            }
+            if let Some(frame) = self.ready_glow.as_mut().and_then(|c| c.frame()) {
+                let (ux, uy) = (button.x as f32 + 28.0, button.y as f32 - 50.0);
+                draw_poster_rgba_additive(
+                    fb,
+                    frame,
+                    (sx(ux), sy(uy), sl(197.0), sl(289.0)),
+                    if hot { 0.0 } else { 0.5 },
+                    false,
+                );
+            }
+        }
+        let now = self.ready_clock_ms();
+        let Some(room) = self.ready.clone() else {
+            return;
+        };
+        for (id, img) in &glue.ready_art {
+            let Some(c) = dialog.controls.iter().find(|c| c.id == *id) else {
+                continue;
+            };
+            let visible = c.has_flag("WS_VISIBLE") || (*id == -13 && room.skip_tutorial);
+            if !visible {
+                continue;
+            }
+            let w = (img.width as f32 * 0.75 * k).round() as i32;
+            let h = (img.height as f32 * 0.75 * k).round() as i32;
+            let r = c.abs;
+            let x = if c.has_flag("RC_ANCHOR_TOPRIGHT") {
+                sx((r.x + r.w) as f32) - w
+            } else {
+                sx(r.x as f32)
+            };
+            img.draw_scaled(fb, x, sy(r.y as f32), w, h);
+        }
+        // Portraits over the frames (the layout lists the `gluRdyT-5..8`
+        // slots, ids 15..18, after the RECT art).
+        for (slot, id) in [15, 16, 17, 18].into_iter().enumerate() {
+            let (Some(unit), Some(c)) = (
+                room.portraits[slot],
+                dialog.controls.iter().find(|c| c.id == id),
+            ) else {
+                continue;
+            };
+            let talking = room.speaking.is_some_and(|(s, _)| s == slot);
+            let r = c.abs;
+            if let Some(frame) = self.ready_portrait_frame(slot, unit, talking, now as f64 / 1000.0)
+            {
+                let (fx, fy, fw, fh) = READY_PORTRAIT_FACE;
+                let (px, py, pw, ph) = (sx(r.x as f32 + fx), sy(r.y as f32 + fy), sl(fw), sl(fh));
+                blit_opaque(&frame, fb, px, py, pw, ph);
+                // Transmission scanlines: every other UI row at half
+                // brightness (retail: 6 content px period, dark rows where
+                // y/3 is odd, +-40 luminance).
+                for y in py.max(0)..(py + ph).min(fb.height) {
+                    if ((y as f32 / (3.0 * k)) as i32) % 2 == 1 {
+                        let row = y as usize * fb.width as usize;
+                        for x in px.max(0)..(px + pw).min(fb.width) {
+                            let p = &mut fb.pixels[row + x as usize];
+                            *p = Rgb(*p).blend(Rgb::new(0, 0, 0), READY_SCANLINE_DIM).0;
+                        }
+                    }
+                }
+            }
+            if let Some((idle, hot)) = glue.ready_slot_frames.get(slot) {
+                if let Some(img) = if talking { hot.as_ref() } else { idle.as_ref() } {
+                    let w = (img.width as f32 * 0.75 * k).round() as i32;
+                    let h = (img.height as f32 * 0.75 * k).round() as i32;
+                    img.draw_scaled(fb, sx(r.x as f32), sy(r.y as f32), w, h);
+                }
+            }
+        }
+        let to_content_x = |ux: f32| 320.0 + ux * 3.0;
+        let text_color = GLUE_INFO;
+        // Transmission text (LTEXT -10): wrapped to the box and scrolled up
+        // over the line's duration, clipped to the box.
+        if let Some(c) = dialog.controls.iter().find(|c| c.id == -10) {
+            let r = c.abs;
+            let mut lines: Vec<(String, f32)> = Vec::new();
+            if let Some(line) = room.transmission {
+                let text = self.scenario.string(line.string).unwrap_or("").to_string();
+                let max_w = r.w as f32 * 3.0;
+                for para in text.replace("\r\n", "\n").split('\n') {
+                    let words = wrap_words(para.trim(), max_w as i32, |t| {
+                        self.glue_measure(t, READY_TEXT_PX, GlueFace::Hud) as i32
+                    });
+                    for w in words {
+                        lines.push((w, 0.0));
+                    }
+                }
+                let box_h = r.h as f32 * 3.0;
+                let text_h = lines.len() as f32 * READY_TEXT_PITCH;
+                let progress = ((now.saturating_sub(line.start_ms)) as f32 / line.ms.max(1) as f32)
+                    .clamp(0.0, 1.0);
+                let scroll = progress * (text_h - box_h + READY_TEXT_PITCH).max(0.0);
+                let mut clip = Framebuffer::new(fb.width as usize, fb.height as usize);
+                clip.pixels.copy_from_slice(&fb.pixels);
+                for (i, (t, _)) in lines.iter().enumerate() {
+                    let base =
+                        r.y as f32 * 3.0 + READY_TEXT_BASE + i as f32 * READY_TEXT_PITCH - scroll;
+                    // Lines partly inside the box are drawn and clipped, as
+                    // retail shows the next line cut at the bottom edge.
+                    if base < r.y as f32 * 3.0 || base > (r.y + r.h) as f32 * 3.0 + READY_TEXT_PX {
+                        continue;
+                    }
+                    self.glue_text_face(
+                        &mut clip,
+                        to_content_x(r.x as f32),
+                        base,
+                        t,
+                        READY_TEXT_PX,
+                        text_color,
+                        None,
+                        GlueFace::Hud,
+                    );
+                }
+                let (y0, y1) = (sy(r.y as f32).max(0), sy((r.y + r.h) as f32).min(fb.height));
+                let stride = fb.width as usize;
+                for y in y0..y1 {
+                    let row = y as usize * stride;
+                    fb.pixels[row..row + stride].copy_from_slice(&clip.pixels[row..row + stride]);
+                }
+            }
+            // Text Message (CTEXT -14): "End of Briefing." centred.
+            if let Some(m) = room.message.filter(|m| now < m.start_ms + m.ms as u64) {
+                let text = self
+                    .scenario
+                    .string(m.string)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let w = self.glue_measure(&text, READY_TEXT_PX, GlueFace::Hud);
+                self.glue_text_face(
+                    fb,
+                    to_content_x(r.x as f32 + r.w as f32 / 2.0) - w / 2.0,
+                    r.y as f32 * 3.0 + READY_TEXT_BASE,
+                    &text,
+                    READY_TEXT_PX,
+                    text_color,
+                    None,
+                    GlueFace::Hud,
+                );
+            }
+        }
+        // Objectives heading (LTEXT -1, `gluRdyT-13`) and list (LTEXT -11).
+        if let Some(c) = dialog.controls.iter().find(|c| c.id == -1) {
+            self.glue_text_face(
+                fb,
+                to_content_x(c.abs.x as f32),
+                c.abs.y as f32 * 3.0 + READY_HEAD_BASE,
+                "Objectives",
+                READY_HEAD_PX,
+                text_color,
+                None,
+                GlueFace::Big,
+            );
+        }
+        if let (Some(c), Some(obj)) = (
+            dialog.controls.iter().find(|c| c.id == -11),
+            room.objectives
+                .and_then(|s| self.scenario.string(s))
+                .map(str::to_string),
+        ) {
+            for (i, line) in obj
+                .replace("\r\n", "\n")
+                .split('\n')
+                .filter(|l| !l.trim().is_empty())
+                .enumerate()
+            {
+                self.glue_text_face(
+                    fb,
+                    to_content_x(c.abs.x as f32),
+                    c.abs.y as f32 * 3.0 + READY_OBJ_BASE + i as f32 * READY_OBJ_PITCH,
+                    line.trim(),
+                    READY_OBJ_PX,
+                    text_color,
+                    None,
+                    GlueFace::Hud,
+                );
+            }
+        }
+        // Buttons: Start label in the FLCBTN 13 text box, Replay (20) and
+        // Cancel (14) centred in their rects.
+        let start = dialog
+            .controls
+            .iter()
+            .find(|c| c.kind == "TEXTBOX" && c.parent.is_some())
+            .map(|c| {
+                // The child box reads (left, top, right, bottom).
+                let p = dialog.controls[c.parent.unwrap_or(0)].abs;
+                let (l, t, rr, b) = (c.rect.x, c.rect.y, c.rect.w, c.rect.h);
+                ((p.x + (l + rr) / 2) as f32, (p.y + (t + b) / 2) as f32)
+            });
+        let centre = |id: i32| {
+            dialog.controls.iter().find(|c| c.id == id).map(|c| {
+                (
+                    (c.abs.x as f32 + c.abs.w as f32 / 2.0),
+                    (c.abs.y as f32 + c.abs.h as f32 / 2.0),
+                )
+            })
+        };
+        for (label, at) in [
+            ("Start", start),
+            ("Replay", centre(20)),
+            ("Cancel", centre(14)),
+        ] {
+            let Some((ux, uy)) = at else {
+                continue;
+            };
+            let w = self.glue_measure(label, GLUE_BIGGER_PX, GlueFace::Bigger);
+            self.glue_text_face(
+                fb,
+                to_content_x(ux) - w / 2.0,
+                uy * 3.0 + GLUE_BIGGER_PX * GLUE_CAP / 2.0,
+                label,
+                GLUE_BIGGER_PX,
+                GLUE_GREEN,
+                None,
+                GlueFace::Bigger,
+            );
+        }
+    }
+
+    /// Animated portrait of a ready-room slot (idle or talking clips, as
+    /// the HUD portrait).
+    fn ready_portrait_frame(
+        &mut self,
+        slot: usize,
+        type_id: u16,
+        talking: bool,
+        now: f64,
+    ) -> Option<PosterFrame> {
+        let portrait = self.data.unit(type_id).portrait;
+        let (dat, _) = self.portrait_tables()?.clone();
+        let cur = self.ready_players[slot].current;
+        if cur.map(|c| (c.portrait, c.talking)) != Some((portrait, talking)) {
+            self.ready_players[slot].set(&dat, Some(portrait), talking, true, now);
+        }
+        let fps = galaxycraft::portrait::PORTRAIT_FPS as f64;
+        for _ in 0..256 {
+            let clip = self.ready_players[slot].current?;
+            let frames = self.portrait_clip_frames(clip)?;
+            let at = ((now - self.ready_players[slot].started).max(0.0) * fps) as usize;
+            if at < frames.len() {
+                return Some(frames[at].clone());
+            }
+            let ended = self.ready_players[slot].started + frames.len() as f64 / fps;
+            self.ready_players[slot].clip_ended(&dat, &mut self.crt_rand, talking, ended);
+        }
+        None
     }
 
     /// Draw a page of the retail briefing script over its shipped backdrop.
@@ -11037,6 +11614,7 @@ impl App {
             return;
         }
         if self.briefing {
+            self.update_briefing();
             return;
         }
         self.rotate_music();
