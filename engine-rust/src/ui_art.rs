@@ -637,11 +637,11 @@ impl ConsoleArt {
         frame: usize,
         dest: (i32, i32, i32, i32),
     ) -> bool {
-        if let Some(grp) = &self.command_buttons_hd {
-            if let Some(image) = grp.frame(frame) {
-                image.draw_scaled(fb, dest.0, dest.1, dest.2, dest.3);
-                return true;
-            }
+        if let Some(grp) = &self.command_buttons_hd
+            && let Some(image) = grp.frame(frame)
+        {
+            image.draw_scaled(fb, dest.0, dest.1, dest.2, dest.3);
+            return true;
         }
         let Some(grp) = &self.command_buttons else {
             return false;

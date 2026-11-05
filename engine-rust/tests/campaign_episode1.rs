@@ -72,10 +72,11 @@ fn episode_one_heroes_are_rescued_and_the_missions_keep_running() {
         assert!(raynor.alive, "mission {m}: Raynor survives the opening");
         assert_eq!(raynor.owner as usize, human, "mission {m}: rescued");
         assert!(!w.players[human].defeated, "mission {m}: no early defeat");
-        assert!(w
-            .rescues
-            .iter()
-            .any(|&(id, o)| id == hero_id && o as usize == human));
+        assert!(
+            w.rescues
+                .iter()
+                .any(|&(id, o)| id == hero_id && o as usize == human)
+        );
     }
     // 2 Wasteland: Raynor waits to be found ("Find Raynor"); the Zerg next
     // to him do not take him.
@@ -102,10 +103,11 @@ fn the_trump_card_opens_with_three_lines_in_sequence() {
         w.step();
         let t = w.triggers.as_ref().expect("triggers");
         for c in &t.cues[seen..] {
-            if let TriggerCue::Text { player, ms, .. } = *c {
-                if player == human && ms > 0 {
-                    at.push(tick);
-                }
+            if let TriggerCue::Text { player, ms, .. } = *c
+                && player == human
+                && ms > 0
+            {
+                at.push(tick);
             }
         }
         seen = t.cues.len();
@@ -180,10 +182,11 @@ fn wasteland_ready_room_follows_the_retail_recording() {
     assert_eq!(room.speaking.map(|s| s.0), Some(3), "the Adjutant closes");
     room.advance(68_797);
     let end = room.message.expect("End of Briefing");
-    assert!(sc
-        .string(end.string)
-        .unwrap_or("")
-        .contains("End of Briefing"));
+    assert!(
+        sc.string(end.string)
+            .unwrap_or("")
+            .contains("End of Briefing")
+    );
     assert!(room.finished());
 }
 
@@ -310,7 +313,7 @@ fn every_episode_one_ready_room_runs_to_the_end_with_real_portraits() {
         eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
         return;
     };
-    use galaxycraft::portrait::{clip_path, PortData, PortraitClip};
+    use galaxycraft::portrait::{PortData, PortraitClip, clip_path};
     let data = install.game_data().expect("game data");
     let dat = PortData::parse(&install.read("arr/portdata.dat").expect("portdata")).expect("parse");
     let tbl =
@@ -374,14 +377,14 @@ fn boot_camp_opening_follows_the_retail_recording() {
         w.step();
         let t = w.triggers.as_ref().expect("triggers");
         for c in &t.cues[seen..] {
-            if let TriggerCue::Text { player, string, .. } = *c {
-                if player == human {
-                    let text = sc.string(string).unwrap_or("").trim_start().to_string();
-                    cues.push((
-                        tick as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32,
-                        text,
-                    ));
-                }
+            if let TriggerCue::Text { player, string, .. } = *c
+                && player == human
+            {
+                let text = sc.string(string).unwrap_or("").trim_start().to_string();
+                cues.push((
+                    tick as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32,
+                    text,
+                ));
             }
         }
         seen = t.cues.len();
@@ -467,11 +470,11 @@ fn backwater_station_ending_follows_the_retail_recording() {
         w.step();
         let t = w.triggers.as_ref().expect("triggers");
         for c in &t.cues[seen..] {
-            if let TriggerCue::Text { player, string, .. } = *c {
-                if player == human {
-                    let text = sc.string(string).unwrap_or("").trim_start().to_string();
-                    lines.push((w.tick, text));
-                }
+            if let TriggerCue::Text { player, string, .. } = *c
+                && player == human
+            {
+                let text = sc.string(string).unwrap_or("").trim_start().to_string();
+                lines.push((w.tick, text));
             }
         }
         seen = t.cues.len();

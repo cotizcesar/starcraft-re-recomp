@@ -42,11 +42,7 @@ pub fn fp(whole: i32) -> i32 {
 /// ceiling of a unit's remaining hit points).
 #[inline]
 pub fn ceil_points(value: i32) -> i32 {
-    if value <= 0 {
-        0
-    } else {
-        (value + FP - 1) / FP
-    }
+    if value <= 0 { 0 } else { (value + FP - 1) / FP }
 }
 
 /// Everything the damage routine needs to know about the defender.
@@ -662,7 +658,7 @@ pub fn duel(data: GameData, left: u16, right: u16, max_ticks: u64) -> (CombatSim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{unit_ids, weapon_ids, DamageType, GameData, UnitSize};
+    use crate::data::{DamageType, GameData, UnitSize, unit_ids, weapon_ids};
 
     fn data() -> GameData {
         GameData::bundled().unwrap()

@@ -155,11 +155,10 @@ pub fn spec_by_va(va: u32) -> Option<&'static HandlerSpec> {
 /// `guard_check_icall` sites).
 pub fn spec_for_row(row: u8) -> Option<&'static HandlerSpec> {
     let row_spec = spec(row)?;
-    if let Some(va) = row_spec.handler {
-        if let Some(handler) = spec_by_va(va) {
+    if let Some(va) = row_spec.handler
+        && let Some(handler) = spec_by_va(va) {
             return Some(handler);
         }
-    }
     if let OrderLane::Alias(target) = row_spec.lane {
         return spec_for_row(target);
     }

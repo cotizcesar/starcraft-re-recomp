@@ -12,8 +12,8 @@ use std::fmt;
 
 use crate::iscript::Iscript;
 use crate::tables::{
-    self, ImageType, OrderType, SpriteType, StringTable, TechType, UpgradeType, IMAGE_COUNT,
-    ORDER_COUNT, SPRITE_COUNT, TECH_COUNT, UPGRADE_COUNT,
+    self, IMAGE_COUNT, ImageType, ORDER_COUNT, OrderType, SPRITE_COUNT, SpriteType, StringTable,
+    TECH_COUNT, TechType, UPGRADE_COUNT, UpgradeType,
 };
 pub const UNIT_COUNT: usize = 228;
 pub const WEAPON_COUNT: usize = 130;
@@ -507,12 +507,12 @@ impl GameData {
         let Some(flingy) = self.flingy(unit.flingy) else {
             return 0;
         };
-        if let Some(sprite) = self.sprite(flingy.sprite) {
-            if let Some(image) = self.image(sprite.image) {
-                let speed = self.iscript.walk_speed(image.iscript_id as u16);
-                if speed > 0 {
-                    return speed;
-                }
+        if let Some(sprite) = self.sprite(flingy.sprite)
+            && let Some(image) = self.image(sprite.image)
+        {
+            let speed = self.iscript.walk_speed(image.iscript_id as u16);
+            if speed > 0 {
+                return speed;
             }
         }
         flingy.top_speed.max(0)

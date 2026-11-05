@@ -115,11 +115,11 @@ impl SimpleAi {
             .map(|u| (u.order == Order::Idle, u.carry, u.id))
             .collect();
         candidates.sort_by_key(|&(idle, carry, id)| (!idle, carry, id));
-        if gas_workers < 3 {
-            if let Some(g) = gas_building {
-                for (_, _, worker) in candidates.iter().take(3 - gas_workers) {
-                    let _ = world.issue(*worker, Order::Gather { resource: g });
-                }
+        if gas_workers < 3
+            && let Some(g) = gas_building
+        {
+            for (_, _, worker) in candidates.iter().take(3 - gas_workers) {
+                let _ = world.issue(*worker, Order::Gather { resource: g });
             }
         }
         for (idle, _, worker) in candidates {
@@ -490,10 +490,12 @@ mod tests {
             world.step();
         }
         assert!(world.players[0].minerals < 2000);
-        assert!(world
-            .units
-            .iter()
-            .any(|u| u.alive && u.owner == 0 && is_worker(u.type_id) && u.type_id == uid::SCV));
+        assert!(
+            world
+                .units
+                .iter()
+                .any(|u| u.alive && u.owner == 0 && is_worker(u.type_id) && u.type_id == uid::SCV)
+        );
         let _ = (cc, enemy);
     }
 }

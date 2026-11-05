@@ -860,11 +860,12 @@ mod tests {
             back.set_pair(key, v);
         }
         assert_eq!(back, o);
-        assert!(o
-            .to_pairs()
-            .iter()
-            .zip(d.to_pairs())
-            .all(|(a, b)| a.1 != b.1));
+        assert!(
+            o.to_pairs()
+                .iter()
+                .zip(d.to_pairs())
+                .all(|(a, b)| a.1 != b.1)
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@
 //! Transmissions holding the script for their duration.
 
 use crate::map::Scenario;
-use crate::trigger::{transmission_ms, TriggerAction, TriggerSystem};
+use crate::trigger::{TriggerAction, TriggerSystem, transmission_ms};
 
 /// Briefing action ids (`MBRF`).
 pub mod action {

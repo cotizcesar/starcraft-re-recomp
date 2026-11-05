@@ -88,10 +88,10 @@ impl SfxTable {
     pub fn folders(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for id in 0..self.paths.len() as u16 {
-            if let Some(folder) = self.folder(id) {
-                if !out.contains(&folder) {
-                    out.push(folder);
-                }
+            if let Some(folder) = self.folder(id)
+                && !out.contains(&folder)
+            {
+                out.push(folder);
             }
         }
         out

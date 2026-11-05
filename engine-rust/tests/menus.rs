@@ -8,7 +8,7 @@
 //! a screen the screenshots require.
 
 use galaxycraft::menu::{
-    episode_number, GameMenuItem, HotkeyRace, LobbyRace, MenuScreen, OptionsTab,
+    GameMenuItem, HotkeyRace, LobbyRace, MenuScreen, OptionsTab, episode_number,
 };
 
 #[test]

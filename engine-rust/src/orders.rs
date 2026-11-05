@@ -1462,11 +1462,11 @@ mod tests {
                 }
                 _ => {}
             }
-            if let Some(f) = s.handler {
-                if fast.contains(&s.id) {
-                    fast_rows.insert(s.id);
-                    assert!(f != 0);
-                }
+            if let Some(f) = s.handler
+                && fast.contains(&s.id)
+            {
+                fast_rows.insert(s.id);
+                assert!(f != 0);
             }
         }
         for id in fast {

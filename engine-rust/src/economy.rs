@@ -244,7 +244,7 @@ pub fn default_terran_economy() -> PlayerEconomy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{unit_ids, GameData};
+    use crate::data::{GameData, unit_ids};
 
     #[test]
     fn marine_cost_and_build_time_come_from_units_dat() {

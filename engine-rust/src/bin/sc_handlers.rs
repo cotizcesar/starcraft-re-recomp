@@ -12,8 +12,8 @@
 
 use std::collections::BTreeSet;
 
-use galaxycraft::handlers::{spec_by_va, HandlerFamily, HANDLERS};
-use galaxycraft::orders::{OrderLane, ORDER_SPECS};
+use galaxycraft::handlers::{HANDLERS, HandlerFamily, spec_by_va};
+use galaxycraft::orders::{ORDER_SPECS, OrderLane};
 
 fn main() {
     let full = std::env::args().any(|a| a == "--full");

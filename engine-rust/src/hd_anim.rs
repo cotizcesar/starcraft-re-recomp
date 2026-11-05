@@ -153,10 +153,10 @@ impl AnimFile {
                     }
                 }
             }
-            if let Some(first) = first_dds {
-                if pos > first {
-                    break;
-                }
+            if let Some(first) = first_dds
+                && pos > first
+            {
+                break;
             }
             pos += 2;
         }

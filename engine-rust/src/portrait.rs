@@ -99,11 +99,7 @@ pub fn idle_clip_for_roll(weights: [u8; 4], r: u32) -> u8 {
 /// Talking clip for a roll in `0..3`, never the previous one.
 pub fn talk_clip_for_roll(roll: u32, last: u8) -> u8 {
     let c = (roll % 3) as u8;
-    if c == last {
-        (c + 2) % 3
-    } else {
-        c
-    }
+    if c == last { (c + 2) % 3 } else { c }
 }
 
 /// Next idle clip when one ends (`0x32cfa0`).  `rand() >> 8` only spans
@@ -212,10 +208,11 @@ impl PortraitPlayer {
             self.current = None;
             return;
         };
-        if let Some(cur) = self.current {
-            if cur.portrait == portrait && cur.talking == talking {
-                return;
-            }
+        if let Some(cur) = self.current
+            && cur.portrait == portrait
+            && cur.talking == talking
+        {
+            return;
         }
         let clip = match (animated, talking) {
             (false, _) => 0,

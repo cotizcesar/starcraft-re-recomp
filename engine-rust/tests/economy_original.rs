@@ -1,7 +1,7 @@
 //! Production rules checked against the original 228-unit table.
 
-use galaxycraft::data::{unit_ids, GameData};
-use galaxycraft::economy::{build_ticks, PlayerEconomy, TrainError};
+use galaxycraft::data::{GameData, unit_ids};
+use galaxycraft::economy::{PlayerEconomy, TrainError, build_ticks};
 
 #[test]
 fn every_unit_can_be_queued_with_its_table_cost() {

@@ -561,11 +561,7 @@ impl RegionMap {
             return None;
         }
         let v = self.labels[(tile.1 * self.width + tile.0) as usize];
-        if v == u32::MAX {
-            None
-        } else {
-            Some(v)
-        }
+        if v == u32::MAX { None } else { Some(v) }
     }
 
     pub fn connected(&self, a: (i32, i32), b: (i32, i32)) -> bool {
@@ -949,10 +945,10 @@ pub fn find_path_with_regions(
         req.half_height,
         12,
     )?;
-    if let Some(regions) = regions {
-        if !regions.connected(start, goal) {
-            return None;
-        }
+    if let Some(regions) = regions
+        && !regions.connected(start, goal)
+    {
+        return None;
     }
     if start == goal {
         return Some(Path {
@@ -1061,10 +1057,10 @@ pub fn find_path_with_regions(
         req.half_width,
         req.half_height,
     );
-    if goal == (cell_of(req.goal.0), cell_of(req.goal.1)) {
-        if let Some(last) = waypoints.last_mut() {
-            *last = req.goal;
-        }
+    if goal == (cell_of(req.goal.0), cell_of(req.goal.1))
+        && let Some(last) = waypoints.last_mut()
+    {
+        *last = req.goal;
     }
     if waypoints.is_empty() {
         waypoints.push(req.goal);

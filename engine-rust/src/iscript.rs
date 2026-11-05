@@ -257,11 +257,7 @@ impl Iscript {
     pub fn animation_offset(&self, id: u16, anim: usize) -> Option<u16> {
         let offsets = self.scripts.get(&id)?;
         let &offset = offsets.get(anim)?;
-        if offset == 0 {
-            None
-        } else {
-            Some(offset)
-        }
+        if offset == 0 { None } else { Some(offset) }
     }
 
     /// Walking speed in 1/256 pixels per logical tick.  Zero means the script
@@ -514,10 +510,10 @@ impl Iscript {
                 0x1e => {
                     // randcondjmp <chance> <offset>
                     let chance = self.read_u8(st).unwrap_or(0) as u32;
-                    if let Some(target) = self.read_u16(st) {
-                        if (ctx.next_random() & 0xff) < chance {
-                            st.pc = target;
-                        }
+                    if let Some(target) = self.read_u16(st)
+                        && (ctx.next_random() & 0xff) < chance
+                    {
+                        st.pc = target;
                     }
                 }
                 0x1f => {
@@ -883,12 +879,12 @@ impl Iscript {
             }
             p += len;
         }
-        if let Some(raw) = forced_speed {
-            if !cycle.is_empty() {
-                for s in &mut cycle {
-                    if *s == 0 {
-                        *s = raw;
-                    }
+        if let Some(raw) = forced_speed
+            && !cycle.is_empty()
+        {
+            for s in &mut cycle {
+                if *s == 0 {
+                    *s = raw;
                 }
             }
         }

@@ -105,8 +105,8 @@ fn parse(blob: &[u8]) -> Option<Correction> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::ZlibEncoder;
     use flate2::Compression;
+    use flate2::write::ZlibEncoder;
     use std::io::Write;
 
     fn pack(version: u8, width: u32, height: u32, raw: &[u8]) -> Vec<u8> {

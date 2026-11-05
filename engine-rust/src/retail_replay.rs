@@ -149,17 +149,18 @@ impl RetailReplay {
             if off + 4 <= bytes.len() {
                 let size =
                     u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap_or([0; 4])) as usize;
-                if size > 8 && size <= bytes.len() - off - 4 {
-                    if let Some(chunk) = inflate(&bytes[off + 4..off + 4 + size]) {
-                        if chunk.starts_with(b"VER ") {
-                            out.chk.extend_from_slice(&chunk);
-                            in_chk = true;
-                        } else if in_chk {
-                            out.chk.extend_from_slice(&chunk);
-                        }
-                        off += 4 + size;
-                        continue;
+                if size > 8
+                    && size <= bytes.len() - off - 4
+                    && let Some(chunk) = inflate(&bytes[off + 4..off + 4 + size])
+                {
+                    if chunk.starts_with(b"VER ") {
+                        out.chk.extend_from_slice(&chunk);
+                        in_chk = true;
+                    } else if in_chk {
+                        out.chk.extend_from_slice(&chunk);
                     }
+                    off += 4 + size;
+                    continue;
                 }
             }
             break;
@@ -179,13 +180,13 @@ impl RetailReplay {
             out.sections.push(String::from_utf8_lossy(tag).to_string());
             // The section body may itself be a [count][size][zlib] block.
             let body = &rest[8..8 + size];
-            if let Some((data, _)) = read_block(body, 0) {
-                if let Some(first) = c_strings(&data).first() {
-                    out.slots.push(ReplaySlot {
-                        name: first.clone(),
-                        race: 0,
-                    });
-                }
+            if let Some((data, _)) = read_block(body, 0)
+                && let Some(first) = c_strings(&data).first()
+            {
+                out.slots.push(ReplaySlot {
+                    name: first.clone(),
+                    race: 0,
+                });
             }
             rest = &rest[8 + size..];
         }

@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use galaxycraft::audio::{MusicBank, SoundBank};
 use galaxycraft::map::Scenario;
-use galaxycraft::render::{era_name, Framebuffer, SpriteBank, Tileset};
-use galaxycraft::retail::{RetailInstall, FIXTURE_SOURCES, SOUND_PATHS};
+use galaxycraft::render::{Framebuffer, SpriteBank, Tileset, era_name};
+use galaxycraft::retail::{FIXTURE_SOURCES, RetailInstall, SOUND_PATHS};
 use galaxycraft::sfx::SfxTable;
 use galaxycraft::sim::{Race, World};
 use galaxycraft::ui_art::{ConsoleArt, GlueArt};

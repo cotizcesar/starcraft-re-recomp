@@ -41,7 +41,7 @@ fn marine_portrait_decodes_from_the_install() {
 /// shipped 10 fps (played frame by frame by `sc_view`).
 #[test]
 fn portrait_clips_resolve_from_portdata_and_decode_as_motion() {
-    use galaxycraft::portrait::{clip_path, PortData, PortraitClip, PORTRAITS, PORTRAIT_FPS};
+    use galaxycraft::portrait::{PORTRAIT_FPS, PORTRAITS, PortData, PortraitClip, clip_path};
     let Some(root) = install_root() else {
         eprintln!("skip: no retail install");
         return;

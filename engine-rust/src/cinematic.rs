@@ -16,11 +16,11 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::sync::Arc;
 
-use crate::video::{decode_frame_at_path, decode_frames_from_info, PosterFrame, VideoInfo};
+use crate::video::{PosterFrame, VideoInfo, decode_frame_at_path, decode_frames_from_info};
 
 /// Frames decoded per ffmpeg run.  Two seconds at 12 fps is ~18 MB of RGB at
 /// 640x360: small enough to buffer, large enough that seeking is amortised.
@@ -185,10 +185,10 @@ impl Cinematic {
             self.clock += dt * self.fps;
         }
         self.fill();
-        if self.current.is_none() {
-            if let Some(f) = self.preroll.take() {
-                self.current = Some(f);
-            }
+        if self.current.is_none()
+            && let Some(f) = self.preroll.take()
+        {
+            self.current = Some(f);
         }
         let want = self.clock.floor().max(0.0) as u64 + 1;
         while self.decoded < want {

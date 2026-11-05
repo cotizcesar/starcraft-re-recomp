@@ -224,17 +224,17 @@ impl RetailInstall {
     /// Open `$SC_INSTALL` or the default Wine/Battle.net location.
     pub fn from_env() -> Option<Self> {
         for var in ["SC_INSTALL", "GALAXYCRAFT_INSTALL", "STARCRAFT_HOME"] {
-            if let Ok(path) = std::env::var(var) {
-                if let Ok(install) = Self::open(path) {
-                    return Some(install);
-                }
+            if let Ok(path) = std::env::var(var)
+                && let Ok(install) = Self::open(path)
+            {
+                return Some(install);
             }
         }
         for path in default_install_candidates(&|k| std::env::var(k).ok()) {
-            if path.join("Data").join("data").is_dir() {
-                if let Ok(install) = Self::open(&path) {
-                    return Some(install);
-                }
+            if path.join("Data").join("data").is_dir()
+                && let Ok(install) = Self::open(&path)
+            {
+                return Some(install);
             }
         }
         None
@@ -359,10 +359,11 @@ impl RetailInstall {
             let mut from = 0usize;
             while let Some(pos) = find_bytes(&data[from..], b"BLTE").map(|p| p + from) {
                 let end = (pos + 4 * 1024 * 1024).min(data.len());
-                if let Ok(decoded) = blte_decode(&data[pos..end]) {
-                    if decoded.len() >= 2 && &decoded[..2] == b"EN" {
-                        return Ok(decoded);
-                    }
+                if let Ok(decoded) = blte_decode(&data[pos..end])
+                    && decoded.len() >= 2
+                    && &decoded[..2] == b"EN"
+                {
+                    return Ok(decoded);
                 }
                 from = pos + 4;
             }
@@ -1490,10 +1491,11 @@ fn find_build_config_text(dir: &Path) -> Result<String> {
         if found.is_some() {
             return;
         }
-        if let Ok(text) = fs::read_to_string(path) {
-            if text.contains("encoding") && text.contains("root") {
-                found = Some(text);
-            }
+        if let Ok(text) = fs::read_to_string(path)
+            && text.contains("encoding")
+            && text.contains("root")
+        {
+            found = Some(text);
         }
     });
     found.ok_or_else(|| RetailError::Missing("build configuration".into()))
@@ -1650,13 +1652,13 @@ fn decode_frame(frame: &[u8], out: &mut Vec<u8>) -> Result<()> {
         b'E' => {
             return Err(RetailError::Unsupported(
                 "encrypted BLTE frame (no keyring)".into(),
-            ))
+            ));
         }
         other => {
             return Err(RetailError::Unsupported(format!(
                 "BLTE frame mode {}",
                 other as char
-            )))
+            )));
         }
     }
     Ok(())

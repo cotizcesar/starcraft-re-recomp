@@ -288,10 +288,10 @@ impl Palette {
 
     /// Retail GRPs reserve palette entries 8..=15 for the player colour.
     pub fn color(&self, index: u8, team: Option<Rgb>) -> Rgb {
-        if let Some(team) = team {
-            if (8..=15).contains(&index) {
-                return team;
-            }
+        if let Some(team) = team
+            && (8..=15).contains(&index)
+        {
+            return team;
         }
         self.colors[index as usize]
     }
@@ -675,20 +675,20 @@ impl HdTerrain {
                         blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
                     }
                 }
-                if let Some(frame) = creep_edge_frame(creep, tx, ty) {
-                    if let Some((img, ox, oy)) = self.creep_edges.get(frame) {
-                        let k = s / 4.0;
-                        let (w, h) = (
-                            (img.width as f32 * k).round() as i32,
-                            (img.height as f32 * k).round() as i32,
-                        );
-                        // A positive SD offset means the frame hugs the
-                        // tile's right / bottom edge (the HD frames are
-                        // padded, so the offset itself does not scale).
-                        let ex = if *ox > 0 { sx + size as i32 - w } else { sx };
-                        let ey = if *oy > 0 { sy + size as i32 - h } else { sy };
-                        img.draw_scaled(fb, ex, ey, w, h);
-                    }
+                if let Some(frame) = creep_edge_frame(creep, tx, ty)
+                    && let Some((img, ox, oy)) = self.creep_edges.get(frame)
+                {
+                    let k = s / 4.0;
+                    let (w, h) = (
+                        (img.width as f32 * k).round() as i32,
+                        (img.height as f32 * k).round() as i32,
+                    );
+                    // A positive SD offset means the frame hugs the
+                    // tile's right / bottom edge (the HD frames are
+                    // padded, so the offset itself does not scale).
+                    let ex = if *ox > 0 { sx + size as i32 - w } else { sx };
+                    let ey = if *oy > 0 { sy + size as i32 - h } else { sy };
+                    img.draw_scaled(fb, ex, ey, w, h);
                 }
             }
         }
@@ -1923,7 +1923,7 @@ pub fn asset_root() -> PathBuf {
 
 #[cfg(test)]
 mod minimap_blip_tests {
-    use super::{minimap_blip_tiles, MinimapDot};
+    use super::{MinimapDot, minimap_blip_tiles};
 
     fn dot(x: i32, y: i32, placement: (i32, i32), building: bool) -> MinimapDot {
         MinimapDot {
@@ -1957,7 +1957,7 @@ mod minimap_blip_tests {
 
 #[cfg(test)]
 mod view_scale_tests {
-    use super::{box_blur, downsample_rgba, stretch_columns, Framebuffer, Rgb};
+    use super::{Framebuffer, Rgb, box_blur, downsample_rgba, stretch_columns};
     use crate::dds::DdsImage;
 
     #[test]

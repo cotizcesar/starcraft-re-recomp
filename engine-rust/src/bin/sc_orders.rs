@@ -5,8 +5,8 @@
 //! sc_orders --full     # all 189 recovered rows
 //! ```
 
-use galaxycraft::handlers::{spec_by_va, HANDLERS};
-use galaxycraft::orders::{lane, target_order, OrderLane, ORDER_SPECS};
+use galaxycraft::handlers::{HANDLERS, spec_by_va};
+use galaxycraft::orders::{ORDER_SPECS, OrderLane, lane, target_order};
 
 fn main() {
     let full = std::env::args().any(|a| a == "--full");
@@ -76,11 +76,11 @@ fn main() {
             eprintln!("row {} ({}) has no recovered handler", spec.id, spec.name);
             ok = false;
         }
-        if let Some(va) = spec.handler {
-            if spec_by_va(va).is_none() {
-                eprintln!("row {} handler {va:#x} has no transcribed routine", spec.id);
-                ok = false;
-            }
+        if let Some(va) = spec.handler
+            && spec_by_va(va).is_none()
+        {
+            eprintln!("row {} handler {va:#x} has no transcribed routine", spec.id);
+            ok = false;
         }
         if matches!(spec.lane, OrderLane::Alias(t) if t >= 189) {
             eprintln!("row {} aliases out-of-range row {}", spec.id, spec.name);

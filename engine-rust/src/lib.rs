@@ -73,12 +73,12 @@ pub mod vision;
 pub mod voice;
 
 pub use combat::{
-    duel, resolve_damage, resolve_damage_divisor, CombatSim, DamageResult, Defense, PlayerUpgrades,
-    Unit,
+    CombatSim, DamageResult, Defense, PlayerUpgrades, Unit, duel, resolve_damage,
+    resolve_damage_divisor,
 };
 pub use data::{GameData, UnitSize, UnitType, WeaponType};
 pub use economy::{MiningSim, PlayerEconomy, ProductionOrder, ResourcePatch};
-pub use orders::{order_class, OrderClass, OrderLane, OrderSpec, ORDER_SPECS};
+pub use orders::{ORDER_SPECS, OrderClass, OrderLane, OrderSpec, order_class};
 
 /// Load the tables bundled with the crate.  These were extracted from the
 /// retail CASC storage of StarCraft 1.23.10.13515.

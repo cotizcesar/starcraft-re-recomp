@@ -1,7 +1,7 @@
 //! Audio-layer checks: the bundled retail WAV effects decode, resample to the
 //! mixer rate and are exposed by name.
 
-use galaxycraft::audio::{AudioPlayer, SoundBank, Wav, SAMPLE_RATE, SOUND_NAMES};
+use galaxycraft::audio::{AudioPlayer, SAMPLE_RATE, SOUND_NAMES, SoundBank, Wav};
 use galaxycraft::render::asset_root;
 use std::fs;
 

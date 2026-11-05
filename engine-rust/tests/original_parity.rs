@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use galaxycraft::combat::{resolve_damage, Defense};
+use galaxycraft::combat::{Defense, resolve_damage};
 use galaxycraft::data::{DamageType, GameData, UnitSize};
 
 fn fixtures() -> PathBuf {

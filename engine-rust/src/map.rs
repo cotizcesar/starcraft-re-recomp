@@ -253,26 +253,24 @@ impl Scenario {
             .get("MTXM")
             .map(|s| s.len() >= tile_bytes)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "MTXM", |b| b.len() >= tile_bytes)
         {
-            if let Some(b) = locate(d, "MTXM", |b| b.len() >= tile_bytes) {
-                sections.insert("MTXM".into(), b);
-            }
+            sections.insert("MTXM".into(), b);
         }
         let mask_bytes = width * height;
         if !sections
             .get("MASK")
             .map(|s| s.len() >= mask_bytes)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "MASK", |b| b.len() >= mask_bytes)
         {
-            if let Some(b) = locate(d, "MASK", |b| b.len() >= mask_bytes) {
-                sections.insert("MASK".into(), b);
-            }
+            sections.insert("MASK".into(), b);
         }
         for (name, min) in [("OWNR", 12usize), ("SIDE", 12)] {
-            if !sections.get(name).map(|s| s.len() >= min).unwrap_or(false) {
-                if let Some(b) = locate(d, name, |b| b.len() >= min) {
-                    sections.insert(name.to_string(), b);
-                }
+            if !sections.get(name).map(|s| s.len() >= min).unwrap_or(false)
+                && let Some(b) = locate(d, name, |b| b.len() >= min)
+            {
+                sections.insert(name.to_string(), b);
             }
         }
         // `UPRP` is exactly 64 x 20 bytes.  Protected maps can hide the
@@ -282,45 +280,41 @@ impl Scenario {
             .get("UPRP")
             .map(|s| s.len() == 64 * 20)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "UPRP", |b| b.len() == 64 * 20)
         {
-            if let Some(b) = locate(d, "UPRP", |b| b.len() == 64 * 20) {
-                sections.insert("UPRP".into(), b);
-            }
+            sections.insert("UPRP".into(), b);
         }
         // Variable-record sections have a stronger size predicate.
         if !sections
             .get("UNIT")
             .map(|s| s.len() % 36 == 0)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "UNIT", |b| !b.is_empty() && b.len() % 36 == 0)
         {
-            if let Some(b) = locate(d, "UNIT", |b| !b.is_empty() && b.len() % 36 == 0) {
-                sections.insert("UNIT".into(), b);
-            }
+            sections.insert("UNIT".into(), b);
         }
         if !sections
             .get("MRGN")
             .map(|s| s.len() % 20 == 0)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "MRGN", |b| !b.is_empty() && b.len() % 20 == 0)
         {
-            if let Some(b) = locate(d, "MRGN", |b| !b.is_empty() && b.len() % 20 == 0) {
-                sections.insert("MRGN".into(), b);
-            }
+            sections.insert("MRGN".into(), b);
         }
         if !sections
             .get("TRIG")
             .map(|s| !s.is_empty() && s.len() % RECORD_SIZE == 0)
             .unwrap_or(false)
+            && let Some(b) = locate(d, "TRIG", |b| !b.is_empty() && b.len() % RECORD_SIZE == 0)
         {
-            if let Some(b) = locate(d, "TRIG", |b| !b.is_empty() && b.len() % RECORD_SIZE == 0) {
-                sections.insert("TRIG".into(), b);
-            }
+            sections.insert("TRIG".into(), b);
         }
-        if !sections.get("STR").map(|s| s.len() >= 2).unwrap_or(false) {
-            if let Some(b) = locate(d, "STR ", |b| {
+        if !sections.get("STR").map(|s| s.len() >= 2).unwrap_or(false)
+            && let Some(b) = locate(d, "STR ", |b| {
                 b.len() >= 2 && (u16_at(b, 0) as usize) * 2 + 2 <= b.len()
-            }) {
-                sections.insert("STR".into(), b);
-            }
+            })
+        {
+            sections.insert("STR".into(), b);
         }
 
         let tiles_raw = sections.get("MTXM").ok_or(ChkError::Missing("MTXM"))?;
@@ -395,24 +389,24 @@ impl Scenario {
         }
 
         let mut strings = Vec::new();
-        if let Some(raw) = sections.get("STR") {
-            if raw.len() >= 2 {
-                let count = u16_at(raw, 0) as usize;
-                let table_end = 2 + count * 2;
-                if raw.len() >= table_end {
-                    // Each offset starts a NUL-terminated string.  StarEdit
-                    // does not keep the offsets in order (and may share
-                    // tails), so a string ends at its NUL, never at the next
-                    // entry's offset.
-                    for k in 0..count {
-                        let start = u16_at(raw, 2 + k * 2) as usize;
-                        match raw.get(start..) {
-                            Some(bytes) => {
-                                let nul = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-                                strings.push(String::from_utf8_lossy(&bytes[..nul]).into_owned());
-                            }
-                            None => strings.push(String::new()),
+        if let Some(raw) = sections.get("STR")
+            && raw.len() >= 2
+        {
+            let count = u16_at(raw, 0) as usize;
+            let table_end = 2 + count * 2;
+            if raw.len() >= table_end {
+                // Each offset starts a NUL-terminated string.  StarEdit
+                // does not keep the offsets in order (and may share
+                // tails), so a string ends at its NUL, never at the next
+                // entry's offset.
+                for k in 0..count {
+                    let start = u16_at(raw, 2 + k * 2) as usize;
+                    match raw.get(start..) {
+                        Some(bytes) => {
+                            let nul = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                            strings.push(String::from_utf8_lossy(&bytes[..nul]).into_owned());
                         }
+                        None => strings.push(String::new()),
                     }
                 }
             }

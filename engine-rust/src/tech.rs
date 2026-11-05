@@ -260,11 +260,11 @@ mod tests {
         let mut count = 0;
         for id in 0..data.units.len() as u16 {
             let u = data.unit(id);
-            if u.is_building() || u.is_worker() || matches!(id, unit::MARINE..=unit::MEDIC) {
-                if let Some(info) = build_info(id) {
-                    assert!(info.producer < data.units.len() as u16);
-                    count += 1;
-                }
+            if (u.is_building() || u.is_worker() || matches!(id, unit::MARINE..=unit::MEDIC))
+                && let Some(info) = build_info(id)
+            {
+                assert!(info.producer < data.units.len() as u16);
+                count += 1;
             }
         }
         assert!(count > 50);
