@@ -578,7 +578,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v17 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates)\n";
+            b"galaxycraft retail cache v18 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates, swish-out sound)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1353,7 +1353,7 @@ pub const MUSIC_TRACKS: &[&str] = &[
     "radiofreezerg",
 ];
 
-/// Retail sources for the nine effects mixed by [`crate::audio`].
+/// Retail sources for the ten effects mixed by [`crate::audio`].
 pub const SOUND_PATHS: &[(&str, &[&str])] = &[
     (
         "ui_click",
@@ -1361,6 +1361,7 @@ pub const SOUND_PATHS: &[(&str, &[&str])] = &[
     ),
     ("ui_move", &["sound/glue/mouseover.wav"]),
     ("ui_swish", &["sound/glue/swishin.wav"]),
+    ("ui_swish_out", &["sound/glue/swishout.wav"]),
     ("transmission", &["sound/misc/transmission.wav"]),
     ("terran_yes", &["sound/terran/marine/tmayes00.wav"]),
     ("zerg_yes", &["sound/zerg/drone/zdryes01.wav"]),

@@ -1,11 +1,11 @@
-a   in step 2    list beyond the template's reach (-792 px), text hidden PASS
-b   in step 7    list   -188 px, retail  -187.9 px, text hidden PASS
-c   in step 12   list    -45 px, retail   -44.6 px, text hidden PASS
-d   in step 18   list     -8 px, retail    -7.9 px, text hidden PASS
-e   settled      settled with text                             PASS
-o0  out step 1   list     -3 px, retail    -3.0 px, text hidden PASS
-o1  out step 6   list   -189 px, retail  -189.0 px, text hidden PASS
-o2  settled      next screen shown                             PASS
+a   in step 1    list beyond the template's reach (-1056 px), text hidden PASS
+b   in step 4    list   -446 px, retail  -445.5 px, text hidden PASS
+c   in step 6    list   -251 px, retail  -250.6 px, text hidden PASS
+d   in step 10   list    -79 px, retail   -79.3 px, text hidden PASS
+e   in step 13   list    -33 px, retail   -33.5 px, text hidden PASS
+o0  out step 0   list      0 px, retail    -0.0 px, text hidden PASS
+o1  out step 3   list    -21 px, retail   -21.0 px, text hidden PASS
+o2  out step 6   list   -189 px, retail  -189.0 px, text hidden PASS
 o3  settled      next screen shown                             PASS
 
 swish gate: PASS (0 failures)

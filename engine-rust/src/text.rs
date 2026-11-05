@@ -52,13 +52,18 @@ impl UiFont {
     /// Load a TrueType/OpenType face from an on-disk file.
     pub fn load(path: &std::path::Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
-        let font =
-            fontdue::Font::from_bytes(bytes.clone(), fontdue::FontSettings::default()).ok()?;
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("font")
             .to_string();
+        Self::from_bytes(bytes, name)
+    }
+
+    /// A face from its file bytes (e.g. read straight from the install).
+    pub fn from_bytes(bytes: Vec<u8>, name: String) -> Option<Self> {
+        let font =
+            fontdue::Font::from_bytes(bytes.clone(), fontdue::FontSettings::default()).ok()?;
         Some(Self {
             font,
             cache: HashMap::new(),
@@ -66,6 +71,16 @@ impl UiFont {
             bytes,
             cef_cache: HashMap::new(),
         })
+    }
+
+    /// The face file.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Whether the face maps `ch` to a real glyph (not `.notdef`).
+    pub fn has_glyph(&self, ch: char) -> bool {
+        self.font.lookup_glyph_index(ch) != 0
     }
 
     /// Load the regular retail menu face from a materialised cache root.

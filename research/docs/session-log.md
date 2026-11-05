@@ -4299,3 +4299,135 @@ clippy 0; fmt clean; `ui_visual_diff.py` 51/51, output identical to the
 committed gate; `menu_time_diff.py` 4/4; walkthrough PASS (145 steps);
 `menu_hover_text.py` 10/10; `ultrawide_diff.py` 31/31;
 `glue_swish_check.py` PASS; `progress.py --check` OK.
+
+## 2026-11-04 (85) — Credits screen from the retail recording and the shipped panel
+
+Goal (user): the Credits section must behave exactly like the retail
+recording `Screencast_20261104_210917.webm` (3440x1440, 60 fps, 9.8 s:
+main menu, click "Show Credits", the list holds, then scrolls).
+
+**Measured on the recording (FACT).**  Hard cut from the menu to the
+Credits screen between 1.40 s and 1.42 s (no fade, no swish; the panel is
+complete on its first frame).  The list is still until 3.50 s, then moves
+up at 89.2-89.4 px/s (two fits, 10 timestamp seeks and a per-frame
+profile), i.e. 1.5 device px per frame at ~59.5 Hz; its frame-to-frame steps
+are 3/2/1/0 px.  Pitfall recorded: `select=eq(n,N)` frame numbers did not
+match the stream's time base, and ffprobe's packet list includes hidden VP9
+alt-ref packets; only timestamp seeks (`-i ... -ss T`) gave consistent
+offsets.
+
+**Shipped panel (FACT, `webui/dist/creditspanel/creditspanel.js`).**  A
+Preact page: `autoScrollDelay` 2000 ms after mount, then
+`autoScrollSpeed = 0.5 * floor(innerHeight/480)` px per
+`requestAnimationFrame`; Up/Down start at `2.5k`, accelerate `0.5k` per
+frame to `25k`, decelerate `k` after release; a wheel tick or key press
+stops the auto scroll, which restarts 2000 ms later; keyCode 27/13 send
+`Exit`; no click handler.  CSS: `.CreditsPanel` top 10.2 %, margin-left 23 %,
+width 57 %, height 83 %, `overflow-y: scroll`, centred `#b4fc74`, six
+`0 0 1px #000` shadows; h1 Eurostile Extended (UA bold, normal line height,
+0.67em margins), h2-h5 per media query.
+
+**Geometry (FACT by measurement).**  Ink heights fit only the
+`641-1280px` media block at a device scale of 1.5: the CEF view is the
+centred 4:3 box (1920x1440 px = 1280x960 CSS px), so h1 40, h2 28/30,
+h3 22/24, h4 18/20, h5 14/16 CSS px; `floor(960/480) = 2` gives 1 CSS px =
+1.5 device px per frame, as measured.  Every regular line's ink width equals
+the font advances x1.5 within 1 px; centre x 1748.5 (CSS 1748.8).  Vertical
+metrics are DirectWrite's (OS/2 win ascent/descent + hhea-derived gap):
+"1998" ink top 341 measured, 341.6 predicted, 335.8 with hhea-only.  Blink
+rounding rules close the rest: a descent rounded down borrows 1 px from the
+ascent and the half leading is floored (h3 was 1.5 px low without them).
+Synthetic bold h1: outline grows px/32 towards the advance plus 1 px per
+advance ("StarCraft" ink 360 vs 350.4 regular).  Horizontal: glyph origins on
+whole pixels and the list 1 px left of the CSS box (residual 1.0 +- 0.4 px
+on every line after flooring; origin of the 1 px unexplained, INFERENCE).
+Residual after the fit: every heading within +-0.75 px in x and y.
+
+**Latency and rate (measured, kept as constants).**  Motion starts
+2.085 s after the cut against 2.0 s + 1 frame from the script: 4 frames of
+view-to-page latency (`SHOWN_LATENCY_FRAMES`).  Frame rate 59.5 Hz
+(`FRAME_HZ`), from the measured speed.  Our render now tracks the recording
+within +-2 px at 3.5..9.7 s (the recording's own step jitter).
+
+**Implementation.**  New `src/credits.rs`: `CreditsScroll` (the panel's
+`scroll()` per animation frame, keys, wheel, clamping) and `CreditsLayout`
+(CSS block layout, margin collapsing through empty headings, Windows
+metrics with Blink rounding) + 4 tests.  `sc_view`: `CreditsView` state,
+`open_credits` (fresh mount, hard cut), text with the CEF outline
+rasteriser, fallback faces loaded only when a glyph is missing, text-shadow
+alpha `1-(1-blur)^6` (sigma 0.5 CSS px), overflow clip snapped to device px;
+only Esc/Enter leave (Space and clicks no longer do); held arrows and the
+wheel drive the scroll.  The backdrop+panel composite is cached per size:
+draw 35 ms -> 2.2 ms per frame at 3440x1440, first frame 228 -> 43 ms.
+`UiFont::from_bytes/bytes/has_glyph` added.  The previous 8x8 bitmap text
+and the never-advanced `credits_scroll` are gone.
+
+**Capture state.**  Reference 131101 was taken mid-scroll: the gate pins
+the panel clock at 3.2857 s (sweep over 1/59.5 s frames).
+
+**Verification.**  `cargo test` 456 passed / 0 failed (install set);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51, credits 2.84 -> 1.10;
+`menu_walkthrough.py` PASS (146 steps; Credits now left with Esc, a click
+stays on Credits); real-time `--menu-script` run: 0 px at 0.1/1.1 s, 144 px
+at ~3.7 s, 89-91 px/s afterwards.  `ui_diff.py` 37/39: the Registry and
+Saved Games failures also occur on committed HEAD (worktree check), not
+from this change.  Not verifiable from the recording (no audio track):
+the sounds on entering/leaving Credits, kept as before.
+
+## 2026-11-05 (86) — Menu playback, movies, swish sounds and frame time
+
+Goal (user): accumulated/accelerated menu animations after visiting the
+campaign screen, wrong Blizzard-logo aspect and cartoon-speed movie audio,
+the Single Player grid loop, Collections, a game introduction in place of
+the panel loader, transition "whoosh" sounds, and the menus' frame rate.
+
+- **Clip fast-forward (FACT, measured).**  `MenuClip` clocks kept running
+  while the menu was not drawn; on return the clip consumed its queued
+  chunks in a few draws.  Clocks now skip pauses > 150 ms and re-anchor
+  when > 2 frames ahead of an empty decoder (`clip_pause_shift`,
+  `clip_lag_shift`).  Real-time script Main -> Registry -> Episode ->
+  Registry -> Main with `GC_CLIP_TRACE`: 98 multi-frame pops before (old
+  build in a worktree), 0 after.
+- **Mouse-over clock (FACT, falsifies session log 82).**  On the user's
+  retail recording the SingleOn red marker of clip frame 40 appears 0.12 s
+  after the hover begins; a hover-restarted clip would need 3.8 s.  The
+  mouse-over loops therefore run on the shared clock and are pulled every
+  frame even when hidden; `singleon.webm` itself contains the grid
+  collapse/re-grow (frames 20-39, ~100).
+- **Movie audio (FACT).**  `decode_audio_pcm` produced 22 050 Hz PCM that
+  the music path plays at 44 100 Hz: double speed.  Now decoded at
+  `audio::SAMPLE_RATE` (blizzard.webm: 503 040 samples = 11.41 s = the
+  stream's 11.411 s).  Intros decode at their authored 15 fps (was 12).
+- **Blizzard logo (INFERENCE).**  `smk/blizzard.webm` is 320x308, the 88
+  other films 1920x1080; films now fill the 16:9 box, which restores the
+  logo's classic proportions.  Falsifier: a retail capture of the logo.
+- **Collections (FACT, user capture + 131005).**  A CEF modal over the
+  live menu: live backdrop, dim 149, plate rgba(0,0,0,.5) (the code had
+  224), no frame on unselected cells; 6.39 -> 4.38.
+- **Panel.**  The title-frame panel shows an introduction (Eurostile
+  Extended title, `blizzard-regular` body, `wrap_words`); the loading
+  spinner and `src/gif.rs` are removed.  Menu references move 1.64 ->
+  2.71 by design (retail shows the spinner there).
+- **Swish sounds (user report; no audio in the recording).**  Every screen
+  change plays `ui_swish` (swishin.wav); a classic list dialog leaving
+  plays `ui_swish_out` (swishout.wav, sha256 e5566d7b...).  Walkthrough
+  policy updated: 24/24 changes carry press + swish(es); presses that stay
+  never swish.  Session log 67's "no swish" stays recorded as measured on
+  a CEF host without audio output.
+- **Frame time (FACT, `GC_FPS` + per-step timers).**  Options spent 69 ms
+  in `draw_options_plate` (`cef_band` 4x4 supersampling every interior
+  pixel), `draw_moon_backdrop` cloned the 26 MB DDS per frame.  Exact
+  fast paths (1-Lipschitz SDF shortcut, flat rounded spans), cached
+  layers (`LayerCache` from over-black/over-white renders, Episode static
+  layer, moon fit, main-menu static layer reused by the live modals),
+  row-wise dim.  `engine-rust/docs/gates/menu-draw-time.txt`; 39/51
+  visual-gate screens bit-identical.
+
+**Concurrent work.**  The Credits session (log 85) edited `sc_view.rs` in
+the same tree; both changes are reviewed and committed together.
+
+**Verification.**  `cargo test` 456 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51; `menu_time_diff.py` 4/4;
+walkthrough PASS (146 steps); `menu_hover_text.py` 10/10;
+`ultrawide_diff.py` 31/31; `glue_swish_check.py` PASS; `progress.py
+--check` OK.

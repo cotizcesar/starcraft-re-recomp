@@ -984,7 +984,11 @@ pub fn decode_frame_at(
 /// mixer only speaks mono `i16`, so `ffmpeg` resamples once and the samples are
 /// handed to the existing music path.  Returns `None` when the file has no
 /// audio, `ffmpeg` is missing, or the decode fails.
-pub const AUDIO_RATE: u32 = 22_050;
+///
+/// The rate must be the mixer's: the music path plays samples at
+/// [`crate::audio::SAMPLE_RATE`], and the old 22 050 Hz decode played every
+/// movie soundtrack twice as fast (an octave up).
+pub const AUDIO_RATE: u32 = crate::audio::SAMPLE_RATE;
 
 pub fn decode_audio_pcm(path: &Path) -> Option<Vec<i16>> {
     if !path.exists() {
@@ -1303,6 +1307,13 @@ pub fn manifest_path(cache: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn movie_audio_decodes_at_the_mixer_rate() {
+        // The music path plays at the mixer rate; any other decode rate
+        // changes the soundtrack's speed and pitch.
+        assert_eq!(super::AUDIO_RATE, crate::audio::SAMPLE_RATE);
+    }
+
     #[test]
     fn scratch_inputs_are_private_and_removed_on_drop() {
         let a = super::ScratchInput::new(b"one", "in.webm").expect("scratch");

@@ -5,10 +5,10 @@ Feeds a deterministic input script through the real `sc_view` menu handlers
 (via `--menu-script`), then checks:
 
 1. the screen transition sequence covers every menu screen and each change
-   plays the retail press cue (`ui_click`), with no dedicated swish (the CEF
-   bundle only sends GLUSND_MOUSE_OVER/DOWN);
-2. `ui_click` fires on control presses and never on a screen change;
-   `ui_move` fires when the pointer enters a control;
+   plays the press cue (`ui_click`) and the swish-in (`ui_swish`), plus the
+   swish-out (`ui_swish_out`) when a classic list dialog leaves;
+2. `ui_click` fires on control presses, a press that stays on the screen
+   never swishes, and `ui_move` fires when the pointer enters a control;
 3. Options sliders/checkboxes/tabs change the real `GameOptions` values and
    Restore to Default puts them back;
 4. Lobby race dropdowns pick the chosen race;
@@ -87,7 +87,8 @@ SCRIPT = ",".join(
         "move:1337:1175", "click",          # announcer cell 10
         "move:2017:1277", "click",          # Ok -> Main
         "move:558:1273", "click",           # Show Credits
-        "move:558:1348", "click",           # skip Credits -> Main
+        "move:558:1348", "click",           # a click does not leave Credits
+        "key:Escape",                       # Esc sends `Exit` -> Main
         # `View Intro` starts the movie path (not a MenuScreen), covered by
         # the intro timeline tests; the walkthrough continues on the menu.
         "move:558:1192", "click",           # Hotkeys (Terran)
@@ -157,6 +158,7 @@ CUE_PATHS = {
     "ui_move": "sound/glue/mouseover.wav",
     "ui_click": "sound/glue/mousedown2.wav",
     "ui_swish": "sound/glue/swishin.wav",
+    "ui_swish_out": "sound/glue/swishout.wav",
 }
 
 
@@ -412,12 +414,22 @@ def main() -> int:
     got = [r["screen"] for r in transitions]
     if got != EXPECTED_TRANSITIONS:
         fail(f"transition sequence {got} != {EXPECTED_TRANSITIONS}")
-    for row in transitions:
-        if row["sounds"] != "ui_click":
-            fail(f"step {row['step']} changes to {row['screen']} with cues {row['sounds']!r}")
+    # Every screen change whooshes in (`ui_swish`) after the press; leaving
+    # a classic list dialog also whooshes out (user report on the retail
+    # client, 2026-11-04).
+    glue = {"Registry", "SavedGames", "Replays"}
+    prev_screen = rows[0]["screen"]
+    for row in rows:
+        if row["screen"] == prev_screen:
+            continue
+        cues = sorted(filter(None, row["sounds"].split("+")))
+        want = sorted(["ui_click", "ui_swish"] + (["ui_swish_out"] if prev_screen in glue else []))
+        if cues != want:
+            fail(f"step {row['step']} {prev_screen} -> {row['screen']} cues {cues} != {want}")
+        prev_screen = row["screen"]
     print(
         f"PASS transitions: {len(transitions)} screen changes, each with the "
-        "press cue ui_click (no swish: retail CEF has no transition cue)"
+        "press cue and the swish-in (swish-out when a list dialog leaves)"
     )
     print("     " + " -> ".join(["Main"] + got))
 
@@ -431,13 +443,13 @@ def main() -> int:
     moves = [r for r in rows if r["action"].startswith("move:")]
     transition_steps = {r["step"] for r in transitions}
     # A press that stays on the screen must click (never swish); a screen
-    # change must be swish only.
+    # change carries the swish cues checked above.
     for row in clicks:
         if row["step"] in transition_steps:
             continue
         cues = set(filter(None, row["sounds"].split("+")))
-        if "ui_swish" in cues:
-            fail(f"step {row['step']} stays on {row['screen']} but plays ui_swish")
+        if cues & {"ui_swish", "ui_swish_out"}:
+            fail(f"step {row['step']} stays on {row['screen']} but plays a swish")
         if "ui_click" in cues:
             continue
     presses = sum(1 for r in clicks if "ui_click" in r["sounds"])
