@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 32 | 34 | 94 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 33 | 35 | 94 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **83** | **87** | **96 %** |
+| **Overall (weighted)** | **100** | **84** | **88** | **96 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -90,6 +90,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Score-screen motion from the recording: panel slide-in (edge within 2 px at 7.8/7.9/8.0 s) and the count-up (x0.59 per 0.1 s, restarted on tab change) — `score_count_up_follows_the_retail_curve`
 - [x] In-game trigger text as retail: `blizzard-regular` 31.1 px/em at x 77 / baseline 847, lines flush left, 6 slots with blank lines, lifetime by lines; Waits resume on their tick (Raynor → NEW MISSION OBJECTIVE 5.92 s vs 6.0 s) — `a_blank_line_keeps_its_slot`, `a_wait_resumes_on_the_tick_it_ends`, `--shot-screen trigger-text`
 - [x] Wasteland played to victory as on the retail recording: Victory/Defeat apply to the trigger's player (Wasteland was unwinnable: the win went to player 0), victory 0.57 s after the tenth Marine (one trigger cycle), a paused transmission's text lasts its line — `wasteland_victory_fires_within_one_trigger_cycle`, `wasteland_rescue_conversation_follows_the_retail_timing`, `victory_and_defeat_apply_to_the_player_running_the_trigger`
+- [x] Wasteland in-game HUD against the recording: retail error lines from `stat_txt` ("Not enough minerals...mine more minerals.", ink box within 2 px), Terran town-hall rows "Supplies Used/Provided/Total/Max", the trigger leaderboard ("9 of 10 Marines", computers hidden by action 32) — `refused_orders_show_the_retail_error_strings`, `town_hall_supply_rows_use_the_race_labels`, `a_control_leaderboard_counts_the_players_units`, `--shot-screen game-error|select-cc|leaderboard-marines`
 - [ ] Zerg and Protoss ready rooms (`glurdyz`/`glurdyp`)
 - [x] Menu walkthrough gate: transitions, retail UI sounds, mouse on every screen — `engine-rust/docs/gates/menu-walkthrough.txt`
 - [x] In-game HUD per race, minimap, selection, command card and hotkeys — `tests/render.rs`
