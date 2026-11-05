@@ -192,6 +192,12 @@ def shots_by_screen(rows: list[dict]) -> dict[str, int]:
 # plate hides most of the backdrop; the small Game Type dialog leaves the
 # Single/Multi/Exit clips almost fully visible.
 LIVE_MENU_SCREENS = {"Options": 0.20, "GameType": 0.30}
+# Regions whose content comes from the user's files (x0, y0, x1, y1 at
+# 2560x1440): the `replays` shot shows the 130858 state (`LastReplay.rep`
+# and its information), the walkthrough the empty temporary replay folder.
+# Only the file rows under the three folders and the information values
+# may differ; everything else must stay pixel-identical.
+DATA_REGIONS = {"Replays": ((490, 570, 1300, 760), (1540, 230, 2000, 720))}
 # One sample per second over the 14.4 s Single/Multi loop (Exit is 10 s).
 CLIP_PHASES = tuple(f"{t:.1f}" for t in range(15))
 # flc.json clip rectangles (Single/Multi/Exit and their On variants) at
@@ -583,6 +589,9 @@ def main() -> int:
             diff = np.zeros_like(diff)
             note = (f" outside the menu clips (footprint {clip.mean():.2%}, "
                     f"{stray.sum()} transient px)")
+        for x0, y0, x1, y1 in DATA_REGIONS.get(screen, ()):
+            diff[y0:y1, x0:x1] = 0
+            note = " outside the replay-file regions"
         if diff.max() != 0:
             fail(f"{screen}: walkthrough frame differs from the {shot_name} render "
                  f"(mean {diff.mean():.3f}, max {diff.max()})")

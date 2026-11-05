@@ -824,6 +824,100 @@ pub fn slider_frac(step: usize) -> f32 {
 /// drawing code and the hit-testing code so they cannot diverge.
 pub type HitRect = (f32, f32, f32, f32);
 
+/// A classic glue list dialog: the `glue/<name>/plist.dds` plate with the
+/// title, the list box and its `FLCBTN` buttons, plus the shared `PalNl`
+/// Ok/Cancel plates.  Rects are the shipped `rez/*.ui.json` controls in
+/// 640x480 UI pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlueListDialog {
+    /// `pList` plate (id 1, `RC_ANCHOR_TOPRIGHT`: its right edge sits on
+    /// the control's right edge, the 4x art drawn at `scale / 4`).
+    pub plate: HitRect,
+    /// Title `LTEXT`; `title_bigger` is `RC_BIGGERTEXT` (extended face).
+    pub title: HitRect,
+    pub title_bigger: bool,
+    pub list: HitRect,
+    pub ok: HitRect,
+    pub cancel: HitRect,
+    /// `New ID` (Registry only).
+    pub new_id: Option<HitRect>,
+    pub delete: HitRect,
+}
+
+/// Ok / Cancel `FLCBTN`s over the shared `PalNl` plates: the same rects in
+/// `glulogin` (ids 4/5), `gluload` (4/5) and `glucreat` (12/13).
+pub const PALNL_OK_BUTTON: HitRect = (441.0, 383.0, 152.0, 22.0);
+pub const PALNL_CANCEL_BUTTON: HitRect = (477.0, 419.0, 132.0, 22.0);
+
+/// `rez/glulogin.ui.json` (Single Player Registry): ids 1, 9, 8, 4, 5, 6, 7.
+pub const LOGIN_DIALOG: GlueListDialog = GlueListDialog {
+    plate: (0.0, 0.0, 362.0, 360.0),
+    title: (48.0, 60.0, 132.0, 30.0),
+    title_bigger: true,
+    list: (60.0, 100.0, 288.0, 210.0),
+    ok: PALNL_OK_BUTTON,
+    cancel: PALNL_CANCEL_BUTTON,
+    new_id: Some((44.0, 335.0, 165.0, 22.0)),
+    delete: (224.0, 335.0, 133.0, 22.0),
+};
+
+/// `rez/gluload.ui.json` (Load Saved Game): ids 1, -1, 6, 4, 5, 7.
+pub const LOAD_DIALOG: GlueListDialog = GlueListDialog {
+    plate: (0.0, 0.0, 362.0, 356.0),
+    title: (40.0, 68.0, 136.0, 20.0),
+    title_bigger: false,
+    list: (64.0, 92.0, 286.0, 218.0),
+    ok: PALNL_OK_BUTTON,
+    cancel: PALNL_CANCEL_BUTTON,
+    new_id: None,
+    delete: (44.0, 332.0, 164.0, 20.0),
+};
+
+/// List rows of the glue list dialogs: first row top `list.y + 16/3` and a
+/// 19 UI px pitch (57 px at 1440p, measured on 130734 / 130848).
+pub const GLUE_LIST_ROW_PITCH: f32 = 19.0;
+pub const GLUE_LIST_TEXT_INSET: (f32, f32) = (7.0 / 3.0, 16.0 / 3.0);
+
+/// Control of a glue list dialog under a UI point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlueListHit {
+    Ok,
+    Cancel,
+    NewId,
+    Delete,
+    /// A list row (0 = first visible row).
+    Row(usize),
+}
+
+impl GlueListDialog {
+    /// Hit test in 640x480 UI pixels; buttons win over the list.
+    pub fn hit(&self, x: f32, y: f32, rows: usize) -> Option<GlueListHit> {
+        let inside = |r: HitRect| x >= r.0 && x < r.0 + r.2 && y >= r.1 && y < r.1 + r.3;
+        if inside(self.ok) {
+            return Some(GlueListHit::Ok);
+        }
+        if inside(self.cancel) {
+            return Some(GlueListHit::Cancel);
+        }
+        if self.new_id.is_some_and(inside) {
+            return Some(GlueListHit::NewId);
+        }
+        if inside(self.delete) {
+            return Some(GlueListHit::Delete);
+        }
+        if inside(self.list) {
+            let top = self.list.1 + GLUE_LIST_TEXT_INSET.1;
+            if y >= top {
+                let row = ((y - top) / GLUE_LIST_ROW_PITCH) as usize;
+                if row < rows {
+                    return Some(GlueListHit::Row(row));
+                }
+            }
+        }
+        None
+    }
+}
+
 /// `Select starting mission` modal: Ok and Cancel bays of `phist.dds`.
 pub const MISSION_BUTTONS: [HitRect; 2] =
     [(910.0, 972.0, 355.0, 86.0), (1300.0, 972.0, 355.0, 86.0)];
@@ -1190,6 +1284,60 @@ mod tests {
                 "{name} rectangle must match the shipped flc.json"
             );
         }
+    }
+
+    #[test]
+    fn glue_list_dialogs_match_the_shipped_ui_json() {
+        let rect = |dialog: &crate::ui::UiDialog, id: i32| {
+            let c = dialog.control(id).expect("control id");
+            (
+                c.abs.x as f32,
+                c.abs.y as f32,
+                c.abs.w as f32,
+                c.abs.h as f32,
+            )
+        };
+        let load = |name: &str| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("fixtures/ui/{name}.ui.json"));
+            let text = std::fs::read_to_string(path).expect("dialog fixture");
+            crate::ui::UiDialog::parse(text.as_bytes()).expect("valid dialog")
+        };
+        let login = load("glulogin");
+        let d = LOGIN_DIALOG;
+        assert_eq!(rect(&login, 1), d.plate);
+        assert_eq!(rect(&login, 9), d.title);
+        assert_eq!(rect(&login, 8), d.list);
+        assert_eq!(rect(&login, 4), d.ok);
+        assert_eq!(rect(&login, 5), d.cancel);
+        assert_eq!(Some(rect(&login, 6)), d.new_id);
+        assert_eq!(rect(&login, 7), d.delete);
+        let gl = load("gluload");
+        let d = LOAD_DIALOG;
+        assert_eq!(rect(&gl, 1), d.plate);
+        assert_eq!(rect(&gl, -1), d.title);
+        assert_eq!(rect(&gl, 6), d.list);
+        assert_eq!(rect(&gl, 4), d.ok);
+        assert_eq!(rect(&gl, 5), d.cancel);
+        assert_eq!(rect(&gl, 7), d.delete);
+        let create = load("glucreat");
+        assert_eq!(rect(&create, 12), PALNL_OK_BUTTON);
+        assert_eq!(rect(&create, 13), PALNL_CANCEL_BUTTON);
+    }
+
+    #[test]
+    fn glue_list_hits_buttons_and_rows() {
+        let d = LOGIN_DIALOG;
+        assert_eq!(d.hit(500.0, 390.0, 2), Some(GlueListHit::Ok));
+        assert_eq!(d.hit(540.0, 430.0, 2), Some(GlueListHit::Cancel));
+        assert_eq!(d.hit(100.0, 345.0, 2), Some(GlueListHit::NewId));
+        assert_eq!(d.hit(250.0, 345.0, 2), Some(GlueListHit::Delete));
+        // Rows: first at 105.33, 19 px pitch; only existing rows hit.
+        assert_eq!(d.hit(100.0, 110.0, 2), Some(GlueListHit::Row(0)));
+        assert_eq!(d.hit(100.0, 126.0, 2), Some(GlueListHit::Row(1)));
+        assert_eq!(d.hit(100.0, 150.0, 2), None);
+        assert_eq!(LOAD_DIALOG.hit(100.0, 340.0, 1), Some(GlueListHit::Delete));
+        assert_eq!(LOAD_DIALOG.new_id, None);
     }
 
     #[test]

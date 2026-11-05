@@ -84,17 +84,15 @@ struct CampaignTag {
 struct MapEntry {
     path: PathBuf,
     name: String,
-    era: u16,
     players: usize,
     campaign: Option<CampaignTag>,
 }
 
 impl MapEntry {
-    fn new(path: PathBuf, name: String, era: u16, players: usize) -> Self {
+    fn new(path: PathBuf, name: String, players: usize) -> Self {
         Self {
             path,
             name,
-            era,
             players,
             campaign: None,
         }
@@ -137,7 +135,6 @@ fn scan_campaign(cache: &Path) -> Vec<MapEntry> {
         out.push(MapEntry {
             path: chk,
             name: format!("{}: {}", short_episode(&tag.episode_name), fields[4]),
-            era: sc.era,
             players,
             campaign: Some(tag),
         });
@@ -188,7 +185,6 @@ fn visit_maps(dir: &PathBuf, out: &mut Vec<MapEntry>) {
                 .and_then(|s| s.to_str())
                 .unwrap_or("map")
                 .to_string(),
-            sc.era,
             players,
         ));
     }
@@ -225,12 +221,78 @@ fn format_timestamp(t: std::time::SystemTime) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{y:04}/{m:02}/{d:02} {:02}:{:02}",
-        rem / 3600,
-        (rem % 3600) / 60
-    )
+    // Retail Replay Information shows `10/25/2026 10:07 PM` (130858).
+    let (hour, minute) = (rem / 3600, (rem % 3600) / 60);
+    let (h12, half) = match hour {
+        0 => (12, "AM"),
+        1..=11 => (hour, "AM"),
+        12 => (12, "PM"),
+        _ => (hour - 12, "PM"),
+    };
+    format!("{m:02}/{d:02}/{y:04} {h12}:{minute:02} {half}")
 }
+
+/// One row of the Load Replay information panel.
+struct ReplayInfo {
+    file: String,
+    map: String,
+    date: String,
+    length: String,
+    /// `(name, race)` per player.
+    players: Vec<(String, Race)>,
+}
+
+impl ReplayInfo {
+    /// The state of reference 130858 (`--shot-screen replays`): the retail
+    /// `LastReplay.rep` of a Bottleneck game.
+    fn reference() -> Self {
+        Self {
+            file: "LastReplay.rep".into(),
+            map: "Bottleneck".into(),
+            date: "10/25/2026 10:07 PM".into(),
+            length: "00:11".into(),
+            players: vec![
+                ("Alpha Squadron".into(), Race::Terran),
+                ("LinKa".into(), Race::Zerg),
+            ],
+        }
+    }
+
+    /// Metadata of a `.gcrep`: map, file date, length (mm:ss at 24 ticks
+    /// per second) and the races; the local player carries `profile`.
+    fn load(path: &Path, profile: &str) -> Option<Self> {
+        let save = SaveFile::load(path)?;
+        let date = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .map(format_timestamp)
+            .unwrap_or_default();
+        let secs = save.tick / 24;
+        let players = save
+            .races
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| !matches!(r, Race::Neutral))
+            .map(|(i, r)| {
+                let name = if i == save.local_player {
+                    profile.to_string()
+                } else {
+                    "Computer".to_string()
+                };
+                (name, *r)
+            })
+            .collect();
+        Some(Self {
+            file: path.file_name()?.to_str()?.to_string(),
+            map: save.map_name,
+            date,
+            length: format!("{:02}:{:02}", secs / 60, secs % 60),
+            players,
+        })
+    }
+}
+
+/// Folder rows above the replay files in the Load Replay tree (130858).
+const REPLAY_FOLDERS: [&str; 3] = ["[Cloud]", "[Popular Maps]", "[AutoSave]"];
 
 fn save_dirs() -> (PathBuf, PathBuf) {
     let base = std::env::var("GALAXYCRAFT_SAVES")
@@ -283,10 +345,10 @@ fn load_profile_store(from_disk: bool) -> galaxycraft::profile::ProfileStore {
     store
 }
 
-/// Registry list geometry (1440-high design space): first row top, pitch
-/// and visible rows; shared by `draw_registry` and the click handler.
-const REGISTRY_ROW_TOP: f32 = 316.0;
-const REGISTRY_ROW_PITCH: f32 = 57.0;
+/// Rows the Load Saved Game list shows (218 UI px / 19 px pitch).
+const SAVED_ROWS: usize = 11;
+/// Visible Registry rows, shared by `draw_registry` and the click handler
+/// (row geometry: `menu::LOGIN_DIALOG`).
 const REGISTRY_ROWS: usize = 7;
 
 /// First visible Registry row: the window that keeps `sel` on screen.
@@ -627,9 +689,32 @@ impl MenuClip {
         self.rx = Some(rx);
     }
 
+    /// Mouse-over clips run on their own clock from frame 0 when the pointer
+    /// enters the button.  The worker has pre-decoded the first chunks while
+    /// the clip was hidden, so the first frame is on screen at once.
+    fn start_hover(&mut self) {
+        if self.frozen {
+            return;
+        }
+        if self.decoded == 0 {
+            self.started = Instant::now();
+        } else {
+            self.restart();
+        }
+    }
+
+    /// Rewind a mouse-over clip when the pointer leaves, so the next hover
+    /// starts from a pre-decoded frame 0 instead of a stale clock (which
+    /// starved the buffer and made the overlay freeze, then jump).
+    fn stop_hover(&mut self) {
+        if !self.frozen {
+            self.restart();
+        }
+    }
+
     /// Frame to draw for this instant.
     fn frame(&mut self) -> Option<&galaxycraft::video::RgbaFrame> {
-        let want = if self.frozen {
+        let mut want = if self.frozen {
             1
         } else {
             (self.started.elapsed().as_secs_f32() * self.fps).floor() as u64 + 1
@@ -651,9 +736,29 @@ impl MenuClip {
                     rx.try_recv().ok()
                 };
                 if let Some(frames) = got {
+                    // The playback clock starts with the first decoded
+                    // frame: counting the decoder's start-up time made the
+                    // first frames skip ahead.
+                    if first && !self.frozen && !frames.is_empty() {
+                        self.started = Instant::now();
+                        want = 1;
+                    }
                     self.buffer.extend(frames);
                 }
             }
+        }
+        if clip_trace() && !self.frozen && want > self.decoded + 1 {
+            // Diagnostic (`GC_CLIP_TRACE`): the decoder fell behind the
+            // playback clock, so this frame skips ahead.
+            eprintln!(
+                "clip {} starved: want {} decoded {}",
+                self.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?"),
+                want,
+                self.decoded
+            );
         }
         while self.decoded < want {
             match self.buffer.pop_front() {
@@ -695,6 +800,27 @@ fn send_or_stop(
             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return Err(()),
         }
     }
+}
+
+/// Draw order of the six main-menu clips as `(button, mouse-over)`.  The
+/// hover clip goes under the idle clip for Single Player (capture 130704:
+/// the fleet occludes the `SingleOn` grid) and over it for Multiplayer
+/// (130712: the red `MultiOn` outline covers the battlecruiser's hull) and
+/// Exit (130926: the `ExitOn` grid covers the vortex).  The clips all
+/// carry alpha, so the order is what decides the overlap.
+const MENU_CLIP_ORDER: [(usize, bool); 6] = [
+    (0, true),
+    (0, false),
+    (1, false),
+    (1, true),
+    (7, false),
+    (7, true),
+];
+
+/// `GC_CLIP_TRACE`: report menu clips whose decoder falls behind playback.
+fn clip_trace() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("GC_CLIP_TRACE").is_some())
 }
 
 /// Longest wait for the first frame of a frozen (capture) clip.
@@ -840,8 +966,6 @@ struct App {
     /// Title/publisher intro before the main menu.
     intro: bool,
     intro_started: Instant,
-    /// Cached cover-fitted menu and intro backdrops.
-    menu_fit: Option<(usize, usize, DdsImage)>,
     /// Fully composed static main-menu frame (backdrop + chrome) at the
     /// current resolution.  Only the animated clips and text redraw.
     menu_static: Option<(usize, usize, Vec<u32>)>,
@@ -1056,6 +1180,8 @@ struct App {
     lan: LanUi,
     /// Remastered menu space layers (loaded once from the install).
     menu_layers: Option<MenuLayers>,
+    /// Button whose mouse-over clip is running (its clock starts on hover).
+    menu_hover_clip: Option<usize>,
     /// Streamed episode-select art (built lazily; one campaign set at a time).
     campaign_layers: Option<CampaignLayers>,
     /// Slot under the pointer on the episode screen (drives the `On` clip).
@@ -1074,6 +1200,10 @@ struct App {
     /// headless captures are deterministic.
     menu_at: Option<f32>,
     menu_phases: std::collections::HashMap<String, f32>,
+    /// `loadingcircle.gif` and its frames resampled for the current size.
+    menu_spinner: Option<galaxycraft::gif::Gif>,
+    menu_spinner_scaled: Option<(i32, Vec<galaxycraft::dds::DdsImage>)>,
+    menu_spinner_started: Instant,
     /// Cached terrain minimap for the Create screen: (map index, 128x128 RGB).
     lobby_preview: Option<(usize, Vec<u32>)>,
     /// Hotkeys browser: hovered/selected unit and the icon rectangles drawn
@@ -2421,6 +2551,21 @@ const GLUE_BIG_PX: f32 = 47.4;
 /// (unit name), `RC_SMALLTEXT` 25.4 px/em (stat rows), colour (223,223,255).
 /// Face of the in-game HUD text (see `GlueFace::Hud`).
 const HUD_FONT: &str = "font/blizzard-regular.ttf";
+/// Spinner of the main menu's CEF ad panel (`.loadingSpinner`).
+const MENU_SPINNER_GIF: &str = "webui/dist/lib/images/loadingcircle.gif";
+/// Spinner box in 640x480 UI pixels and its centre, measured on reference
+/// 130637: the ring's ink is 57 px across at 1440p and the GIF's ring fills
+/// 614 of its 650 px, so the frame is drawn 60 px (20 UI px) wide, centred
+/// on screen (2305, 505) = UI (515.0, 168.33).
+const MENU_SPINNER_UI: f32 = 20.0;
+const MENU_SPINNER_CENTRE: (f32, f32) = (515.0, 168.33);
+/// Retail build footer of the main menu (reference 130637).
+const BUILD_FOOTER: &str = "1.23.10.13515 | enUS | 64-bit";
+/// Footer em size and anchors in 640x480 UI pixels; tuned so the drawn ink
+/// box lands on the measured retail one (see `draw_menu_frame_text`).
+const BUILD_FOOTER_PX: f32 = 31.0 / 3.0;
+const BUILD_FOOTER_RIGHT: f32 = 634.33;
+const BUILD_FOOTER_TOP: f32 = 469.0;
 const HUD_NAME_PX: f32 = 31.2;
 const HUD_SMALL_PX: f32 = 25.6;
 /// Baselines below the control's top (content px), from the same fit:
@@ -3555,56 +3700,6 @@ fn dim_screen(fb: &mut Framebuffer, cx: i32, cw: i32, ch: i32, alpha: u8) {
         }
     }
 }
-/// Bilinear, alpha-blended blit of a source rectangle of a DDS into a
-/// destination rect.  Used by the Toon Registry plate, whose shipped art
-/// bakes bottom plates the retail screen does not draw (source rows 0..1300).
-#[allow(clippy::too_many_arguments)]
-fn draw_dds_crop_scaled(
-    fb: &mut Framebuffer,
-    art: &galaxycraft::dds::DdsImage,
-    src: (i32, i32, i32, i32),
-    dst: (i32, i32, i32, i32),
-) {
-    let (sx0, sy0, sw, sh) = src;
-    let (dx, dy, dw, dh) = dst;
-    if sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 || art.width == 0 || art.height == 0 {
-        return;
-    }
-    for y in 0..dh {
-        let fy = (y as f32 + 0.5) * sh as f32 / dh as f32 - 0.5;
-        let y0 = fy.floor() as i32;
-        let y1 = (y0 + 1).min(sh - 1);
-        let ty = (fy - y0 as f32).clamp(0.0, 1.0);
-        for x in 0..dw {
-            let fx = (x as f32 + 0.5) * sw as f32 / dw as f32 - 0.5;
-            let x0 = fx.floor() as i32;
-            let x1 = (x0 + 1).min(sw - 1);
-            let tx = (fx - x0 as f32).clamp(0.0, 1.0);
-            let p = |px: i32, py: i32| {
-                let ax = (sx0 + px).clamp(0, art.width as i32 - 1) as usize;
-                let ay = (sy0 + py).clamp(0, art.height as i32 - 1) as usize;
-                art.pixel(ax, ay)
-            };
-            let (p00, p10, p01, p11) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
-            let mix = |shift: u32| -> u32 {
-                let c = |q: u32| ((q >> shift) & 0xff) as f32;
-                let top = c(p00) * (1.0 - tx) + c(p10) * tx;
-                let bot = c(p01) * (1.0 - tx) + c(p11) * tx;
-                (top * (1.0 - ty) + bot * ty).round().clamp(0.0, 255.0) as u32
-            };
-            let a = mix(24);
-            if a == 0 {
-                continue;
-            }
-            let c = fb.get(dx + x, dy + y);
-            fb.put(
-                dx + x,
-                dy + y,
-                c.blend(Rgb::new(mix(16) as u8, mix(8) as u8, mix(0) as u8), a as u8),
-            );
-        }
-    }
-}
 
 fn draw_movie_frame(fb: &mut Framebuffer, frame: &PosterFrame) {
     if frame.width == 0 || frame.height == 0 {
@@ -3877,6 +3972,22 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     p.next[c.index()] = n;
                     app.set_progress(p);
                 }
+            }
+        } else if let Some(ms) = step.strip_prefix("wait-draw:") {
+            // Real-time menu playback: update and draw at ~60 Hz for `ms`
+            // milliseconds, as the window loop does (clip clocks advance).
+            let until = Instant::now() + Duration::from_millis(ms.parse().unwrap_or(0));
+            let held = MenuInput {
+                keys: Vec::new(),
+                mouse,
+                mouse_down: false,
+                wheel: 0,
+            };
+            while Instant::now() < until {
+                app.handle_menu_input(&held);
+                app.update();
+                app.draw_menu(fb);
+                std::thread::sleep(Duration::from_millis(16));
             }
         } else if let Some(ms) = step.strip_prefix("wait:") {
             // Real time passes (network peers can act): keep updating, as
@@ -4308,7 +4419,6 @@ fn main() {
         maps.push(MapEntry::new(
             asset_root().join("bottleneck.chk"),
             "Bottleneck".into(),
-            1,
             2,
         ));
     }
@@ -4348,7 +4458,6 @@ fn main() {
                 MapEntry::new(
                     path.clone(),
                     name,
-                    scenario.era,
                     slots.iter().filter(|s| s.active).count().clamp(2, 8),
                 ),
             );
@@ -4446,6 +4555,12 @@ fn main() {
         let bytes = inst.read_by_path("cursor/arrow.dds.grp").ok()?;
         galaxycraft::dds::DdsGrp::parse(&bytes)
     });
+    // Main-menu panel spinner: the CEF ad panel shows `loadingcircle.gif`
+    // while it has no content (always, offline).
+    let menu_spinner = install_handle.as_ref().and_then(|inst| {
+        let bytes = inst.read_by_path(MENU_SPINNER_GIF).ok()?;
+        galaxycraft::gif::decode(&bytes)
+    });
     let mut hotkey_bindings = hotkey_data::HotkeyData::get().default_bindings();
     if let Some(path) = hotkey_save_path() {
         if let Some(saved) = hotkey_data::load_bindings(&path) {
@@ -4489,15 +4604,7 @@ fn main() {
         glue_font_small: galaxycraft::text::UiFont::load(&assets.join("font/bl.ttf")),
         hud_font: galaxycraft::text::UiFont::load(&assets.join(HUD_FONT)),
         ui_font_hover: galaxycraft::text::UiFont::load_retail_extended(&assets),
-        ui_font_info: galaxycraft::text::UiFont::load(
-            &std::env::var("GC_INFO_FONT")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    std::path::PathBuf::from(
-                        "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
-                    )
-                }),
-        ),
+        ui_font_info: galaxycraft::text::UiFont::load(&assets.join(HUD_FONT)),
         music,
         voices,
         music_track: String::new(),
@@ -4506,7 +4613,6 @@ fn main() {
         console_race,
         intro,
         intro_started: Instant::now(),
-        menu_fit: None,
         menu_static: None,
         intro_fit: None,
         backdrop_fit: None,
@@ -4635,6 +4741,7 @@ fn main() {
         net: None,
         lan: LanUi::default(),
         menu_layers,
+        menu_hover_clip: None,
         campaign_layers: None,
         episode_hover: None,
         menu_hover: None,
@@ -4643,6 +4750,9 @@ fn main() {
         collection_sel: 0,
         menu_at,
         menu_phases,
+        menu_spinner,
+        menu_spinner_scaled: None,
+        menu_spinner_started: Instant::now(),
         lobby_preview: None,
         hotkey_hover: None,
         hotkey_sel: None,
@@ -5131,11 +5241,8 @@ fn main() {
             }
             "briefing" => {
                 app.load_map(app.map_index);
-                if !app.briefing_pages.is_empty() || app.briefing {
-                    app.draw_briefing(&mut fb);
-                } else {
-                    app.draw(&mut fb);
-                }
+                app.briefing = app.briefing || !app.briefing_pages.is_empty();
+                app.draw(&mut fb);
             }
             "pause" => {
                 app.load_map(app.map_index);
@@ -5344,6 +5451,56 @@ fn main() {
 /// the 16:9 content box never touches.
 fn clear_menu_frame(fb: &mut Framebuffer) {
     fb.clear(Rgb::new(0, 0, 0));
+}
+
+/// Run a screen that lays itself out over the whole frame (briefing pages,
+/// the score screen) inside the 16:9 content box: it draws into a box-sized
+/// framebuffer that is then copied centred, so an ultrawide window shows
+/// exactly the 16:9 picture between black bars, as the retail client does.
+fn draw_in_box(app: &mut App, fb: &mut Framebuffer, draw: fn(&mut App, &mut Framebuffer)) {
+    let (x0, y0, w, h) = App::content_rect(fb);
+    if x0 == 0 && y0 == 0 && w == fb.width && h == fb.height {
+        draw(app, fb);
+        return;
+    }
+    let mut boxed = Framebuffer::new(w as usize, h as usize);
+    draw(app, &mut boxed);
+    copy_into(fb, &boxed, x0, y0);
+}
+
+/// Copy `src` into `dst` with its top-left corner at `(x0, y0)`.
+fn copy_into(dst: &mut Framebuffer, src: &Framebuffer, x0: i32, y0: i32) {
+    for y in 0..src.height {
+        let dy = y + y0;
+        if dy < 0 || dy >= dst.height {
+            continue;
+        }
+        let left = x0.max(0);
+        let right = (x0 + src.width).min(dst.width);
+        if right <= left {
+            continue;
+        }
+        let s0 = (y * src.width + (left - x0)) as usize;
+        let d0 = (dy * dst.width + left) as usize;
+        let n = (right - left) as usize;
+        dst.pixels[d0..d0 + n].copy_from_slice(&src.pixels[s0..s0 + n]);
+    }
+}
+
+/// Black side bars outside the 16:9 content box `(x0, w)`.  Every retail
+/// front-end capture at 3440x1440 (all 56 references) is black there
+/// (max channel <= 8): no plate, arm or backdrop reaches the bars.
+fn mask_pillarbox(fb: &mut Framebuffer, x0: i32, w: i32) {
+    let black = Rgb::new(0, 0, 0);
+    let right = x0 + w;
+    for y in 0..fb.height {
+        if x0 > 0 {
+            fb.rect(0, y, x0, 1, black);
+        }
+        if right < fb.width {
+            fb.rect(right, y, fb.width - right, 1, black);
+        }
+    }
 }
 
 /// `A`..`Z` as typed in the rebind input field.
@@ -7190,15 +7347,6 @@ impl App {
         self.start_menu_music();
     }
 
-    /// Global map range for the active menu tab.
-    fn menu_slice(&self) -> (usize, usize) {
-        if self.menu_tab == 0 {
-            (0, self.campaign_len)
-        } else {
-            (self.campaign_len, self.maps.len())
-        }
-    }
-
     #[allow(unreachable_code)]
     /// Start the selected campaign mission of `episode` (Enter or the Ok
     /// button); the screen-change cue is the retail `swishin` sound.
@@ -7592,20 +7740,25 @@ impl App {
                 }
             }
             MenuScreen::Registry => {
-                // Mouse: the registry panel is a real dialog.  Its normalized
-                // rects come from `draw_registry` so drawing and hit-testing
-                // cannot diverge.
+                // Mouse: the shipped `glulogin` controls, the same rects
+                // `draw_registry` draws (`menu::LOGIN_DIALOG`).
                 if let Some((mx, my)) = input.mouse {
-                    let (cx, cy, cw, ch) = self.content_box;
-                    let hit = |x0: f32, y0: f32, x1: f32, y1: f32| {
-                        mx >= cx + (cw as f32 * x0) as i32
-                            && mx < cx + (cw as f32 * x1) as i32
-                            && my >= cy + (ch as f32 * y0) as i32
-                            && my < cy + (ch as f32 * y1) as i32
-                    };
+                    use galaxycraft::menu::GlueListHit;
+                    let first = registry_top(self.profile_sel);
+                    let rows = self
+                        .profile_store
+                        .profiles
+                        .len()
+                        .saturating_sub(first)
+                        .min(REGISTRY_ROWS);
+                    let hit = galaxycraft::menu::LOGIN_DIALOG.hit(
+                        (mx - self.ui_ox) as f32 / self.ui_scale,
+                        (my - self.ui_oy) as f32 / self.ui_scale,
+                        rows,
+                    );
                     if input.mouse_down && !self.mouse_was_down {
                         self.mouse_was_down = true;
-                        if hit(0.638, 0.788, 0.822, 0.848) {
+                        if hit == Some(GlueListHit::Ok) {
                             self.capture_active_profile();
                             if self.registry_after_gametype {
                                 self.registry_after_gametype = false;
@@ -7616,27 +7769,18 @@ impl App {
                                 self.profile_sel = 0;
                             }
                             self.play("ui_click");
-                        } else if hit(0.638, 0.884, 0.822, 0.944) {
+                        } else if hit == Some(GlueListHit::Cancel) {
                             self.registry_after_gametype = false;
                             self.menu_screen = MenuScreen::Main;
                             self.profile_sel = 0;
                             self.play("ui_click");
-                        } else if hit(0.1813, 0.694, 0.3672, 0.743) {
+                        } else if hit == Some(GlueListHit::NewId) {
                             self.registry_new_id();
-                        } else if hit(0.3867, 0.694, 0.5469, 0.743) {
+                        } else if hit == Some(GlueListHit::Delete) {
                             self.registry_delete();
-                        } else if hit(0.195, 0.229, 0.5469, 0.523) {
-                            // Same rows as `draw_registry` (1440-high space).
-                            let y = (my - cy) as f32 * 1440.0 / ch as f32;
-                            let row = ((y - REGISTRY_ROW_TOP) / REGISTRY_ROW_PITCH).floor();
-                            let idx = registry_top(self.profile_sel) + row.max(0.0) as usize;
-                            if row >= 0.0
-                                && (row as usize) < REGISTRY_ROWS
-                                && idx < self.profile_store.profiles.len()
-                            {
-                                self.profile_sel = idx;
-                                self.play("ui_move");
-                            }
+                        } else if let Some(GlueListHit::Row(row)) = hit {
+                            self.profile_sel = first + row;
+                            self.play("ui_move");
                         }
                         return;
                     }
@@ -7980,9 +8124,19 @@ impl App {
                                 self.play("ui_click");
                             }
                         }
-                        Some(MenuHit::Row(i)) if i != self.save_sel && i < list.len().max(1) => {
-                            self.save_sel = i;
-                            self.play("ui_click");
+                        Some(MenuHit::Row(i)) => {
+                            // Load Replay lists its folders first; they hold
+                            // nothing this client can open.
+                            let file = if replays {
+                                i.checked_sub(REPLAY_FOLDERS.len())
+                            } else {
+                                Some(i)
+                            };
+                            if let Some(f) = file.filter(|&f| f != self.save_sel && f < list.len())
+                            {
+                                self.save_sel = f;
+                                self.play("ui_click");
+                            }
                         }
                         _ => {}
                     }
@@ -8749,8 +8903,13 @@ impl App {
         (following.episode == current.episode).then_some(next)
     }
 
-    #[allow(unreachable_code)]
     fn draw_menu(&mut self, fb: &mut Framebuffer) {
+        self.draw_menu_screen(fb);
+        let (cx, _, cw, _) = Self::content_rect(fb);
+        mask_pillarbox(fb, cx, cw);
+    }
+
+    fn draw_menu_screen(&mut self, fb: &mut Framebuffer) {
         // Ultrawide pillarbox: the menu content is a 16:9 box, so the side
         // bars are not touched by any sub-screen.  Clear the whole frame
         // first, otherwise the software cursor leaves stale arrows in them.
@@ -8769,340 +8928,20 @@ impl App {
         // Episode/Mission/Lobby cover Single/Multi; Options/Hotkeys/
         // Collections/Credits/Registry/GameType cover the footer buttons.
         match self.menu_screen.clone() {
-            MenuScreen::Registry => {
-                self.draw_registry(fb);
-                return;
-            }
-            MenuScreen::GameType => {
-                self.draw_gametype(fb);
-                return;
-            }
-            MenuScreen::Episode => {
-                self.draw_episode(fb);
-                return;
-            }
-            MenuScreen::Mission { .. } => {
-                self.draw_mission(fb);
-                return;
-            }
-            MenuScreen::Lan => {
-                self.draw_lan(fb);
-                return;
-            }
-            MenuScreen::Replays => {
-                self.draw_create(fb);
-                return;
-            }
-            MenuScreen::SavedGames => {
-                self.draw_saved(fb);
-                return;
-            }
-            MenuScreen::Lobby { .. } => {
-                self.draw_lobby(fb);
-                return;
-            }
-            MenuScreen::Options { .. } => {
-                self.draw_options(fb);
-                return;
-            }
-            MenuScreen::Hotkeys { .. } => {
-                self.draw_hotkeys(fb);
-                return;
-            }
-            MenuScreen::Collections => {
-                self.draw_collections(fb);
-                return;
-            }
-            MenuScreen::Credits => {
-                self.draw_credits(fb);
-                return;
-            }
-            MenuScreen::Intro { .. } => {
-                self.draw_intro(fb);
-                return;
-            }
-            MenuScreen::Main => {
-                self.draw_main_full(fb);
-                return;
-            }
-        }
-        let (scale, ox, oy) = self.ui_metrics(fb);
-        let w = fb.width;
-        let h = fb.height;
-        // Full-frame retail title art (glue/title/title.dds), cached per size.
-        let stale = self
-            .menu_fit
-            .as_ref()
-            .map(|(fw, fh, _)| *fw != fb.width as usize || *fh != fb.height as usize)
-            .unwrap_or(true);
-        if stale {
-            self.menu_fit = self
-                .glue
-                .as_ref()
-                .and_then(|g| g.title.as_ref())
-                .map(|art| {
-                    (
-                        fb.width as usize,
-                        fb.height as usize,
-                        art.cover(fb.width as usize, fb.height as usize),
-                    )
-                });
-        }
-        if let Some((_, _, art)) = &self.menu_fit {
-            for y in 0..h {
-                for x in 0..w {
-                    let p = art.pixels[y as usize * art.width + x as usize];
-                    fb.put(x, y, Rgb(p & 0x00ff_ffff));
-                }
-            }
-            // The retail menu dims the title art behind the menu controls.
-            for y in 0..h {
-                for x in 0..w {
-                    let c = fb.get(x, y);
-                    fb.put(x, y, c.blend(Rgb::new(0, 0, 0), 96));
-                }
-            }
-        } else {
-            for y in 0..h {
-                let t = y as f32 / h as f32;
-                let c = Rgb::new(
-                    (6.0 + 18.0 * t) as u8,
-                    (10.0 + 24.0 * t) as u8,
-                    (24.0 + 40.0 * t) as u8,
-                );
-                fb.rect(0, y, w, 1, c);
-            }
-            for x in 0..80 {
-                let sx = (x * 197 + 31) % w.max(1);
-                let sy = (x * 89 + 17) % (h.max(1) / 2);
-                fb.rect(sx, sy, 1, 1, Rgb::new(150, 160, 190));
-            }
-        }
-
-        // Retail title-frame surfaces, at their shipped 640x480 rectangles.
-        if let Some(glue) = &self.glue {
-            if let Some(dialog) = &glue.menu {
-                for (id, art) in [
-                    (22, glue.title_bg.as_ref()),
-                    (23, glue.title_overlay.as_ref()),
-                    (6, glue.intro_credit.as_ref()),
-                    (7, glue.credit.as_ref()),
-                    (1, glue.etail.as_ref()),
-                ] {
-                    if let (Some(c), Some(art)) = (dialog.control(id), art) {
-                        let mut r = c.abs.scaled(scale, ox, oy);
-                        if id == 22 {
-                            r.x -= 3;
-                        }
-                        art.draw_scaled(fb, r.x, r.y, r.w, r.h);
-                    }
-                }
-            }
-        }
-
-        // Menu buttons use the shipped main-menu hot areas as anchors.
-        let campaign = self.menu_tab == 0;
-        let single_rect = UiRect::new(24, 86, 270, 84).scaled(scale, ox, oy);
-        let multi_rect = UiRect::new(24, 190, 270, 84).scaled(scale, ox, oy);
-        let intro_rect = UiRect::new(24, 294, 270, 40).scaled(scale, ox, oy);
-        let exit_rect = UiRect::new(24, 346, 270, 40).scaled(scale, ox, oy);
-        self.menu_button(fb, single_rect, "SINGLE PLAYER", "Campaign", campaign);
-        self.menu_button(fb, multi_rect, "MULTIPLAYER", "Melee / Skirmish", !campaign);
-        self.menu_button(fb, intro_rect, "INTRO", "Replay title sequence", false);
-        self.menu_button(fb, exit_rect, "EXIT", "Quit to desktop", false);
-        fb.text(
-            single_rect.x + 10,
-            single_rect.y + 56,
-            &format!("{} retail campaign missions", self.campaign_len),
-            Rgb::new(150, 185, 160),
-            1,
-        );
-        fb.text(
-            single_rect.x + 10,
-            single_rect.y + 72,
-            "establishing-shot briefings + full score screens",
-            Rgb::new(130, 160, 185),
-            1,
-        );
-        fb.text(
-            multi_rect.x + 10,
-            multi_rect.y + 56,
-            &format!(
-                "{} shipped maps  -  2..8 players",
-                self.maps.len().saturating_sub(self.campaign_len)
-            ),
-            Rgb::new(150, 185, 160),
-            1,
-        );
-        fb.text(
-            multi_rect.x + 10,
-            multi_rect.y + 72,
-            "all eight tilesets, deterministic AI",
-            Rgb::new(130, 160, 185),
-            1,
-        );
-
-        fb.text(
-            ox + 24 * scale as i32,
-            oy + 14 * scale as i32,
-            "GALAXYCRAFT",
-            Rgb::new(255, 225, 110),
-            (2.0 * scale).round().max(1.0) as i32,
-        );
-        fb.text(
-            ox + 26 * scale as i32,
-            oy + 42 * scale as i32,
-            "A RUST RECONSTRUCTION OF STARCRAFT 1.23",
-            Rgb::new(160, 185, 215),
-            (0.9 * scale).round().max(1.0) as i32,
-        );
-
-        // Map/episode list panel, anchored in the right half of the safe area.
-        let (start, end) = self.menu_slice();
-        let count = end.saturating_sub(start);
-        let list = UiRect::new(330, 190, 292, 270).scaled(scale, ox, oy);
-        fb.rect(
-            list.x,
-            list.y,
-            list.w,
-            list.h,
-            Rgb::new(8, 12, 20).blend(Rgb::new(30, 40, 55), 170),
-        );
-        fb.rect_outline(list.x, list.y, list.w, list.h, Rgb::new(110, 150, 185));
-        let title = if campaign {
-            let episode = self
-                .maps
-                .get(start + self.menu_index.min(count.saturating_sub(1)))
-                .and_then(|m| m.campaign.as_ref())
-                .map(|c| c.episode_name.clone())
-                .unwrap_or_default();
-            format!("{episode}  ({count})")
-        } else {
-            format!("MELEE MAPS  ({count})")
-        };
-        fb.text(list.x + 8, list.y + 6, &title, Rgb::new(130, 225, 150), 1);
-        if campaign && count == 0 {
-            fb.text(
-                list.x + 8,
-                list.y + 28,
-                "No retail campaign found - start with --install PATH",
-                Rgb::new(235, 160, 140),
-                1,
-            );
-        }
-        let visible = 8usize;
-        let rel_sel = self
-            .map_index
-            .saturating_sub(start)
-            .min(count.saturating_sub(1));
-        let first = rel_sel
-            .saturating_sub(visible / 2)
-            .min(count.saturating_sub(visible));
-        for row in 0..visible.min(count) {
-            let global = start + first + row;
-            let Some(m) = self.maps.get(global) else {
-                continue;
-            };
-            let y = list.y + 26 + row as i32 * 22;
-            let selected = global == self.map_index;
-            if selected {
-                fb.rect(list.x + 4, y - 2, list.w - 8, 20, Rgb::new(36, 58, 82));
-                fb.rect_outline(list.x + 4, y - 2, list.w - 8, 20, Rgb::new(100, 190, 255));
-            }
-            let label = format!("{:>2}. {}", first + row + 1, m.name);
-            let short = if label.len() > 34 {
-                &label[..34]
-            } else {
-                &label
-            };
-            fb.text(
-                list.x + 8,
-                y,
-                short,
-                if selected {
-                    Rgb::new(255, 245, 180)
-                } else {
-                    Rgb::new(200, 205, 220)
-                },
-                1,
-            );
-        }
-        if let Some(m) = self.maps.get(self.map_index) {
-            let detail = match &m.campaign {
-                Some(tag) => format!(
-                    "{}  -  {} mission {}   R: {:?}",
-                    m.name, tag.episode_name, tag.mission, self.menu_race
-                ),
-                None => format!(
-                    "{}  -  {} players, {} tileset   R: {:?}",
-                    m.name,
-                    m.players,
-                    era_name(m.era),
-                    self.menu_race
-                ),
-            };
-            fb.text(
-                ox + 20 * scale as i32,
-                oy + 466 * scale as i32,
-                &detail,
-                Rgb::new(200, 215, 230),
-                1,
-            );
-        }
-        fb.text(
-            ox + 20 * scale as i32,
-            oy + 430 * scale as i32,
-            "TAB: campaign / melee   ENTER: play   UP/DOWN: select   R: race   I: intro   ESC: quit",
-            Rgb::new(170, 190, 215),
-            1,
-        );
-    }
-
-    fn menu_button(
-        &self,
-        fb: &mut Framebuffer,
-        rect: UiRect,
-        title: &str,
-        sub: &str,
-        active: bool,
-    ) {
-        let fill = if active {
-            Rgb::new(42, 70, 96).blend(Rgb::new(20, 30, 45), 90)
-        } else {
-            Rgb::new(10, 16, 24).blend(Rgb::new(20, 30, 45), 130)
-        };
-        fb.rect(rect.x, rect.y, rect.w, rect.h, fill);
-        fb.rect_outline(
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-            if active {
-                Rgb::new(120, 220, 255)
-            } else {
-                Rgb::new(80, 100, 125)
-            },
-        );
-        let name_scale = if rect.h >= 60 { 2 } else { 1 };
-        fb.text(
-            rect.x + 10,
-            rect.y + if rect.h >= 60 { 10 } else { 3 },
-            title,
-            if active {
-                Rgb::new(255, 245, 180)
-            } else {
-                Rgb::new(210, 220, 235)
-            },
-            name_scale,
-        );
-        if rect.h >= 40 {
-            fb.text(
-                rect.x + 10,
-                rect.y + if rect.h >= 60 { 32 } else { 16 },
-                sub,
-                Rgb::new(150, 175, 200),
-                1,
-            );
+            MenuScreen::Registry => self.draw_registry(fb),
+            MenuScreen::GameType => self.draw_gametype(fb),
+            MenuScreen::Episode => self.draw_episode(fb),
+            MenuScreen::Mission { .. } => self.draw_mission(fb),
+            MenuScreen::Lan => self.draw_lan(fb),
+            MenuScreen::Replays => self.draw_create(fb),
+            MenuScreen::SavedGames => self.draw_saved(fb),
+            MenuScreen::Lobby { .. } => self.draw_lobby(fb),
+            MenuScreen::Options { .. } => self.draw_options(fb),
+            MenuScreen::Hotkeys { .. } => self.draw_hotkeys(fb),
+            MenuScreen::Collections => self.draw_collections(fb),
+            MenuScreen::Credits => self.draw_credits(fb),
+            MenuScreen::Intro { .. } => self.draw_intro(fb),
+            MenuScreen::Main => self.draw_main_full(fb),
         }
     }
 
@@ -9370,7 +9209,7 @@ impl App {
             _ => {}
         }
         if self.game_result.is_some() {
-            self.draw_score_screen(fb);
+            draw_in_box(self, fb, Self::draw_score_screen);
             return;
         }
         if self.paused {
@@ -10683,7 +10522,16 @@ impl App {
         }
     }
 
+    /// Draw the current frame.  Every state (movies, menus, briefings,
+    /// the game and its dialogs) lives in the 16:9 content box: the retail
+    /// client is black outside it on all 56 reference captures.
     fn draw(&mut self, fb: &mut Framebuffer) {
+        self.draw_frame(fb);
+        let (cx, _, cw, _) = Self::content_rect(fb);
+        mask_pillarbox(fb, cx, cw);
+    }
+
+    fn draw_frame(&mut self, fb: &mut Framebuffer) {
         self.update_view(fb);
 
         if self.intro {
@@ -10695,7 +10543,7 @@ impl App {
             return;
         }
         if self.briefing {
-            self.draw_briefing(fb);
+            draw_in_box(self, fb, Self::draw_briefing);
             return;
         }
         fb.clear(Rgb::new(0, 0, 0));
@@ -12227,11 +12075,12 @@ impl App {
             fb.pixels.copy_from_slice(pixels);
         }
         let t1 = Instant::now();
+        self.draw_menu_spinner(fb, 0, 0);
         self.draw_menu_clips(fb);
         let t2 = Instant::now();
         self.draw_menu_entries(fb, true);
         let t3 = Instant::now();
-        self.draw_menu_frame_text(fb, 0, 0, None);
+        self.draw_menu_frame_text(fb);
         let t4 = Instant::now();
         if std::env::var_os("GC_PROFILE").is_some() {
             eprintln!(
@@ -12277,30 +12126,31 @@ impl App {
         // One source of truth: `menu::FLC_RECTS` is the shipped `flc.json`
         // rectangle list, unit-tested against the fixture.
         #[allow(clippy::type_complexity)]
-        let slots: [(usize, bool, (f32, f32, f32, f32)); 6] = [
-            (0, false, galaxycraft::menu::FLC_RECTS[0].1),
-            (0, true, galaxycraft::menu::FLC_RECTS[1].1),
-            (1, false, {
-                let r = galaxycraft::menu::FLC_RECTS[2].1;
-                (78.0 + r.0, 190.0 + r.1, r.2, r.3)
-            }),
-            (1, true, {
-                let r = galaxycraft::menu::FLC_RECTS[3].1;
-                (78.0 + r.0, 190.0 + r.1, r.2, r.3)
-            }),
-            (7, false, {
-                let r = galaxycraft::menu::FLC_RECTS[4].1;
-                (395.0 + r.0, 320.0 + r.1, r.2, r.3)
-            }),
-            (7, true, {
-                let r = galaxycraft::menu::FLC_RECTS[5].1;
-                (395.0 + r.0, 320.0 + r.1, r.2, r.3)
-            }),
-        ];
+        let rect = |idx: usize, is_hover: bool| -> (f32, f32, f32, f32) {
+            let (slot, base) = match idx {
+                0 => (0, (0.0, 0.0)),
+                1 => (2, (78.0, 190.0)),
+                _ => (4, (395.0, 320.0)),
+            };
+            let r = galaxycraft::menu::FLC_RECTS[slot + usize::from(is_hover)].1;
+            (base.0 + r.0, base.1 + r.1, r.2, r.3)
+        };
         let Some(layers) = &mut self.menu_layers else {
             return;
         };
-        for (idx, is_hover, (x, y, w, h)) in slots {
+        // Hover clock: the entering clip starts at frame 0, the leaving one
+        // rewinds and pre-decodes for the next hover.
+        if self.menu_hover_clip != hover {
+            if let Some(clip) = self.menu_hover_clip.and_then(|i| layers.clip(i, true)) {
+                clip.stop_hover();
+            }
+            if let Some(clip) = hover.and_then(|i| layers.clip(i, true)) {
+                clip.start_hover();
+            }
+            self.menu_hover_clip = hover;
+        }
+        for (idx, is_hover) in MENU_CLIP_ORDER {
+            let (x, y, w, h) = rect(idx, is_hover);
             if is_hover && hover != Some(idx) {
                 continue;
             }
@@ -12359,7 +12209,7 @@ impl App {
                 } else if inside(m::CREATE_BUTTONS[1]) {
                     Some(MenuHit::Cancel)
                 } else {
-                    row_of(m::CREATE_ROWS, 4).map(MenuHit::Row)
+                    row_of(m::CREATE_ROWS, 6).map(MenuHit::Row)
                 }
             }
             MenuScreen::Lobby { .. } => {
@@ -12384,25 +12234,19 @@ impl App {
                 }
             }
             MenuScreen::SavedGames => {
-                // `draw_saved` panel/rows/buttons (fractions of the box).
-                let fx = |f: f32| f * 2560.0;
-                let fy = |f: f32| f * 1440.0;
-                let rect =
-                    |x0: f32, y0: f32, x1: f32, y1: f32| (fx(x0), fy(y0), fx(x1 - x0), fy(y1 - y0));
-                let rows = (
-                    fx(0.1758),
-                    fy(0.1639 + 0.12 * 0.4937),
-                    fx(0.3675),
-                    10.0 * fy(0.07 * 0.4937),
-                );
-                if inside(rect(0.646, 0.791, 0.800, 0.862)) {
-                    Some(MenuHit::Ok)
-                } else if inside(rect(0.668, 0.856, 0.830, 0.926)) {
-                    Some(MenuHit::Cancel)
-                } else if inside(rect(0.173, 0.674, 0.301, 0.744)) {
-                    Some(MenuHit::Delete)
-                } else {
-                    row_of(rows, 10).map(MenuHit::Row)
+                // The shipped `gluload` controls `draw_saved` draws.
+                use galaxycraft::menu::GlueListHit;
+                let rows = self.save_list(false).len().min(SAVED_ROWS);
+                match galaxycraft::menu::LOAD_DIALOG.hit(
+                    (x - self.ui_ox) as f32 / self.ui_scale,
+                    (y - self.ui_oy) as f32 / self.ui_scale,
+                    rows,
+                )? {
+                    GlueListHit::Ok => Some(MenuHit::Ok),
+                    GlueListHit::Cancel => Some(MenuHit::Cancel),
+                    GlueListHit::Delete => Some(MenuHit::Delete),
+                    GlueListHit::Row(r) => Some(MenuHit::Row(r)),
+                    GlueListHit::NewId => None,
                 }
             }
             MenuScreen::Options { tab } => {
@@ -12700,7 +12544,17 @@ impl App {
             LabelAlign::Left => label.x,
             LabelAlign::Center => label.x - label.width / 2.0,
         };
-        if hovered {
+        // Single Player / Multiplayer switch the whole word to the bright
+        // extended face (130704/130712).  The centred footer entries keep
+        // their glyph layout and only change colour: switching the face
+        // re-spaced every letter after the first, which read as the word
+        // sliding left (user report on the retail client, 2026-11-04).
+        let (normal, bright) = if hovered && label.align == LabelAlign::Center {
+            (hover, bright)
+        } else {
+            (normal, bright)
+        };
+        if hovered && label.align != LabelAlign::Center {
             self.draw_hd_text(
                 fb,
                 text,
@@ -12758,7 +12612,12 @@ impl App {
 
     /// Advance width of `text` in UI pixels for one of the two faces.
     fn hd_advance_ui(&mut self, text: &str, scale: f32, hover_face: bool) -> f32 {
-        let px = (16.0 * scale).max(7.0);
+        self.hd_advance_px(text, 16.0, scale, hover_face)
+    }
+
+    /// [`Self::hd_advance_ui`] at an explicit em size in UI pixels.
+    fn hd_advance_px(&mut self, text: &str, font_ui: f32, scale: f32, hover_face: bool) -> f32 {
+        let px = (font_ui * scale).max(7.0);
         let use_hover = hover_face && self.ui_font_hover.is_some();
         let font = if use_hover {
             self.ui_font_hover.as_mut()
@@ -12891,7 +12750,8 @@ impl App {
     /// (measured: the menubar structure sits at x 2497..2873 in the sub-screens
     /// and at 2135..2607 in the main menu).
     fn draw_menu_backdrop(&mut self, fb: &mut Framebuffer) {
-        self.draw_menu_backdrop_at(fb, (fb.width as f32 * 0.0555) as i32);
+        let (_, _, cw, _) = Self::content_rect(fb);
+        self.draw_menu_backdrop_at(fb, (cw as f32 * 0.0555) as i32);
     }
 
     /// Backdrop with the frame at an explicit offset. The Hotkeys screen keeps
@@ -12969,239 +12829,91 @@ impl App {
                 Rgb::new(150, 25, 25),
             );
         }
-        // Green ring cursor at the panel centre, as in the reference shot.
-        // 28 px diameter at 3x -> 4.7 UI px radius.
-        let ccx = panel.x + dx + panel.w / 2;
-        let ccy = panel.y + dy + panel.h / 2;
-        let cr = (4.7 * scale).round().max(4.0) as i32;
-        fb.circle_outline(ccx, ccy, cr, Rgb::new(20, 180, 20));
-        fb.circle_outline(ccx, ccy, cr + 1, Rgb::new(10, 110, 10));
     }
 
-    /// Profile tag and build footer over the title frame.
-    fn draw_menu_frame_text(&mut self, fb: &mut Framebuffer, _dx: i32, _dy: i32, dim: Option<Rgb>) {
+    /// Animated `loadingcircle.gif` in the title-frame panel.  It is drawn
+    /// every frame (not in the static cache) and loops every 900 ms; menu
+    /// captures pin it with `--menu-phase spinner=S` or `--menu-at`.
+    fn draw_menu_spinner(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
+        let Some(gif) = &self.menu_spinner else {
+            return;
+        };
         let (scale, ox, oy) = self.ui_metrics(fb);
-        // Battle.net tag top-right and the build footer bottom-right, both
-        // right-aligned to the 640x480 UI safe area (reference: tag right
-        // edge x=632, version right edge x=633 in UI space).
+        let size = (MENU_SPINNER_UI * scale).round().max(1.0) as i32;
+        if self.menu_spinner_scaled.as_ref().map(|(s, _)| *s) != Some(size) {
+            let frames = gif
+                .frames
+                .iter()
+                .map(|f| galaxycraft::gif::downsample(&f.image, size as usize, size as usize))
+                .collect();
+            self.menu_spinner_scaled = Some((size, frames));
+        }
+        let pinned = self.menu_phases.get("spinner").copied().or(self.menu_at);
+        let elapsed_ms = match pinned {
+            Some(t) => (t.max(0.0) * 1000.0) as u64,
+            None => self.menu_spinner_started.elapsed().as_millis() as u64,
+        };
+        let Some(index) = gif
+            .frame_at(elapsed_ms)
+            .and_then(|f| gif.frames.iter().position(|g| std::ptr::eq(g, f)))
+        else {
+            return;
+        };
+        if let Some((_, frames)) = &self.menu_spinner_scaled {
+            let x = dx + ox + (MENU_SPINNER_CENTRE.0 * scale).round() as i32 - size / 2;
+            let y = dy + oy + (MENU_SPINNER_CENTRE.1 * scale).round() as i32 - size / 2;
+            frames[index].draw(fb, x, y);
+        }
+    }
+
+    /// Build footer bottom-right of the title frame.  Measured on reference
+    /// 130637: `blizzard-regular.ttf` (the shipped HUD face; IoU 0.55 against
+    /// the retail ink, LiberationSans 0.18), ink box 431x28 px at 1440p with
+    /// its right edge at UI x 633.67 and its top at UI y 468.67, colour
+    /// (198,218,255) and a soft dark shadow one UI pixel down-right.  The
+    /// Battle.net tag the retail client shows top-right belongs to an online
+    /// session, which this client does not have: it is not drawn.
+    fn draw_menu_frame_text(&mut self, fb: &mut Framebuffer) {
         if std::env::var_os("GC_NO_TEXT").is_some() {
             return;
         }
-        let tag = std::env::var("GC_BATTLETAG").unwrap_or_else(|_| {
-            let user = std::env::var("USER").unwrap_or_else(|_| "Player".to_string());
-            format!("{user}#1532")
-        });
-        if (scale - 3.0).abs() < 0.01
-            && std::env::var("GC_TEXT_MASKS").ok().as_deref() == Some("1")
-            && std::env::var_os("GC_RAW_RENDER").is_none()
-            && tag == "cotizcesar#1532"
-            && dim.is_none()
-        {
-            self.draw_text_mask(fb, &galaxycraft::menu_masks::PROFILE, scale, ox, oy);
-            self.draw_text_mask(fb, &galaxycraft::menu_masks::VERSION, scale, ox, oy);
+        let (scale, ox, oy) = self.ui_metrics(fb);
+        let Some(font) = self.ui_font_info.as_mut() else {
             return;
-        }
-        // Measured on reference #1: the tag is 11 UI px (232x23 screen px)
-        // with its cap top at y=8, the build footer 8 UI px with 3.9 px of
-        // inter-glyph tracking (432x19).  Both share the (198,218,255) face.
-        let tag_px = (std::env::var("GC_TAG_PX")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(11.0)
-            * scale)
-            .max(6.0);
-        let info = dim.unwrap_or(Rgb::new(198, 218, 255));
-        let info_bold = std::env::var("GC_GLYPH_BOLD")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0u8);
-        let info_gamma = std::env::var("GC_INFO_GAMMA")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1.0);
-        // Glyph-by-glyph profile metrics measured on reference #130637.
-        // Offsets are in 640x480 UI pixels from the right edge (x=633.667);
-        // values are (char, left offset, target width).
-        const PROFILE_GLYPHS: [(char, f32, f32); 15] = [
-            ('c', -77.333, 4.0),
-            ('o', -72.333, 5.0),
-            ('t', -66.667, 3.333),
-            ('i', -62.0, 1.0),
-            ('z', -59.333, 4.0),
-            ('c', -54.0, 3.667),
-            ('e', -49.0, 4.667),
-            ('s', -43.333, 3.667),
-            ('a', -38.667, 4.667),
-            ('r', -32.333, 3.333),
-            ('#', -28.333, 5.0),
-            ('1', -21.667, 2.667),
-            ('5', -16.0, 4.333),
-            ('3', -10.333, 4.333),
-            ('2', -4.333, 4.333),
-        ];
-        if dim.is_none() && tag == "cotizcesar#1532" && (scale - 3.0).abs() < 0.01 {
-            if let Some(font) = self.ui_font.as_mut() {
-                let top = (2.7 * scale) as i32;
-                for (ch, offset, width) in PROFILE_GLYPHS {
-                    let left = ox + ((633.667 + offset) * scale).round() as i32;
-                    font.draw_glyph_left(
-                        fb,
-                        ch,
-                        left,
-                        top,
-                        (11.0 * scale).max(6.0),
-                        (width * scale).round() as i32,
-                        info,
-                        info_gamma,
-                        info_bold,
-                    );
-                }
-            }
-        } else if dim.is_none() {
-            if let Some(font) = self.ui_font.as_mut() {
-                let x_scale = std::env::var("GC_TAG_XSCALE")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0.70);
-                let tag_top = std::env::var("GC_TAG_TOP")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(2.7);
-                let natural = font.measure_scaled(&tag, tag_px, 0.0, x_scale) as f32;
-                let gaps = tag.chars().count().saturating_sub(1).max(1) as f32;
-                let target = 77.3 * scale;
-                font.draw_right_scaled_weighted_f(
-                    fb,
-                    ox + (634.67 * scale) as i32,
-                    oy as f32 + tag_top * scale,
-                    &tag,
-                    tag_px,
-                    (target - natural) / gaps,
-                    x_scale,
-                    info,
-                    None,
-                    info_gamma,
-                );
-            }
-        }
-        let ver = "1.23.10.13515 | enUS | 64-bit";
-        // Glyph-by-glyph metrics measured on reference #130637, offsets in
-        // 640x480 UI pixels from the right edge (x=634.0).
-        const VERSION_GLYPHS: [(char, f32, f32); 30] = [
-            ('1', -143.667, 2.667),
-            ('.', -138.333, 1.333),
-            ('2', -135.333, 4.333),
-            ('3', -129.333, 4.333),
-            ('.', -123.333, 1.333),
-            ('1', -119.667, 2.667),
-            ('0', -114.333, 5.0),
-            ('.', -108.333, 1.333),
-            ('1', -104.667, 2.667),
-            ('3', -99.333, 4.333),
-            ('5', -93.0, 4.333),
-            ('1', -86.667, 2.667),
-            ('5', -81.0, 4.333),
-            (' ', 0.0, 0.0),
-            ('|', -70.667, 0.667),
-            (' ', 0.0, 0.0),
-            ('e', -64.0, 4.667),
-            ('n', -58.0, 4.667),
-            ('U', -51.667, 5.333),
-            ('S', -44.667, 5.0),
-            (' ', 0.0, 0.0),
-            ('|', -34.0, 0.667),
-            (' ', 0.0, 0.0),
-            ('6', -27.333, 4.667),
-            ('4', -22.0, 5.333),
-            ('-', -15.667, 3.0),
-            ('b', -11.333, 4.667),
-            ('i', -5.333, 1.0),
-            ('t', -3.0, 3.333),
-            (' ', 0.0, 0.0),
-        ];
-        if ver == "1.23.10.13515 | enUS | 64-bit"
-            && (scale - 3.0).abs() < 0.01
-            && self.ui_font_info.is_some()
-        {
-            if let Some(font) = self.ui_font_info.as_mut() {
-                let top = (469.0 * scale) as i32;
-                for (ch, offset, width) in VERSION_GLYPHS {
-                    if ch == ' ' {
-                        continue;
-                    }
-                    let left = ox + ((634.0 + offset) * scale).round() as i32;
-                    font.draw_glyph_left(
-                        fb,
-                        ch,
-                        left,
-                        top,
-                        (10.0 * scale).max(6.0),
-                        (width * scale).round() as i32,
-                        info,
-                        info_gamma,
-                        info_bold,
-                    );
-                }
-            }
-        } else if let Some(font) = if self.ui_font_info.is_some() {
-            self.ui_font_info.as_mut()
-        } else {
-            self.ui_font.as_mut()
-        } {
-            let x_scale = std::env::var("GC_VER_XSCALE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0.8);
-            let px = (std::env::var("GC_VER_PX")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10.0)
-                * scale)
-                .max(6.0);
-            let ver_top = std::env::var("GC_VER_TOP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(469.5);
-            let natural = font.measure_scaled(ver, px, 0.0, x_scale) as f32;
-            let gaps = ver.chars().count().saturating_sub(1).max(1) as f32;
-            font.draw_right_scaled_weighted(
-                fb,
-                ox + (634.0 * scale) as i32,
-                oy + (ver_top * scale) as i32,
-                ver,
-                px,
-                (144.0 * scale - natural) / gaps,
-                x_scale,
-                info,
-                None,
-                info_gamma,
-            );
-        } else {
-            let w = tag.chars().count() as i32 * 8;
-            fb.text(
-                ox + (634.0 * scale) as i32 - w,
-                oy + (8.0 * scale) as i32,
-                &tag,
-                info,
-                1,
-            );
-            let ver = "1.23.10.13515 | enUS | 64-bit";
-            let vw = ver.chars().count() as i32 * 8;
-            fb.text(
-                ox + (634.0 * scale) as i32 - vw,
-                oy + (469.0 * scale) as i32,
-                ver,
-                info,
-                1,
-            );
-        }
+        };
+        let px = BUILD_FOOTER_PX * scale;
+        let width = font.measure(BUILD_FOOTER, px, 0.0);
+        let x = ox + (BUILD_FOOTER_RIGHT * scale).round() as i32 - width;
+        let top = oy + (BUILD_FOOTER_TOP * scale).round() as i32;
+        let off = scale.round().max(1.0) as i32;
+        font.draw_top(
+            fb,
+            x + off,
+            top + off,
+            BUILD_FOOTER,
+            px,
+            0.0,
+            Rgb::new(0, 0, 0),
+            None,
+        );
+        font.draw_top(
+            fb,
+            x,
+            top,
+            BUILD_FOOTER,
+            px,
+            0.0,
+            Rgb::new(198, 218, 255),
+            None,
+        );
     }
 
     /// Title-frame surfaces plus the profile name, as every retail front-end
     /// screen shows them behind its panel.
     fn draw_menu_frame(&mut self, fb: &mut Framebuffer, dx: i32, dy: i32) {
         self.draw_menu_frame_art(fb, dx, dy);
-        self.draw_menu_frame_text(fb, dx, dy, None);
+        self.draw_menu_spinner(fb, dx, dy);
+        self.draw_menu_frame_text(fb);
     }
 
     /// Retail moon-landscape backdrop used by the Registry, Saved Games and
@@ -13215,128 +12927,184 @@ impl App {
         art.draw_scaled(fb, cx, 0, cw, ch);
     }
 
-    /// Retail Toon Registry, rebuilt from the shipped `toonlistbg` plate and
-    /// the 1:1 geometry measured on capture 130734: list plate at
-    /// (-97,-5) scale 0.748 (source rows 0..1300), Ok/Cancel classic plates,
-    /// New ID / Delete bays and the profile list text.
+    /// Single Player Registry (`rez/glulogin.ui.json`), see
+    /// [`Self::draw_glue_list`].  Reference 130734.
     fn draw_registry(&mut self, fb: &mut Framebuffer) {
+        let names = self.profile_store.names();
+        let first = registry_top(self.profile_sel);
+        let rows: Vec<(String, bool)> = names
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(REGISTRY_ROWS)
+            .map(|(row, name)| (name.clone(), row == self.profile_sel))
+            .collect();
+        let has_profile = !names.is_empty();
+        self.draw_glue_list(
+            fb,
+            &galaxycraft::menu::LOGIN_DIALOG,
+            |g| g.login_list.as_ref(),
+            "Registry",
+            &rows,
+            &[
+                ("New ID", true),
+                ("Delete", has_profile),
+                ("Ok", has_profile),
+                ("Cancel", true),
+            ],
+        );
+    }
+
+    /// Classic glue list dialog (Registry, Load Saved Game), measured on
+    /// 130734 / 130848:
+    /// - the `pList` plate is 4x art drawn at `scale / 4` with its right
+    ///   edge on the control's right edge (`RC_ANCHOR_TOPRIGHT`); the
+    ///   `PalNl` Ok/Cancel plates sit at their measured places;
+    /// - `RC_BIGGERTEXT` text (Registry title, every `FLCBTN`) is Eurostile
+    ///   Extended and `RC_BIGTEXT` (Saved Games title, list rows) the regular
+    ///   face, both 16 UI px with natural spacing (glyph widths matched to
+    ///   1 px);
+    /// - an enabled button shows its hotkey letter in #daff8c and the rest
+    ///   in #5ced30, centred in the control; a disabled one is all #6a6a6a;
+    /// - the title is #c6daff; rows are #5ced30, the selected one #daff8c.
+    ///
+    /// `buttons` lists `(label, enabled)` for New ID (when the dialog has
+    /// it), Delete, Ok and Cancel, in that order.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_glue_list(
+        &mut self,
+        fb: &mut Framebuffer,
+        dialog: &galaxycraft::menu::GlueListDialog,
+        plate: fn(&galaxycraft::ui_art::GlueArt) -> Option<&galaxycraft::dds::DdsImage>,
+        title: &str,
+        rows: &[(String, bool)],
+        buttons: &[(&str, bool)],
+    ) {
+        use galaxycraft::menu::{LabelAlign, GLUE_LIST_ROW_PITCH, GLUE_LIST_TEXT_INSET};
         self.draw_moon_backdrop(fb);
         let (cx, _cy, _cw, ch) = Self::content_rect(fb);
-        let (scale, uox, uoy) = self.ui_metrics(fb);
-        use galaxycraft::menu::LabelAlign;
+        let (scale, ox, oy) = self.ui_metrics(fb);
         let k = ch as f32 / 1440.0;
-        let u = |v: f32| (v - 320.0) / 3.0;
-        let w3 = |v: f32| v / 3.0;
         let sx = |x: f32| cx + (x * k).round() as i32;
         let sy = |y: f32| (y * k).round() as i32;
         let sw = |w: f32| (w * k).round().max(1.0) as i32;
-        let pale = Rgb::new(0xc6, 0xda, 0xff);
-        let select_green = Rgb::new(0xda, 0xff, 0x8c);
-        // Profile list plate (`toonlistbg`), scaled 0.7468 and clipped to the
-        // shipped source rows 0..1300 (the baked bottom plates are not drawn).
-        if let Some(art) = self.glue.as_ref().and_then(|g| g.registry_list.as_ref()) {
-            draw_dds_crop_scaled(
-                fb,
-                art,
-                (0, 0, 2022, 1300),
-                (sx(-97.0), sy(-5.0), sw(1510.0), sw(971.0)),
-            );
-        }
-        // Classic Ok/Cancel plates (same files and placement as Create).
-        if let Some(art) = self.glue.as_ref().and_then(|g| g.palnl_ok.as_ref()) {
-            art.draw_scaled(fb, sx(1627.0), sy(1006.0), sw(1062.0), sw(214.0));
-        }
-        if let Some(art) = self.glue.as_ref().and_then(|g| g.palnl_cancel.as_ref()) {
-            art.draw_scaled(fb, sx(1734.0), sy(1068.0), sw(940.0), sw(273.0));
-        }
-        // New ID / Delete bays: black 75 % fill, #840000 2 px border and the
-        // ~10 px bevel measured on the capture.
-        let b2 = (2.0 * k).round().max(1.0) as i32;
-        let bevel = (10.0 * k).round() as i32;
-        for (x, y, w, h) in [(455.0, 1003.0, 482.0, 65.0), (1000.0, 1003.0, 388.0, 65.0)] {
-            let (px, py, pw, ph) = (sx(x), sy(y), sw(w), sw(h));
-            for yy in py..py + ph {
-                for xx in px..px + pw {
-                    let c = fb.get(xx, yy);
-                    fb.put(xx, yy, c.blend(Rgb::new(0, 0, 0), 191));
-                }
+        if let Some(glue) = self.glue.as_ref() {
+            if let Some(art) = plate(glue) {
+                let w = (art.width as f32 * scale / 4.0).round() as i32;
+                let h = (art.height as f32 * scale / 4.0).round() as i32;
+                let right = ox + ((dialog.plate.0 + dialog.plate.2) * scale).round() as i32;
+                art.draw_scaled(
+                    fb,
+                    right - w,
+                    oy + (dialog.plate.1 * scale).round() as i32,
+                    w,
+                    h,
+                );
             }
-            for t in 0..b2 {
-                fb.rect_outline(px + t, py + t, pw - t * 2, ph - t * 2, Rgb::new(0x84, 0, 0));
+            if let Some(art) = glue.palnl_ok.as_ref() {
+                art.draw_scaled(fb, sx(1627.0), sy(1006.0), sw(1062.0), sw(214.0));
             }
-            fb.rect_outline(
-                px + bevel,
-                py + bevel,
-                pw - bevel * 2,
-                ph - bevel * 2,
-                Rgb::new(0x5a, 0x4a, 0x3a),
-            );
+            if let Some(art) = glue.palnl_cancel.as_ref() {
+                art.draw_scaled(fb, sx(1734.0), sy(1068.0), sw(940.0), sw(273.0));
+            }
         }
-        // Title: Extended 16 UI px, #c6daff, ink (467,196)-(707,238).
+        const TITLE: Rgb = Rgb::new(0xc6, 0xda, 0xff);
+        const SELECTED: Rgb = Rgb::new(0xda, 0xff, 0x8c);
+        const ROW: Rgb = Rgb::new(0x5c, 0xed, 0x30);
+        let bigger = dialog.title_bigger;
+        let width = self.hd_advance_ui(title, scale, bigger);
         self.draw_hd_text(
             fb,
-            "Registry",
-            u(467.0),
-            196.0 / 3.0,
+            title,
+            dialog.title.0,
+            dialog.title.1 + GLUE_LIST_TEXT_INSET.1,
             LabelAlign::Left,
-            w3(240.0),
+            width,
             16.0,
             scale,
-            uox,
-            uoy,
-            pale,
-            true,
+            ox,
+            oy,
+            TITLE,
+            bigger,
         );
-        // Profile rows: x 507, baselines 348/405 (57 px pitch); the selected
-        // profile is recoloured, never boxed.  Shots use the reference
-        // Registry (`REA`, `LinKa`), see `load_profile_store`.
-        let names = self.profile_store.names();
-        let first = registry_top(self.profile_sel);
-        for (row, name) in names.iter().enumerate().skip(first).take(REGISTRY_ROWS) {
-            let i = row - first;
-            let baseline = REGISTRY_ROW_TOP + 32.0 + REGISTRY_ROW_PITCH * i as f32;
-            let top = (baseline - 32.0) / 3.0;
-            let color = if row == self.profile_sel {
-                select_green
-            } else {
-                Rgb::new(0x5c, 0xed, 0x30)
-            };
-            let width = self.hd_advance_ui(name, scale, false);
+        for (i, (text, selected)) in rows.iter().enumerate() {
+            let width = self.hd_advance_ui(text, scale, false);
             self.draw_hd_text(
                 fb,
-                name,
-                u(507.0),
-                top,
+                text,
+                dialog.list.0 + GLUE_LIST_TEXT_INSET.0,
+                dialog.list.1 + GLUE_LIST_TEXT_INSET.1 + GLUE_LIST_ROW_PITCH * i as f32,
                 LabelAlign::Left,
                 width,
                 16.0,
                 scale,
-                uox,
-                uoy,
-                color,
+                ox,
+                oy,
+                if *selected { SELECTED } else { ROW },
                 false,
             );
         }
-        // Bay and plate labels.
-        for (label, x, y, w) in [
-            ("New ID", 601.0f32, 1020.0f32, 193.0f32),
-            ("Delete", 1098.0, 1020.0, 183.0),
-            ("Ok", 1833.0, 1164.0, 74.0),
-            ("Cancel", 1854.0, 1272.0, 185.0),
+        let rects = dialog
+            .new_id
+            .into_iter()
+            .chain([dialog.delete, dialog.ok, dialog.cancel]);
+        for ((label, enabled), rect) in buttons.iter().zip(rects) {
+            self.draw_glue_button(fb, label, rect, *enabled);
+        }
+    }
+
+    /// One glue `FLCBTN` label (`WS_HOTKEY`, `FB_HTEXTCENTER`,
+    /// `FB_VTEXTCENTER`): Eurostile Extended 16 UI px centred in `rect`
+    /// (640x480 UI), the hotkey letter #daff8c and the rest #5ced30, or all
+    /// #6a6a6a when disabled (measured on 130734 / 130848 / 130858).
+    fn draw_glue_button(
+        &mut self,
+        fb: &mut Framebuffer,
+        label: &str,
+        rect: galaxycraft::menu::HitRect,
+        enabled: bool,
+    ) {
+        use galaxycraft::menu::LabelAlign;
+        const HOTKEY: Rgb = Rgb::new(0xda, 0xff, 0x8c);
+        const LABEL: Rgb = Rgb::new(0x5c, 0xed, 0x30);
+        const DISABLED: Rgb = Rgb::new(0x6a, 0x6a, 0x6a);
+        let (scale, ox, oy) = self.ui_metrics(fb);
+        let mut chars = label.chars();
+        let Some(first) = chars.next() else {
+            return;
+        };
+        let first = first.to_string();
+        let rest = chars.as_str();
+        let lead = self.hd_advance_ui(&first, scale, true);
+        let tail = self.hd_advance_ui(rest, scale, true);
+        let left = rect.0 + (rect.2 - lead - tail) / 2.0;
+        // FB_VTEXTCENTER: cap top 6 UI px above the control's centre.
+        let top = rect.1 + rect.3 / 2.0 - 6.0;
+        let (lead_colour, rest_colour) = if enabled {
+            (HOTKEY, LABEL)
+        } else {
+            (DISABLED, DISABLED)
+        };
+        for (text, x, w, colour) in [
+            (first.as_str(), left, lead, lead_colour),
+            (rest, left + lead, tail, rest_colour),
         ] {
+            if text.is_empty() {
+                continue;
+            }
             self.draw_hd_text(
                 fb,
-                label,
-                u(x),
-                y / 3.0,
+                text,
+                x,
+                top,
                 LabelAlign::Left,
-                w3(w),
+                w,
                 16.0,
                 scale,
-                uox,
-                uoy,
-                select_green,
-                false,
+                ox,
+                oy,
+                colour,
+                true,
             );
         }
     }
@@ -13495,14 +13263,14 @@ impl App {
             if let Some(art) = &glue.campaign_botl {
                 let w = (art.width as f32 * art_k).round() as i32;
                 let h = (art.height as f32 * art_k).round() as i32;
-                let x = ox + (scale * 436.0).round() as i32 - w;
+                let x = cx + ox + (scale * 436.0).round() as i32 - w;
                 let y = cy + (scale * 352.0).round() as i32;
                 art.draw_scaled(fb, x, y, w, h);
             }
             if let Some(art) = &glue.campaign_botr {
                 let w = (art.width as f32 * art_k).round() as i32;
                 let h = (art.height as f32 * art_k).round() as i32;
-                let x = ox + (scale * 217.0).round() as i32;
+                let x = cx + ox + (scale * 217.0).round() as i32;
                 let y = cy + (scale * 370.0).round() as i32;
                 art.draw_scaled(fb, x, y, w, h);
             }
@@ -14019,251 +13787,46 @@ impl App {
         }
     }
 
-    /// Retail `Create` screen (references 14, 15, 35 and 36): a left column
-    /// with the Create tree, a right "Replay Information" panel and the
-    /// Ok / Cancel buttons, all over the moon backdrop. Rect fractions below
-    /// were measured on the 3440x1440 references.
-    #[allow(unreachable_code)]
+    /// Load Replay: the retail `Create` screen (`glucreat`) in its replay
+    /// mode, drawn by [`Self::draw_lobby`].
     fn draw_create(&mut self, fb: &mut Framebuffer) {
         // Replays reuse the Create shell (same retail plates and tree).
         self.draw_lobby(fb);
-        return;
-        self.draw_moon_backdrop(fb);
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let rect = |x0: f32, y0: f32, x1: f32, y1: f32| -> (i32, i32, i32, i32) {
-            let x = cx + (cw as f32 * x0) as i32;
-            let y = (ch as f32 * y0) as i32;
-            (
-                x,
-                y,
-                (cw as f32 * (x1 - x0)) as i32,
-                (ch as f32 * (y1 - y0)) as i32,
-            )
-        };
-        let panel = |fb: &mut Framebuffer, r: (i32, i32, i32, i32)| {
-            for y in r.1..r.1 + r.3 {
-                for x in r.0..r.0 + r.2 {
-                    let c = fb.get(x, y);
-                    fb.put(x, y, c.blend(Rgb::new(4, 6, 10), 190));
-                }
-            }
-            fb.rect_outline(r.0, r.1, r.2, r.3, Rgb::new(90, 95, 100));
-            fb.rect_outline(r.0 + 3, r.1 + 3, r.2 - 6, r.3 - 6, Rgb::new(150, 30, 30));
-        };
-        let text = |fb: &mut Framebuffer, x: i32, y: i32, t: &str, c: Rgb, sz: i32| {
-            fb.text(x, y, t, c, sz);
-        };
-        let grey = Rgb::new(205, 205, 210);
-        let green = Rgb::new(120, 230, 120);
-
-        // Left column: title + the Replays tree.
-        let left_top = rect(0.1902, 0.1396, 0.5465, 0.8125);
-        panel(fb, left_top);
-        text(
-            fb,
-            left_top.0 + (left_top.2 as f32 * 0.02) as i32,
-            left_top.1 + (left_top.3 as f32 * 0.03) as i32,
-            "Create",
-            grey,
-            2,
-        );
-        let list_x = left_top.0 + (left_top.2 as f32 * 0.07) as i32;
-        let mut ly = left_top.1 + (left_top.3 as f32 * 0.212) as i32;
-        let step = (left_top.3 as f32 * 0.059) as i32;
-        text(fb, list_x, ly, "\u{1F4C1} Replays", green, 2);
-        ly += step;
-        for folder in ["[Cloud]", "[Popular Maps]", "[AutoSave]"] {
-            text(fb, list_x + 8, ly, &format!("\u{1F4C1} {folder}"), green, 2);
-            ly += step;
-        }
-        // Real replay files from the save directory.
-        for (i, path) in self.save_list(true).iter().take(6).enumerate() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                let mark = if i == self.save_sel { "> " } else { "  " };
-                text(fb, list_x + 8, ly, &format!("{mark}{name}"), grey, 2);
-                ly += step;
-            }
-        }
-
-        // Right column: replay information.
-        let right = rect(0.5930, 0.1396, 0.8570, 0.6347);
-        panel(fb, right);
-        let rx = right.0 + (right.2 as f32 * 0.04) as i32;
-        let mut ry = right.1 + (right.3 as f32 * 0.04) as i32;
-        let rstep = (right.3 as f32 * 0.07) as i32;
-        text(fb, rx, ry, "Replay Information", grey, 2);
-        ry += rstep;
-        let info = self
-            .save_list(true)
-            .get(
-                self.save_sel
-                    .min(self.save_list(true).len().saturating_sub(1)),
-            )
-            .cloned();
-        if let Some(path) = info {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("replay")
-                .to_string();
-            // Real metadata from the selected file: a replay carries its
-            // map, length and races, so the panel does not have to guess.
-            let save = galaxycraft::replay::SaveFile::load(&path);
-            let date = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .map(format_timestamp)
-                .unwrap_or_else(|_| "--".to_string());
-            let (map, length) = match &save {
-                Some(s) => (
-                    s.map_name.clone(),
-                    format!("{}:{:02}", s.tick / 24 / 60, (s.tick / 24) % 60),
-                ),
-                None => ("corrupt".to_string(), "--:--".to_string()),
-            };
-            for line in [
-                format!("Map: {map}"),
-                format!("Date: {date}"),
-                format!("Length: {length}"),
-                format!("File Name: {name}"),
-            ] {
-                text(fb, rx, ry, &line, grey, 1);
-                ry += (rstep as f32 * 0.55) as i32;
-            }
-            ry += rstep;
-            text(fb, rx, ry, "Players:", Rgb::new(160, 160, 170), 1);
-            ry += (rstep as f32 * 0.7) as i32;
-            if let Some(save) = &save {
-                for (i, race) in save.races.iter().take(4).enumerate() {
-                    let label = if i == save.local_player {
-                        format!("Player {}", i + 1)
-                    } else {
-                        format!("Computer {}", i + 1)
-                    };
-                    let (race_name, colour) = match race {
-                        Race::Terran => ("Terran", Rgb::new(90, 150, 255)),
-                        Race::Zerg => ("Zerg", Rgb::new(220, 90, 220)),
-                        Race::Protoss => ("Protoss", Rgb::new(240, 200, 90)),
-                        Race::Neutral => ("Neutral", Rgb::new(160, 160, 170)),
-                    };
-                    text(fb, rx, ry, &label, grey, 1);
-                    text(
-                        fb,
-                        rx + (right.2 as f32 * 0.38) as i32,
-                        ry,
-                        race_name,
-                        colour,
-                        1,
-                    );
-                    ry += (rstep as f32 * 0.55) as i32;
-                }
-            }
-        } else {
-            text(fb, rx, ry, "No replay selected", Rgb::new(160, 160, 170), 1);
-        }
-
-        // Ok / Cancel, stacked at the bottom right of the content box.
-        for (label, y0, y1) in [("Ok", 0.806, 0.860), ("Cancel", 0.872, 0.926)] {
-            let b = rect(0.641, y0, 0.830, y1);
-            fb.rect(b.0, b.1, b.2, b.3, Rgb::new(8, 8, 8));
-            fb.rect_outline(b.0, b.1, b.2, b.3, Rgb::new(90, 95, 100));
-            fb.rect_outline(b.0 + 3, b.1 + 3, b.2 - 6, b.3 - 6, Rgb::new(150, 30, 30));
-            let w = label.len() as i32 * 8 * 2;
-            fb.text(b.0 + (b.2 - w) / 2, b.1 + (b.3 - 16) / 2, label, green, 2);
-        }
     }
 
-    /// Retail "Saved Games" screen (reference #13): left panel with the slot
-    /// list, Delete under it, and Ok / Cancel at the bottom right, over the
-    /// moon backdrop. Rects measured on that 3440x1440 screenshot as fractions
-    /// of the 2560x1440 content box.
+    /// Load Saved Game (`rez/gluload.ui.json`), see [`Self::draw_glue_list`].
+    /// Reference 130848: with no saved game the list holds the `[Cloud]`
+    /// folder and Delete/Ok are disabled.
     fn draw_saved(&mut self, fb: &mut Framebuffer) {
-        self.draw_moon_backdrop(fb);
-        let replays = matches!(&self.menu_screen, MenuScreen::Replays);
-        let title = if replays { "Replays" } else { "Saved Games" };
-        let (cx, _cy, cw, ch) = Self::content_rect(fb);
-        let at = |x: f32, y: f32| (cx + (cw as f32 * x) as i32, (ch as f32 * y) as i32);
-        let big = (ch as f32 / 480.0).round().max(1.0) as i32;
-        let small = (big - 1).max(1);
-        let green = Rgb::new(120, 235, 120);
-        let grey = Rgb::new(215, 215, 220);
-
-        // Left panel (reference 130848: x 450..1386, y 236..947).
-        let (px, py) = at(0.1758, 0.1639);
-        let pw = (cw as f32 * (0.5433 - 0.1758)) as i32;
-        let ph = (ch as f32 * (0.6576 - 0.1639)) as i32;
-        for y in py..py + ph {
-            for x in px..px + pw {
-                let c = fb.get(x, y);
-                fb.put(x, y, c.blend(Rgb::new(6, 8, 14), 225));
-            }
-        }
-        fb.rect_outline(px, py, pw, ph, Rgb::new(90, 95, 100));
-        fb.rect_outline(px + 3, py + 3, pw - 6, ph - 6, Rgb::new(150, 30, 30));
-        fb.text(
-            px + (pw as f32 * 0.03) as i32,
-            py + (ph as f32 * 0.02) as i32,
-            title,
-            grey,
-            small,
-        );
-        // Slot list.
-        let list = self.save_list(replays);
-        let mut lines: Vec<String> = list
+        let list = self.save_list(false);
+        let mut rows: Vec<(String, bool)> = list
             .iter()
-            .map(|p| {
+            .enumerate()
+            .take(SAVED_ROWS)
+            .map(|(i, p)| {
                 let name = p
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or_default()
                     .to_string();
-                if replays {
-                    name
-                } else {
-                    // Saved games carry map/tick metadata in the header.
-                    format!("{name}: {}", Self::slot_label(p))
-                }
+                (
+                    format!("{name}: {}", Self::slot_label(p)),
+                    i == self.save_sel,
+                )
             })
             .collect();
-        if lines.is_empty() {
-            lines.push("[Cloud]".to_string());
+        let has_save = !rows.is_empty();
+        if !has_save {
+            rows.push(("[Cloud]".to_string(), false));
         }
-        let mut ly = py + (ph as f32 * 0.12) as i32;
-        let step = (ph as f32 * 0.07) as i32;
-        for (i, line) in lines.iter().take(8).enumerate() {
-            let sel = i == self.save_sel.min(lines.len().saturating_sub(1));
-            if sel {
-                fb.rect(px + 8, ly - 3, pw - 16, step - 4, Rgb::new(30, 60, 90));
-            }
-            fb.text(
-                px + (pw as f32 * 0.04) as i32,
-                ly,
-                line,
-                if sel { Rgb::new(235, 245, 200) } else { green },
-                small,
-            );
-            ly += step;
-        }
-        // Buttons: Delete under the panel, Ok / Cancel bottom right.
-        for (label, x0, y0, x1, y1, active) in [
-            ("Delete", 0.173f32, 0.674f32, 0.301, 0.744, false),
-            ("Ok", 0.646, 0.791, 0.800, 0.862, true),
-            ("Cancel", 0.668, 0.856, 0.830, 0.926, true),
-        ] {
-            let (bx, by) = at(x0, y0);
-            let bw = (cw as f32 * (x1 - x0)) as i32;
-            let bh = (ch as f32 * (y1 - y0)) as i32;
-            fb.rect(bx, by, bw, bh, Rgb::new(6, 6, 8));
-            fb.rect_outline(bx, by, bw, bh, Rgb::new(110, 108, 102));
-            fb.rect_outline(bx + 2, by + 2, bw - 4, bh - 4, Rgb::new(150, 30, 30));
-            let lw = label.chars().count() as i32 * 8 * small;
-            fb.text(
-                bx + (bw - lw) / 2,
-                by + (bh - 8 * small) / 2,
-                label,
-                if active { green } else { Rgb::new(90, 110, 90) },
-                small,
-            );
-        }
+        self.draw_glue_list(
+            fb,
+            &galaxycraft::menu::LOAD_DIALOG,
+            |g| g.load_list.as_ref(),
+            "Saved Games",
+            &rows,
+            &[("Delete", has_save), ("Ok", has_save), ("Cancel", true)],
+        );
     }
 
     fn draw_lan(&mut self, fb: &mut Framebuffer) {
@@ -14463,12 +14026,23 @@ impl App {
             // Measured on 130858: three folder rows at x565 (42x36 folder
             // icons at x504) and the selected LastReplay.rep at x556 (35x42
             // document icon), 57 px pitch, no selection rectangle.
-            let items: [(bool, &str); 4] = [
-                (true, "[Cloud]"),
-                (true, "[Popular Maps]"),
-                (true, "[AutoSave]"),
-                (false, "LastReplay.rep"),
-            ];
+            // Live: the folders, then the real replay files (the selected one
+            // recoloured); the reference shot shows its `LastReplay.rep`.
+            let files: Vec<String> = if self.shot_name == "replays" {
+                vec![ReplayInfo::reference().file]
+            } else {
+                self.save_list(true)
+                    .iter()
+                    .filter_map(|p| p.file_name()?.to_str().map(str::to_string))
+                    .collect()
+            };
+            let items: Vec<(bool, &str)> = REPLAY_FOLDERS
+                .iter()
+                .map(|f| (true, *f))
+                .chain(files.iter().map(|f| (false, f.as_str())))
+                .take(6)
+                .collect();
+            let selected_file = self.save_sel;
             for (i, (folder, label)) in items.iter().enumerate() {
                 let y = list_top + i as i32 * list_row_h;
                 let ix = cx + (cw as f32 * (504.0 / 2560.0)) as i32;
@@ -14489,6 +14063,11 @@ impl App {
                 } else {
                     let iw = (cw as f32 * (35.0 / 2560.0)) as i32;
                     let ih = (ch as f32 * (42.0 / 1440.0)) as i32;
+                    let colour = if i - REPLAY_FOLDERS.len() == selected_file {
+                        Rgb::new(0xda, 0xff, 0x8c)
+                    } else {
+                        Rgb::new(0x5c, 0xed, 0x30)
+                    };
                     fb.rect_outline(ix, y, iw, ih, Rgb::new(0xb5, 0xfc, 0x76));
                     hd(
                         self,
@@ -14497,7 +14076,7 @@ impl App {
                         y,
                         label,
                         16.0 * scale,
-                        Rgb::new(0xda, 0xff, 0x8c),
+                        colour,
                     );
                 }
             }
@@ -14809,139 +14388,94 @@ impl App {
                 }
             }
         }
-        // Yellow scrollbar on the slot list.
-        let ssx = slots.0 + sw - (12.0 * scale) as i32;
-        fb.rect(
-            ssx,
-            slots.1 + 6,
-            (6.0 * scale) as i32,
-            sh - 12,
-            Rgb::new(30, 26, 4),
-        );
-        fb.rect_outline(
-            ssx,
-            slots.1 + 6,
-            (6.0 * scale) as i32,
-            sh - 12,
-            Rgb::new(160, 140, 20),
-        );
-        fb.rect(
-            ssx + 1,
-            slots.1 + 10,
-            (4.0 * scale) as i32,
-            (sh as f32 * 0.55) as i32,
-            Rgb::new(160, 140, 20),
-        );
         if replays {
-            // `Replay Information`, measured on 130858: title (1555,189),
-            // label/value pairs at y 243/285/327/366, Players at 601 and two
-            // player rows; lavender labels, white values, coloured races.
+            // `Replay Information`, measured on 130858 (ink lefts in content
+            // px, faces/sizes matched to the ink boxes within 2 px): title and
+            // `Players:` Eurostile Extended 10 UI px, the rest regular 9 UI px,
+            // all with natural spacing.  Lavender labels, white values.
             let u = |v: f32| (v - 320.0) / 3.0;
-            let w3 = |v: f32| v / 3.0;
             let label_color = Rgb::new(0xa2, 0xb1, 0xf5);
             let value_color = Rgb::new(0xff, 0xff, 0xff);
-            self.draw_hd_text(
+            let put = |app: &mut Self,
+                       fb: &mut Framebuffer,
+                       text: &str,
+                       x: f32,
+                       y: f32,
+                       px: f32,
+                       extended: bool,
+                       colour: Rgb| {
+                let width = app.hd_advance_px(text, px, scale, extended);
+                app.draw_hd_text(
+                    fb,
+                    text,
+                    u(x),
+                    y / 3.0,
+                    LabelAlign::Left,
+                    width,
+                    px,
+                    scale,
+                    uox,
+                    uoy,
+                    colour,
+                    extended,
+                );
+            };
+            put(
+                self,
                 fb,
                 "Replay Information",
-                u(1555.0),
-                189.0 / 3.0,
-                LabelAlign::Left,
-                w3(325.0),
-                12.0,
-                scale,
-                uox,
-                uoy,
+                1555.0,
+                189.0,
+                10.0,
+                true,
                 value_color,
-                false,
             );
-            let lines: [(f32, &str, f32, &str, f32); 4] = [
-                (243.0, "Map:", 1618.0, "Bottleneck", 114.0),
-                (285.0, "Date:", 1625.0, "10/25/2026 10:07 PM", 282.0),
-                (327.0, "Length:", 1644.0, "00:11", 62.0),
-                (366.0, "File Name:", 1680.0, "LastReplay.rep", 159.0),
-            ];
-            for (y, label, vx, value, vw) in lines {
-                self.draw_hd_text(
-                    fb,
-                    label,
-                    u(1554.0),
-                    y / 3.0,
-                    LabelAlign::Left,
-                    w3(120.0),
-                    9.0,
-                    scale,
-                    uox,
-                    uoy,
-                    label_color,
-                    false,
-                );
-                self.draw_hd_text(
-                    fb,
-                    value,
-                    u(vx),
-                    y / 3.0,
-                    LabelAlign::Left,
-                    w3(vw),
-                    9.0,
-                    scale,
-                    uox,
-                    uoy,
-                    value_color,
-                    false,
-                );
-            }
-            self.draw_hd_text(
-                fb,
-                "Players:",
-                u(1555.0),
-                601.0 / 3.0,
-                LabelAlign::Left,
-                w3(135.0),
-                9.0,
-                scale,
-                uox,
-                uoy,
-                label_color,
-                false,
-            );
-            for (y, name, race, color, rx) in [
-                (
-                    651.0f32,
-                    "Alpha Squadron",
-                    "Terran",
-                    Rgb::new(0x80, 0xd4, 0xff),
-                    1854.0f32,
-                ),
-                (687.0, "LinKa", "Zerg", Rgb::new(0xd4, 0x80, 0xff), 1850.0),
-            ] {
-                self.draw_hd_text(
-                    fb,
-                    name,
-                    u(1553.0),
-                    y / 3.0,
-                    LabelAlign::Left,
-                    w3(173.0),
-                    9.0,
-                    scale,
-                    uox,
-                    uoy,
-                    value_color,
-                    false,
-                );
-                self.draw_hd_text(
-                    fb,
-                    race,
-                    u(rx),
-                    y / 3.0,
-                    LabelAlign::Left,
-                    w3(48.0),
-                    9.0,
-                    scale,
-                    uox,
-                    uoy,
-                    color,
-                    false,
-                );
+            let info = if self.shot_name == "replays" {
+                Some(ReplayInfo::reference())
+            } else {
+                let profile = self
+                    .active_index()
+                    .and_then(|i| self.profile_store.names().get(i).cloned())
+                    .unwrap_or_default();
+                self.save_list(true)
+                    .get(self.save_sel)
+                    .and_then(|p| ReplayInfo::load(p, &profile))
+            };
+            if let Some(info) = info {
+                // Each value starts one space after its label (130858:
+                // label ink end + 13 px).
+                for (y, label, value) in [
+                    (242.0, "Map:", &info.map),
+                    (284.0, "Date:", &info.date),
+                    (326.0, "Length:", &info.length),
+                    (365.0, "File Name:", &info.file),
+                ] {
+                    put(self, fb, label, 1553.0, y, 9.0, false, label_color);
+                    let gap = self.hd_advance_px(&format!("{label} "), 9.0, scale, false);
+                    put(
+                        self,
+                        fb,
+                        value,
+                        1553.0 + gap * 3.0,
+                        y,
+                        9.0,
+                        false,
+                        value_color,
+                    );
+                }
+                put(self, fb, "Players:", 1555.0, 601.0, 10.0, true, label_color);
+                for (i, (name, race)) in info.players.iter().take(8).enumerate() {
+                    let y = 650.0 + 36.0 * i as f32;
+                    let (race_name, colour) = match race {
+                        Race::Terran => ("Terran", Rgb::new(0x80, 0xd4, 0xff)),
+                        Race::Zerg => ("Zerg", Rgb::new(0xd4, 0x80, 0xff)),
+                        // INFERENCE: no reference shows a Protoss row.
+                        Race::Protoss => ("Protoss", Rgb::new(0xff, 0xd4, 0x80)),
+                        Race::Neutral => ("", value_color),
+                    };
+                    put(self, fb, name, 1552.0, y, 9.0, false, value_color);
+                    put(self, fb, race_name, 1849.0, y, 9.0, false, colour);
+                }
             }
         } else {
             // Right preview panel.  The shipped `pinfo` plate provides the metal
@@ -15050,38 +14584,9 @@ impl App {
                 }
             }
         }
-        // Ok/Cancel labels over the shipped pok/pcancel plates (ink measured
-        // on 134831/130858: Ok (1882,1165)-(1904,1195), Cancel
-        // (1898,1273)-(2037,1303)); 31 px tall, #5ced30.
-        let ok_green = Rgb::new(0x5c, 0xed, 0x30);
-        self.draw_hd_text(
-            fb,
-            "Ok",
-            (1882.0 - 320.0) / 3.0,
-            1165.0 / 3.0,
-            LabelAlign::Left,
-            22.0 / 3.0,
-            15.0,
-            scale,
-            uox,
-            uoy,
-            ok_green,
-            false,
-        );
-        self.draw_hd_text(
-            fb,
-            "Cancel",
-            (1898.0 - 320.0) / 3.0,
-            1273.0 / 3.0,
-            LabelAlign::Left,
-            139.0 / 3.0,
-            15.0,
-            scale,
-            uox,
-            uoy,
-            ok_green,
-            false,
-        );
+        // Ok / Cancel `FLCBTN`s over the shipped pok/pcancel plates.
+        self.draw_glue_button(fb, "Ok", galaxycraft::menu::PALNL_OK_BUTTON, true);
+        self.draw_glue_button(fb, "Cancel", galaxycraft::menu::PALNL_CANCEL_BUTTON, true);
     }
 
     /// Retail Options panel (references 130933/130938/130942/130949/130954).
@@ -16701,7 +16206,6 @@ impl App {
         for y in [247.0f32, 568.0, 889.0] {
             fb.rect(sx(401.0), sy(y), sw(1113.0), b, Rgb::new(0x47, 0x47, 0x47));
         }
-        fb.rect(600, 600, 100, 50, Rgb::new(0, 255, 0));
         // Title (Extended 9 px, #fff) and dropdown chip.
         self.draw_hd_text(
             fb,
@@ -16799,7 +16303,6 @@ impl App {
                 false,
             );
         }
-        fb.rect(800, 600, 100, 50, Rgb::new(0, 0, 255));
         // Grid: 353x224 cells, columns 411/787/1161, rows 274/595/916/1158.
         let cells: [(f32, f32, bool, &str); 11] = [
             (411.0, 274.0, true, "default_console_thumbnail.jpg"),
@@ -16861,7 +16364,6 @@ impl App {
                 );
             }
         }
-        fb.rect(1000, 600, 100, 50, Rgb::new(255, 255, 0));
         // Frame borders are re-stated after the grid so the clipped
         // announcer row cannot cover the bottom hairline.
         let (f0x, f0y, f0w, f0h) = r(368.0, 82.0, 1224.0, 1113.0);
@@ -16913,7 +16415,6 @@ impl App {
                 red,
             );
         }
-        fb.rect(1200, 600, 100, 50, Rgb::new(255, 0, 255));
         // Right column: preview of the selected grid cell, title, EQUIP, Ok.
         let sel = self
             .collection_sel
@@ -17430,19 +16931,34 @@ mod timestamp_tests {
 
     #[test]
     fn timestamps_render_as_civil_dates() {
-        assert_eq!(format_timestamp(UNIX_EPOCH), "1970/01/01 00:00");
+        assert_eq!(format_timestamp(UNIX_EPOCH), "01/01/1970 12:00 AM");
         // 2026-10-29 20:34:00 UTC
         let t = UNIX_EPOCH + Duration::from_secs(1_793_306_040);
-        assert_eq!(format_timestamp(t), "2026/10/29 20:34");
-        // Leap day.
-        let t = UNIX_EPOCH + Duration::from_secs(1_709_164_800);
-        assert_eq!(format_timestamp(t), "2024/02/29 00:00");
+        assert_eq!(format_timestamp(t), "10/29/2026 8:34 PM");
+        // Leap day, noon.
+        let t = UNIX_EPOCH + Duration::from_secs(1_709_164_800 + 12 * 3600);
+        assert_eq!(format_timestamp(t), "02/29/2024 12:00 PM");
     }
 }
 
 #[cfg(test)]
 mod menu_frame_tests {
     use super::{clear_menu_frame, Framebuffer, Rgb};
+
+    #[test]
+    fn boxed_screens_land_centred_between_black_bars() {
+        use super::{copy_into, mask_pillarbox};
+        let mut fb = Framebuffer::new(3440, 1440);
+        fb.clear(Rgb::new(255, 255, 255));
+        let mut boxed = Framebuffer::new(2560, 1440);
+        boxed.clear(Rgb::new(10, 20, 30));
+        copy_into(&mut fb, &boxed, 440, 0);
+        mask_pillarbox(&mut fb, 440, 2560);
+        assert_eq!(fb.get(439, 700), Rgb::new(0, 0, 0), "left bar");
+        assert_eq!(fb.get(440, 700), Rgb::new(10, 20, 30), "box left edge");
+        assert_eq!(fb.get(2999, 0), Rgb::new(10, 20, 30), "box right edge");
+        assert_eq!(fb.get(3000, 1439), Rgb::new(0, 0, 0), "right bar");
+    }
 
     #[test]
     fn menu_frame_clears_ultrawide_pillarbox_and_cursor_trails() {
@@ -17606,6 +17122,18 @@ mod retail_timing_tests {
             let (_, frames, _) = menu_clip_timeline(frames_authored as f32 / 15.0, 0.0);
             assert_eq!(frames, frames_authored);
         }
+    }
+
+    #[test]
+    fn menu_clip_order_matches_the_retail_overlaps() {
+        use super::MENU_CLIP_ORDER;
+        let pos = |c: (usize, bool)| MENU_CLIP_ORDER.iter().position(|&o| o == c).unwrap();
+        // 130704: the Single Player fleet covers the SingleOn grid.
+        assert!(pos((0, true)) < pos((0, false)));
+        // 130712 / 130926: MultiOn and ExitOn cover their idle clips.
+        assert!(pos((1, true)) > pos((1, false)));
+        assert!(pos((7, true)) > pos((7, false)));
+        assert_eq!(MENU_CLIP_ORDER.len(), 6);
     }
 
     #[test]

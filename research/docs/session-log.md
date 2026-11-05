@@ -4145,3 +4145,77 @@ before the user played; that run was discarded, not counted.
 clippy 0; fmt clean; `ui_visual_diff.py` 51/51 (unchanged from entry 80);
 walkthrough PASS (145 steps); `progress.py --check` OK (97 %, one new open
 item).
+
+## 2026-11-04 (82) — Front-end fidelity pass and ultrawide
+
+Trigger: the user listed front-end defects seen in the client at 3440x1440
+with three retail captures as targets.  The three images are pixel-identical
+(mean 0.0) or nearly (1.26) to the committed references 130734, 130848 and
+130858, i.e. they show the retail client.
+
+**Ultrawide (FACT).**  All 56 references at 3440x1440 are black outside the
+centred 2560x1440 box (max channel <= 8).  The client drew plates and arms
+past the box (the 16:9 window clipped them), placed the Episode console
+plates without the box origin (`cx`), shifted the sub-screen frame by 5.55 %
+of the window width, and laid out briefings and the score screen over the
+whole window.  Fix: every frame is masked to the box; briefing and score are
+drawn into a box-sized framebuffer.  New gate `scripts/ultrawide_diff.py`:
+31/31 screens (front end and in game) have black bars and a box identical to
+the 2560x1440 render.  The 2026-10-28 claim "ultrawide expands (no bars)"
+(`graphics-remastered.md`) is falsified and corrected there.
+
+**Main menu.**
+- Hover clips (FACT, measured): their clock ran from menu start but they
+  were only pulled while hovered, so entering a button starved the decoder
+  (`GC_CLIP_TRACE`: 142 skipped frames over a scripted hover sequence, 0
+  after).  The retail references show On and idle clips at different phases
+  (SingleOn 8.19 vs Single 7.94, ExitOn 6.41 vs Exit 3.0), consistent with
+  an On clock that starts at hover: now it does, from a pre-decoded frame 0.
+  The first frame of every clip also no longer skips ahead.
+- Clip order (FACT, visual): 130704 the fleet occludes the SingleOn grid;
+  130712 the red MultiOn outline covers the hull; 130926 the ExitOn grid
+  covers the vortex.  "On replaces idle" was measured worse on all three
+  (2.08/2.78/2.98 vs 1.85/1.75/2.45) and rejected.
+- Footer labels: switching to the extended face on hover re-spaced the
+  glyphs at fractional UI scales (3440x1387: Show Credits 11 -> 12 glyph
+  runs); hover now only recolours them (user report on the retail client;
+  no retail hover capture of these labels: INFERENCE for the colour).
+  Gate `scripts/menu_hover_text.py` 10/10 (fails 9/10 without the fix).
+- Build footer (FACT): `blizzard-regular.ttf` matches the retail ink
+  (431x28 px, IoU 0.55; the previous LiberationSans 0.18), soft shadow one
+  UI px down-right.  Battle.net tag removed: it belongs to an online
+  session (decision recorded in the vault).
+- Panel spinner (FACT): the CEF ad panel shows `.loadingSpinner`
+  (`loadingcircle.gif`, 650x651, 30 frames x 30 ms) while it has no content;
+  ring ink 57 px at 1440p centred on (2305,505); spinner crop mean 11.35 ->
+  1.62.  New `src/gif.rs` matches PIL on the retail file (0 differing
+  pixels on frames 0/1/15/29).  Per-reference spinner phases swept and
+  added to both menu gates.
+
+**Classic dialogs (FACT).**  `glulogin.ui.json` uses `glue\login\pList`
+(not the Battle.net `toonlistbg`) and `gluload.ui.json` `glue\Load\pList`,
+both `RC_ANCHOR_TOPRIGHT`.  Text styles from the flags, matched glyph by
+glyph: `RC_BIGGERTEXT` = Eurostile Extended, `RC_BIGTEXT` = regular, ~47 px
+at 1440p; `FLCBTN` hotkey letter #daff8c, rest #5ced30, disabled #6a6a6a.
+Registry 3.19 -> 1.32, Saved Games 6.99 -> 1.18.  Load Replay: information
+text in Extended 10 / regular 9 UI px with natural spacing (was stretched
+to fixed widths), values from the selected `.gcrep`; the yellow scrollbar
+appears in no front-end reference and was removed (Replays 2.41 -> 1.96).
+Four debug rectangles were left in `draw_collections` since `1d7d3b0`.
+
+**Open (blocked on evidence).**  The retail panels build in when a classic
+dialog opens.  The schema (`uischema.json`) has no animation flag; the
+64-bit client references `gluLogin.ui.json` only through data (no direct
+xref in `DumpProj`).  A retail capture of the transition is needed
+before implementing it.
+
+**Process note.**  While probing hover rendering in a live window, the real
+pointer was moved with `ydotool` for a few seconds while the user was
+playing the retail client (moves only, no clicks).  Live input automation is
+not used again; checks run through `--menu-script`.
+
+**Verification.**  `cargo test` 449 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51 (14 screens better, none
+worse); `menu_time_diff.py` 4/4; `menu_walkthrough.py` PASS (145 steps);
+`menu_hover_text.py` 10/10; `ultrawide_diff.py` 31/31; `progress.py
+--check` OK (96 %, one new open item).

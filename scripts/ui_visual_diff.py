@@ -25,11 +25,12 @@ REF = ROOT / "engine-rust/docs/original_screenshots"
 BIN = ROOT / "engine-rust/target/release/sc_view"
 
 # Menu captures whose clips must be sampled at the same wall-clock second as
-# the reference.  Phases found by sweeping the 10 s FLC loops in 1/16 s steps.
+# the reference.  Phases found by sweeping the 10 s FLC loops in 1/16 s steps;
+# `spinner` is the panel's loadingcircle.gif, swept over its 30 frames.
 PHASES = {
     "menu": (
         2.75,
-        {"single": 2.75, "multi": 1.875, "exit": 3.0},
+        {"single": 2.75, "multi": 1.875, "exit": 3.0, "spinner": 0.435},
     ),
     "menu-hover-single": (
         8.1875,
@@ -38,6 +39,7 @@ PHASES = {
             "multi": 8.75,
             "exit": 6.5,
             "singleon": 8.1875,
+            "spinner": 0.075,
         },
     ),
     "menu-hover-multi": (
@@ -47,9 +49,10 @@ PHASES = {
             "multi": 6.0625,
             "exit": 6.1875,
             "multion": 5.875,
+            "spinner": 0.585,
         },
     ),
-    "gametype": (9.8125, {}),
+    "gametype": (9.8125, {"spinner": 0.345}),
     "menu-hover-exit": (
         2.75,
         {
@@ -57,6 +60,7 @@ PHASES = {
             "multi": 1.875,
             "exit": 3.0,
             "exiton": 6.4125,
+            "spinner": 0.525,
         },
     ),
     # Campaign screens: the disks, portraits and mouse-over clips are loop

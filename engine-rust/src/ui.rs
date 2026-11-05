@@ -37,6 +37,7 @@ pub const UI_JSON: &[&str] = &[
     "glucmpgn",
     "gluexpcmpgn",
     "glugamemode",
+    "glulogin",
     "gluload",
     "glucreat",
     "glugamelobby",

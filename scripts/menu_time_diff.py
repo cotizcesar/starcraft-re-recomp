@@ -30,7 +30,7 @@ CASES = {
     "130637": (
         "menu",
         2.75,
-        {"single": 2.75, "multi": 1.875, "exit": 3.0},
+        {"single": 2.75, "multi": 1.875, "exit": 3.0, "spinner": 0.435},
     ),
     "130704": (
         "menu-hover-single",
@@ -40,6 +40,7 @@ CASES = {
             "multi": 8.75,
             "exit": 6.5,
             "singleon": 8.1875,
+            "spinner": 0.075,
         },
     ),
     "130712": (
@@ -50,9 +51,10 @@ CASES = {
             "multi": 6.0625,
             "exit": 6.1875,
             "multion": 5.875,
+            "spinner": 0.585,
         },
     ),
-    "130727": ("gametype", 9.8125, {}),
+    "130727": ("gametype", 9.8125, {"spinner": 0.345}),
 }
 
 

@@ -578,7 +578,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v16 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry)\n";
+            b"galaxycraft retail cache v17 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1280,10 +1280,13 @@ pub const GLUE_ART: &[&str] = &[
     "glue/create/pinfo.dds",
     "glue/create/twobtnholder.dds",
     "glue/chatroom/pchat.dds",
-    // Toon Registry: backdrop, profile list plate and its popup.
+    // Toon Registry: backdrop and its popup.
     "glue/battlenet/toonregistry/backgnd.dds",
-    "glue/battlenet/toonregistry/toonlistbg.dds",
     "glue/battlenet/toonregistry/popopup.dds",
+    // Classic list dialogs: Registry (`glulogin`) and Load Saved Game
+    // (`gluload`) plates.
+    "glue/login/plist.dds",
+    "glue/load/plist.dds",
     // Shared `palnl` Ok/Cancel plates (classic dialogs).
     "glue/palnl/pok.dds",
     "glue/palnl/pcancel.dds",

@@ -1,24 +1,27 @@
 PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples loaded from the retail install
-PASS transitions: 23 screen changes, each with the press cue ui_click (no swish: retail CEF has no transition cue)
-     Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Main
-PASS sounds: ui_click on 57 presses including 23 screen changes, ui_move on 47 pointer entries
+PASS transitions: 24 screen changes, each with the press cue ui_click (no swish: retail CEF has no transition cue)
+     Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Registry -> Main
+PASS sounds: ui_click on 61 presses including 24 screen changes, ui_move on 50 pointer entries
      ui_move  <- sound/glue/mouseover.wav
      ui_click <- sound/glue/mousedown2.wav
      ui_swish <- sound/glue/swishin.wav
 PASS options: 5 tabs, sliders to 0.67/0.17/0.83 and music 0.50/sfx 0.00, 10 distinct checkbox states, Restore reset to defaults
 PASS lan: two peers discovered, row click selected peer 2 and join returned 'Connection refused'
 PASS hotkeys: SCV cell + Move card + H rebind (collision flagged), restore dialog confirmed, Protoss tab + Probe cell selected
+PASS campaign win: New Gettysburg won -> profiles.bin Terran next=11, games/wins/losses 1/1/0 -> fresh process lists 14 entries (temporary artifacts)
+PASS profiles: 2 new IDs + active + Game Timer survive a restart; deleting the active ID survives another (temporary artifacts)
+PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls
 PASS lobby: race dropdowns set [Terran, Zerg, Random, Random, Random, Random, Random, Random]
-PASS frame GameType     == verified headless render (gametype)
-PASS frame Options      == verified headless render (options-speed)
+PASS frame GameType     == verified headless render (gametype) outside the menu clips (footprint 25.79%, 0 transient px)
+PASS frame Options      == verified headless render (options-speed) outside the menu clips (footprint 17.49%, 0 transient px)
 PASS frame Collections  == verified headless render (collections)
 PASS frame Credits      == verified headless render (credits)
 PASS frame Hotkeys      == verified headless render (hotkeys-terran)
 PASS frame Registry     == verified headless render (registry)
 PASS frame Episode      == verified headless render (episode)
-PASS frame Mission      == verified headless render (mission)
+PASS frame Mission      == verified headless render (mission-live)
 PASS frame SavedGames   == verified headless render (saved)
-PASS frame Replays      == verified headless render (replays)
+PASS frame Replays      == verified headless render (replays) outside the replay-file regions
 PASS frame Lobby        live race dropdown == verified 134831 popup (byte-identical region); opening it changes nothing outside the popup
 PASS frame Hotkeys      SCV selected         == hotkeys-terran-scv
 PASS frame Hotkeys      restore dialog       == hotkeys-reset-dialog
@@ -32,4 +35,4 @@ PASS wide layout    options-video    all controls inside the panel
 PASS wide layout    options-game     all controls inside the panel
 PASS wide layout    options-network  all controls inside the panel
 
-walkthrough gate: PASS (129 steps, artifacts in /tmp/opencode/walk-gate)
+walkthrough gate: PASS (145 steps)

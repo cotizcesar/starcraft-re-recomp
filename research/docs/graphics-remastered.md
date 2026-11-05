@@ -9,11 +9,14 @@ install (`--install`); the repo contains no retail art.
 | Requirement | Status | Proof |
 |---|---|---|
 | 16:9 up to 4K | **done** | renders 1280x720 / 1920x1080 / 2560x1440 / 3840x2160, exit 0 |
-| Ultrawide expands (no bars) | **done** | render 3440x1440, exit 0 |
+| Ultrawide: the 16:9 picture between black bars | **done** | `scripts/ultrawide_diff.py` 31/31 (`engine-rust/docs/gates/ultrawide-diff.txt`) |
 
-Model: **the scale is derived from the height** (`scale = height / 480`), the 4:3
-HUD is centered and the **world fills the full width**. So 16:9 and 21:9 show
-more world at the same sprite proportion, instead of letterboxing.
+Model: **the scale is derived from the height** (`scale = height / 480`) and
+every screen lives in the centred 16:9 content box.  The 2026-10-28 row
+"ultrawide expands (no bars)" is **falsified** (2026-11-04): all 56 retail
+captures at 3440x1440 are black outside the box (max channel <= 8), in the
+menus and in game; the client now masks the bars and the gate checks that a
+3440x1440 frame is the 2560x1440 frame between black bars.
 
 The world is drawn into a logical framebuffer (640x360 at 1x) and scaled with
 `blit_scaled` to the window size; the HUD is drawn afterwards in screen
