@@ -12916,10 +12916,7 @@ impl App {
         let (cx, cy, cw, ch) = content;
         let team = match self.local_team_color {
             Some(c) if u.owner as usize == self.local_player => c,
-            _ => {
-                galaxycraft::render::PLAYER_COLORS
-                    [u.owner as usize % galaxycraft::render::PLAYER_COLORS.len()]
-            }
+            _ => galaxycraft::render::player_rgb(&self.world, u.owner),
         };
         let clip = (cx, cy, cx + cw, cy + ch);
         let install = self.install.as_ref();

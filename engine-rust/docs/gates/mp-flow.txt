@@ -1,16 +1,18 @@
 multiplayer flow gate (scripts/mp_flow_gate.py), 3440x1440
 PASS flow screens: Main -> GameType -> Connection -> Registry -> Games -> MpCreate -> MpLobby
-PASS flow game: net=none defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=52 lobby_game=true local=0 computers=2 ais=2 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
-PASS LAN host:   net=host desync=false hash=bbc74e250f559a8c defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=96 lobby_game=true local=0 computers=1 ais=0 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
-PASS LAN joiner: net=client desync=false hash=bbc74e250f559a8c defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=96 lobby_game=true local=1 computers=1 ais=0 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
+PASS flow game: colors=[2, 14, 13, 18, 4, 5, 20, 7] lobby_colors=[] net=none defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=52 lobby_game=true local=0 computers=2 ais=2 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
+PASS LAN joiner showed the host's countdown before the game
+PASS LAN joiner's Green colour is in both games (players[1].color = 11)
+PASS LAN host:   colors=[2, 11, 13, 18, 4, 5, 20, 7] lobby_colors=[] net=host desync=false hash=03d18cdb742c8942 defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=96 lobby_game=true local=0 computers=1 ais=0 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
+PASS LAN joiner: colors=[2, 11, 13, 18, 4, 5, 20, 7] lobby_colors=[] net=client desync=false hash=03d18cdb742c8942 defeated=..DD.DDD units=[155, 5, 0, 0, 9, 0, 0, 0] winner=None in_game=true tick=96 lobby_game=true local=1 computers=1 ais=0 teams=[0, 0, 0, 0, 1, 1, 1, 1] countdown=false result=None
 PASS mp-connection      vs retail   3.8 s              mean |diff|  2.01 (bound 5.0)
 PASS mp-connection-lan  vs retail   7.5 s              mean |diff|  2.02 (bound 5.0)
 PASS mp-games           vs retail  12.5 s              mean |diff|  2.12 (bound 5.0)
 PASS mp-create          vs retail  20.5 s              mean |diff|  3.58 (bound 5.0)
 PASS mp-creating        vs retail  22.5 s              mean |diff|  3.15 (bound 5.0)
 PASS mp-lobby           vs retail  24.5 s              mean |diff|  2.79 (bound 5.0)
-PASS mp-lobby-ready     vs retail  48.0 s              mean |diff|  3.37 (bound 5.0)
-PASS mp-countdown       vs retail  55.0 s              mean |diff|  3.34 (bound 5.0)
-PASS score-defeat       vs retail 21:14:04 screenshot  mean |diff|  6.23 (bound 8.0)
+PASS mp-lobby-ready     vs retail  48.0 s              mean |diff|  3.36 (bound 5.0)
+PASS mp-countdown       vs retail  55.0 s              mean |diff|  3.33 (bound 5.0)
+PASS score-defeat       vs retail 21:14:04 screenshot  mean |diff|  5.53 (bound 8.0)
 worst menu-step difference 3.58
 mp flow gate: PASS

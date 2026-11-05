@@ -51,6 +51,10 @@ pub const MAX_ENERGY: i32 = 200;
 pub const ENERGY_SCALE: i32 = 256;
 pub const MINERALS_PER_TRIP: i32 = 8;
 pub const GAS_PER_TRIP: i32 = 8;
+/// Frames a worker mines a mineral field (OpenBW `order_MiningMinerals`).
+pub const MINING_FRAMES: u16 = 75;
+/// Frames a worker spends inside a refinery (OpenBW `order_HarvestGas`).
+pub const GAS_MINING_FRAMES: u16 = 37;
 pub const MINERAL_CAPACITY: i32 = 1500;
 pub const GAS_CAPACITY: i32 = 5000;
 pub const MAX_ORDER_QUEUE: usize = 8;
@@ -395,6 +399,10 @@ pub struct SimUnit {
     pub rally: Option<(i32, i32)>,
     pub carry: i32,
     pub carry_kind: CarryKind,
+    /// Frames left mining the patch (or inside the refinery) it is
+    /// gathering; 0 when not mining.  OpenBW `order_MiningMinerals`
+    /// (75 frames) / `order_HarvestGas` (37 frames).
+    pub gather_timer: u16,
     pub resource_target: Option<u32>,
     pub depot: Option<u32>,
     pub production: VecDeque<Order>,
@@ -538,6 +546,10 @@ pub struct Player {
     /// screen's Produced / Constructed counts; credited with the score.
     pub units_produced: u32,
     pub structures_built: u32,
+    /// Lobby colour (`multiplayer::COLOR_CHOICES` index); `None` keeps the
+    /// classic slot colour (`render::PLAYER_COLORS[player]`).  Drawn by
+    /// [`crate::render::player_rgb`].
+    pub color: Option<u8>,
 }
 
 impl Player {
@@ -569,6 +581,7 @@ impl Player {
             vision_from: 0,
             units_produced: 0,
             structures_built: 0,
+            color: None,
         }
     }
 
@@ -1040,6 +1053,7 @@ impl World {
             rally: None,
             carry: 0,
             carry_kind: CarryKind::None,
+            gather_timer: 0,
             resource_target: None,
             depot: None,
             production: VecDeque::new(),
@@ -1126,6 +1140,7 @@ impl World {
             rally: None,
             carry: 0,
             carry_kind: CarryKind::None,
+            gather_timer: 0,
             resource_target: None,
             depot: None,
             production: VecDeque::new(),
@@ -1439,6 +1454,7 @@ impl World {
                     placement: (ty.placement.x as i32, ty.placement.y as i32),
                     building: ty.is_building(),
                     resource: is_resource_type(u.type_id),
+                    color: crate::render::player_rgb(self, u.owner),
                 }
             })
             .collect()
@@ -4524,6 +4540,38 @@ impl World {
     // Economy
     // ------------------------------------------------------------------
 
+    /// Another worker is mining `resource` right now.
+    fn resource_busy(&self, i: usize, resource: u32) -> bool {
+        self.units.iter().enumerate().any(|(j, u)| {
+            j != i && u.alive && u.gather_timer > 0 && u.order == Order::Gather { resource }
+        })
+    }
+
+    /// Nearest mineral field within 8 tiles of the worker that nobody is
+    /// mining (OpenBW `find_mineral_field(.., 32 * 8, true)`).
+    fn free_mineral_near(&self, i: usize, current: usize) -> Option<u32> {
+        let (x, y) = (self.units[i].x, self.units[i].y);
+        self.units
+            .iter()
+            .enumerate()
+            .filter(|(j, u)| {
+                *j != current
+                    && u.alive
+                    && is_resource_type(u.type_id)
+                    && !is_gas_resource(u.type_id)
+                    && u.type_id != uid::VESPENE_GEYSER
+                    && u.resource_amount > 0
+                    && (u.x - x).abs() <= fp(256)
+                    && (u.y - y).abs() <= fp(256)
+                    && !self.resource_busy(i, u.id)
+            })
+            .min_by_key(|(j, u)| {
+                let (dx, dy) = ((u.x - x) as i64 / 256, (u.y - y) as i64 / 256);
+                (dx * dx + dy * dy, *j)
+            })
+            .map(|(_, u)| u.id)
+    }
+
     fn order_gather(&mut self, i: usize, resource: u32) {
         let Some(ridx) = self.index_of(resource) else {
             self.order_done(i);
@@ -4564,12 +4612,40 @@ impl World {
         }
         let dist = self.distance(i, ridx);
         if dist > fp(80) {
+            self.units[i].gather_timer = 0;
             let (rx, ry) = (self.units[ridx].x, self.units[ridx].y);
             self.move_towards(i, (rx / fp(1), ry / fp(1)), fp(64));
             return;
         }
+        // One worker at a time per patch / refinery, and mining takes time
+        // (OpenBW `try_gather_resource`, `order_MiningMinerals`: 75 frames;
+        // `order_HarvestGas`: 37).  Without this every worker harvested on
+        // arrival and income ran ~2.5x retail (session log 2026-11-04 (86)).
+        let gas = is_gas_resource(self.units[ridx].type_id);
+        if self.units[i].gather_timer == 0 {
+            if self.resource_busy(i, resource) {
+                // `order_MoveToMinerals`: try a free field within 8 tiles,
+                // else wait for this one.
+                if !gas && let Some(free) = self.free_mineral_near(i, ridx) {
+                    self.units[i].order = Order::Gather { resource: free };
+                }
+                return;
+            }
+            self.units[i].gather_timer = if gas {
+                GAS_MINING_FRAMES
+            } else {
+                MINING_FRAMES
+            };
+            self.units[i].resource_target = Some(resource);
+            return;
+        }
+        if self.units[i].gather_timer > 1 {
+            self.units[i].gather_timer -= 1;
+            return;
+        }
+        self.units[i].gather_timer = 0;
         // Harvest.
-        let kind = if is_gas_resource(self.units[ridx].type_id) {
+        let kind = if gas {
             CarryKind::Gas
         } else {
             CarryKind::Minerals

@@ -15,7 +15,7 @@ restating status.
 <!-- progress:summary:start -->
 | Area | Weight | Done | Total | Progress |
 |---|---:|---:|---:|---:|
-| [Simulation rules](#simulation-rules) | 25 | 15 | 16 | 94 % |
+| [Simulation rules](#simulation-rules) | 25 | 16 | 17 | 94 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 7 | 8 | 88 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
@@ -25,7 +25,7 @@ restating status.
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **65** | **82** | **80 %** |
+| **Overall (weighted)** | **100** | **66** | **83** | **80 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -53,6 +53,7 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Campaign AI (`aiscript.bin` 293 / `bwscript.bin` 156 scripts) and skirmish AI — `src/aiscript.rs`, `src/ai.rs`, `tests/replay.rs`
 - [x] Rescuable players (Rescue Passive) — `sim::tests::rescuable_units_are_nobodys_target_and_join_the_first_comer`
 - [x] Score accounting as OpenBW (build score on completion incl. starting units, kill/razing destroy scores, kills credited to the attacker; losses and spending) — `tests/multiplayer.rs::a_melee_start_scores_like_the_retail_score_screen`, `sim::tests::score_tallies_follow_production_spending_and_kills`
+- [x] Mining as OpenBW: 75 frames per mineral trip, 37 in a refinery, one worker per field (SimpleAi income on Boxer 1,448 → 520 in 1,857 ticks; retail sheet ~376) — `tests/economy_original.rs::mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time`
 - [x] Alliances: allied players (lobby teams, trigger action 57) neither fight nor target each other and share vision in team games — `trigger::tests::set_alliance_status_stops_two_players_fighting`, `tests/multiplayer.rs::a_team_wins_together_and_never_targets_itself`, `teammates_share_vision`
 - [ ] Campaign AI opcodes that only advance today (`if_dif`, `if_towns`, `get_oldpeons`, `wait_upgrades`, `set_attacks`, `quick_attack`, …; only `get_oldpeons` is used by an Episode I map) — `research/docs/session-log.md` 2026-11-05 (93)
 
@@ -129,7 +130,7 @@ map/campaign editor, patches other than 1.23.10.13515.
 
 - [x] Command-only lockstep with per-turn state checksum over TCP (2400 ticks) and UDP — `tests/lan.rs`, `research/docs/lan-protocol.md`
 - [x] Discovery by UDP broadcast, lobby in `sc_view` (up to 8 players) — `tests/lan.rs`, `engine-rust/docs/gates/lan-lobby-reconnect.txt`
-- [x] Lobby protocol 3: named joins, live lobby for joiners, race and colour picks, lobby chat, the host's countdown, resolved setup at start; two `sc_view` processes end on the same state hash — `tests/lan.rs::a_joiner_sits_in_the_lobby_and_starts_with_the_setup`, `engine-rust/docs/gates/mp-flow.txt`
+- [x] Lobby protocol 3: named joins, live lobby for joiners, race and colour picks, lobby chat, the host's countdown shown to joiners, resolved setup at start; two `sc_view` processes end on the same state hash — `tests/lan.rs::a_joiner_sits_in_the_lobby_and_starts_with_the_setup`, `engine-rust/docs/gates/mp-flow.txt`
 - [x] Lobby games: colours drawn in game, teams ally and win together, computers run in the lockstep on every peer, saves keep the setup — `tests/multiplayer.rs`, `tests/replay.rs::saves_carry_the_lobby_setup_and_still_read_version_1`
 - [x] Retail score screen for lobby games — `sc_view --shot-screen score-defeat`, `engine-rust/docs/gates/mp-flow.txt`
 - [x] Reconnect by resyncing the command log, with backoff — `tests/lan.rs`

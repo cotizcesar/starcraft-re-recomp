@@ -190,6 +190,112 @@ pub const COLOR_CHOICES: [&str; 23] = [
     "Black",
 ];
 
+/// [`COLOR_CHOICES`] index of each slot's colour when the lobby leaves it
+/// on Random: Red, Blue, Teal, Purple, Orange, Brown, White, Yellow (the
+/// classic player colours, in slot order).
+pub const DEFAULT_COLORS: [usize; 8] = [2, 14, 13, 18, 4, 5, 20, 7];
+
+/// RGB of a [`COLOR_CHOICES`] entry.  The eight defaults are the engine's
+/// `render::PLAYER_COLORS`, so a lobby game left on Random looks exactly as
+/// a game started from the map list.  INFERENCE: the other values are
+/// approximations of the Remastered lobby colours by name (no capture
+/// shows them in game yet).
+pub fn color_rgb(choice: usize) -> crate::render::Rgb {
+    use crate::render::Rgb;
+    match choice {
+        1 => Rgb::new(255, 170, 210),  // Pink
+        2 => Rgb::new(255, 35, 35),    // Red
+        3 => Rgb::new(220, 190, 150),  // Tan
+        4 => Rgb::new(255, 140, 0),    // Orange
+        5 => Rgb::new(110, 70, 40),    // Brown
+        6 => Rgb::new(250, 250, 140),  // Pale Yellow
+        7 => Rgb::new(230, 220, 40),   // Yellow
+        8 => Rgb::new(130, 130, 20),   // Olive
+        9 => Rgb::new(170, 240, 40),   // Lime
+        10 => Rgb::new(130, 190, 130), // Pale Green
+        11 => Rgb::new(20, 140, 40),   // Green
+        12 => Rgb::new(0, 230, 250),   // Cyan
+        13 => Rgb::new(0, 200, 200),   // Teal
+        14 => Rgb::new(0, 80, 255),    // Blue
+        15 => Rgb::new(20, 20, 140),   // Navy
+        16 => Rgb::new(40, 110, 140),  // Dark Aqua
+        17 => Rgb::new(130, 140, 180), // Bluish Grey
+        18 => Rgb::new(160, 60, 220),  // Purple
+        19 => Rgb::new(230, 40, 220),  // Magenta
+        20 => Rgb::new(230, 230, 230), // White
+        21 => Rgb::new(128, 128, 128), // Grey
+        22 => Rgb::new(40, 40, 40),    // Black
+        _ => Rgb::new(230, 230, 230),
+    }
+}
+
+/// Score-bar colour group (`iscore.dds.grp`, 12 groups of 6 frames) closest
+/// to a colour.  Group means measured on the shipped art (fill frame,
+/// alpha above 200): red, blue, teal, purple, orange, brown, white, yellow,
+/// green, pale yellow, magenta, azure.
+pub fn score_group(rgb: crate::render::Rgb) -> usize {
+    const GROUPS: [(i32, i32, i32); 12] = [
+        (102, 4, 10),
+        (12, 13, 126),
+        (23, 82, 79),
+        (40, 23, 82),
+        (126, 50, 12),
+        (73, 35, 7),
+        (53, 53, 53),
+        (102, 97, 4),
+        (6, 73, 24),
+        (90, 102, 4),
+        (87, 18, 56),
+        (12, 89, 126),
+    ];
+    let c = rgb.0;
+    let (r, g, b) = (
+        ((c >> 16) & 255) as i32,
+        ((c >> 8) & 255) as i32,
+        (c & 255) as i32,
+    );
+    // Compare chromaticity: the art is darker than the in-game colours.
+    let norm = |r: i32, g: i32, b: i32| {
+        let sum = (r + g + b).max(1) as f32;
+        (r as f32 / sum, g as f32 / sum, b as f32 / sum, sum / 765.0)
+    };
+    let a = norm(r, g, b);
+    (0..12)
+        .min_by(|&i, &j| {
+            let d = |k: usize| {
+                let (gr, gg, gb) = GROUPS[k];
+                let n = norm(gr, gg, gb);
+                (a.0 - n.0).powi(2)
+                    + (a.1 - n.1).powi(2)
+                    + (a.2 - n.2).powi(2)
+                    + 0.05 * (a.3 - n.3 * 2.0).powi(2)
+            };
+            d(i).total_cmp(&d(j))
+        })
+        .unwrap_or(0)
+}
+
+/// Score-bar group of a [`COLOR_CHOICES`] entry: the twelve classic colours
+/// have their own group (by name); the extra Remastered colours use the
+/// nearest group ([`score_group`]).
+pub fn color_score_group(choice: usize) -> usize {
+    match COLOR_CHOICES.get(choice).copied() {
+        Some("Red") => 0,
+        Some("Blue") => 1,
+        Some("Teal") => 2,
+        Some("Purple") => 3,
+        Some("Orange") => 4,
+        Some("Brown") => 5,
+        Some("White") => 6,
+        Some("Yellow") => 7,
+        Some("Green") => 8,
+        Some("Pale Yellow") => 9,
+        Some("Magenta") | Some("Pink") => 10,
+        Some("Cyan") | Some("Dark Aqua") => 11,
+        _ => score_group(color_rgb(choice)),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbySlot {
     pub occupant: Occupant,
@@ -286,6 +392,50 @@ impl Lobby {
         }
     }
 
+    /// Colours slot `i` may pick: Random plus every colour no other playing
+    /// slot picked explicitly (retail does not offer a taken colour).
+    pub fn free_colors(&self, i: usize) -> Vec<usize> {
+        let taken: Vec<usize> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(j, s)| *j != i && s.occupant.plays() && s.color != 0)
+            .map(|(_, s)| s.color)
+            .collect();
+        (0..COLOR_CHOICES.len())
+            .filter(|c| *c == 0 || !taken.contains(c))
+            .collect()
+    }
+
+    /// Colour of every slot once Random is resolved: explicit picks keep
+    /// their colour; a Random slot takes its default colour if nobody
+    /// picked it, else the first free colour.  INFERENCE: retail's Random
+    /// is random; a fixed rule keeps the result identical on every peer.
+    pub fn resolved_colors(&self) -> Vec<usize> {
+        let mut used: Vec<usize> = self
+            .slots
+            .iter()
+            .filter(|s| s.color != 0)
+            .map(|s| s.color)
+            .collect();
+        self.slots
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if s.color != 0 {
+                    return s.color;
+                }
+                let want = DEFAULT_COLORS.get(i).copied();
+                let pick = want
+                    .filter(|c| !used.contains(c))
+                    .or_else(|| (1..COLOR_CHOICES.len()).find(|c| !used.contains(c)))
+                    .unwrap_or(2);
+                used.push(pick);
+                pick
+            })
+            .collect()
+    }
+
     /// First Open slot (where a joining LAN player sits).
     pub fn first_open(&self) -> Option<usize> {
         self.slots.iter().position(|s| s.occupant == Occupant::Open)
@@ -322,6 +472,7 @@ impl Lobby {
                 .wrapping_add(1442695040888963407);
             (rng >> 33) as u32
         };
+        let colors = self.resolved_colors();
         let slots = self
             .slots
             .iter()
@@ -344,6 +495,7 @@ impl Lobby {
                     occupant,
                     race,
                     team: self.team_of(i),
+                    color: colors[i] as u8,
                 }
             })
             .collect();
@@ -541,6 +693,8 @@ pub struct SetupSlot {
     pub occupant: SetupOccupant,
     pub race: Race,
     pub team: u8,
+    /// [`COLOR_CHOICES`] index (never 0: Random is resolved).
+    pub color: u8,
 }
 
 /// A started lobby game: what the world is built from and what saves,
@@ -583,6 +737,7 @@ impl GameSetup {
                 continue;
             };
             p.team = if team_game { s.team } else { i as u8 };
+            p.color = Some(s.color);
             p.is_computer = s.occupant == SetupOccupant::Computer;
             if s.occupant == SetupOccupant::Empty {
                 p.defeated = true;
@@ -602,7 +757,7 @@ impl GameSetup {
         }
     }
 
-    /// `[game_type u8][count u8]` then `[kind u8][peer u8][race u8][team u8]`
+    /// `[game_type u8][count u8]` then `[kind][peer][race][team][colour]`
     /// per slot (kind 0 empty, 1 computer, 2 human).
     pub fn encode(&self) -> Vec<u8> {
         let mut out = vec![self.game_type.tag(), self.slots.len().min(MAX_SLOTS) as u8];
@@ -612,7 +767,7 @@ impl GameSetup {
                 SetupOccupant::Computer => (1, 0),
                 SetupOccupant::Human { peer } => (2, peer),
             };
-            out.extend_from_slice(&[kind, peer, race_tag(s.race), s.team]);
+            out.extend_from_slice(&[kind, peer, race_tag(s.race), s.team, s.color]);
         }
         out
     }
@@ -622,12 +777,12 @@ impl GameSetup {
         let (&gt, rest) = bytes.split_first()?;
         let (&n, rest) = rest.split_first()?;
         let n = n as usize;
-        if n > MAX_SLOTS || rest.len() != n * 4 {
+        if n > MAX_SLOTS || rest.len() != n * 5 {
             return None;
         }
         let game_type = GameType::from_tag(gt)?;
         let mut slots = Vec::with_capacity(n);
-        for c in rest.as_chunks::<4>().0 {
+        for c in rest.as_chunks::<5>().0 {
             let occupant = match c[0] {
                 0 => SetupOccupant::Empty,
                 1 => SetupOccupant::Computer,
@@ -640,10 +795,14 @@ impl GameSetup {
                 2 => Race::Protoss,
                 _ => return None,
             };
+            if c[4] == 0 || c[4] as usize >= COLOR_CHOICES.len() {
+                return None;
+            }
             slots.push(SetupSlot {
                 occupant,
                 race,
                 team: c[3],
+                color: c[4],
             });
         }
         Some(Self { game_type, slots })

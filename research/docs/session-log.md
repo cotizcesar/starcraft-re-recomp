@@ -5002,3 +5002,52 @@ running), two processes host + joiner ending on the same state hash with no
 desync, and every step within 2.0-3.6 grey levels (640x360 mean |diff|) of
 the recording; wrong-screen pairs score 8.6-19.9, bound 5.0; score sheet
 6.23 (another game's numbers), bound 8.0.
+
+## 2026-11-04 (87) — Joiner countdown, lobby colours, mining time
+
+Closes three gaps entry (86) listed against the retail recording.
+
+**Countdown for joiners.**  Protocol 3 gains `LobbyCountdown { on }`
+(host -> clients, on Ok and on Cancel).  The joiner runs the same
+`countdown` timing ("Starting in: N seconds", Cancel/dropdowns greying),
+then the launch swish, and stays black until the host's `Setup`, which the
+host sends when its own launch ends.  A joiner cannot cancel the host's
+countdown.  Tests: `tests/lan.rs::colour_picks_and_the_countdown_cross_the_lobby_link`;
+the gate's two-process run asserts a joiner log row with `countdown=true`
+before the game.
+
+**Lobby colours applied.**  The colour dropdown offers Random plus the
+colours no other playing slot picked (`Lobby::free_colors`); Random is
+resolved per slot to its default (Red, Blue, Teal, Purple, Orange, Brown,
+White, Yellow) or the first free colour (`resolved_colors`; INFERENCE:
+retail's Random is random, a fixed rule keeps every peer identical).
+`SetupSlot.color` (setup slots are 5 bytes) -> `Player.color` (hashed) ->
+`render::player_rgb`, used by the HD unit/building team colour and the
+minimap blips (`MinimapDot.color`); score bars use the matching `iscore`
+colour group (the 12 classic colours by name, the extra Remastered ones by
+nearest chromaticity).  The eight defaults equal `PLAYER_COLORS`, so a
+lobby left on Random looks as before.  INFERENCE: the RGB of the extra
+colours (named approximations).  Joiners send `LobbyColor`; the host
+applies it only when the colour is free.  Test:
+`tests/multiplayer.rs::lobby_colours_reach_the_game_and_its_drawing`;
+gate: the joiner picks Green and both games end with `players[1].color =
+11` (`colors=[2, 11, 13, 18, 4, 5, 20, 7]`) on the same hash.
+
+**Mining time (FACT from OpenBW `bwgame.h`).**  `try_gather_resource`
+lets one worker gather a field at a time; `order_MiningMinerals` sets
+`main_order_timer = 75` and `order_HarvestGas` 37, decremented once a frame
+in `update_unit_values` (with the weapon cooldowns); `order_MoveToMinerals`
+moves a worker that finds its field busy to a free field within 8 tiles.
+Implemented with `SimUnit.gather_timer` (hashed): busy = another worker
+with `gather_timer > 0` on the same `Gather` order.  SimpleAi income on
+Boxer in 1 857 ticks: 1 448 -> 520 minerals (7 Probes); the retail sheet
+shows ~360-376 gathered per computer after 01:18 (the rest of the gap is
+travel and the skirmish AI's build, which is not the retail AI).  The
+score shot's Resources column went from 1 194-5 814 to 306-858 (retail
+402-426); its difference to the retail sheet from 6.23 to 5.53.  Test:
+`tests/economy_original.rs::mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time`
+fails with mining forced to 1 frame ("worker 0 mined in 1 frames").
+
+**Evidence.**  `cargo test --release` 474 passed / 0 failed; clippy
+`-D warnings` clean; fmt clean; `scripts/mp_flow_gate.py` PASS
+(`engine-rust/docs/gates/mp-flow.txt`); `scripts/progress.py --check` OK.

@@ -58,3 +58,88 @@ fn tech_requirements_are_not_silently_ignored() {
         Err(TrainError::NotEnoughMinerals)
     );
 }
+
+/// OpenBW `order_MiningMinerals` / `try_gather_resource`: a worker mines a
+/// field for 75 frames before it carries anything, and a field serves one
+/// worker at a time (a second worker waits, or takes a free field within
+/// 8 tiles).  Harvesting on arrival made income ~2.5x retail.
+#[test]
+fn mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time() {
+    use galaxycraft::ids::unit as uid;
+    use galaxycraft::map::Terrain;
+    use galaxycraft::sim::{MINING_FRAMES, Order, World};
+    use std::sync::Arc;
+
+    let setup = |fields: &[(i32, i32)]| {
+        let mut w = World::new(
+            Arc::new(GameData::bundled().expect("tables")),
+            Terrain::open(64, 64),
+            1,
+        );
+        w.spawn(0, uid::NEXUS, 400, 400).unwrap();
+        let ids: Vec<u32> = fields
+            .iter()
+            .map(|&(x, y)| {
+                let f = w.spawn(0, uid::MINERAL_FIELD, x, y).unwrap();
+                w.units[f].resource_amount = 1500;
+                w.units[f].id
+            })
+            .collect();
+        let probes: Vec<usize> = [(560, 380), (560, 420)]
+            .iter()
+            .map(|&(x, y)| w.spawn(0, uid::PROBE, x, y).unwrap())
+            .collect();
+        for &p in &probes {
+            let id = w.units[p].id;
+            w.issue(id, Order::Gather { resource: ids[0] }).unwrap();
+        }
+        (w, probes, ids)
+    };
+
+    // One field, two workers: never two mining it at once, and each trip
+    // spends 75 frames on the field.
+    let (mut w, probes, ids) = setup(&[(600, 400)]);
+    let mut started: Vec<Option<u64>> = vec![None; 2];
+    let mut first_carry: Vec<Option<u64>> = vec![None; 2];
+    for _ in 0..600 {
+        w.step();
+        let mining = probes
+            .iter()
+            .filter(|&&p| w.units[p].gather_timer > 0)
+            .count();
+        assert!(
+            mining <= 1,
+            "two workers mined one field at tick {}",
+            w.tick
+        );
+        for (k, &p) in probes.iter().enumerate() {
+            if w.units[p].gather_timer > 0 && started[k].is_none() {
+                started[k] = Some(w.tick);
+            }
+            if w.units[p].carry > 0 && first_carry[k].is_none() {
+                first_carry[k] = Some(w.tick);
+            }
+        }
+    }
+    for k in 0..2 {
+        let (s, c) = (started[k].expect("mined"), first_carry[k].expect("carried"));
+        assert!(
+            c - s >= MINING_FRAMES as u64 - 1,
+            "worker {k} mined in {} frames",
+            c - s
+        );
+    }
+    assert!(w.players[0].minerals_gathered > 0, "the trips completed");
+    let _ = ids;
+
+    // Two fields: the second worker takes the free one instead of waiting.
+    let (mut w, probes, ids) = setup(&[(600, 400), (600, 440)]);
+    for _ in 0..200 {
+        w.step();
+    }
+    let fields: Vec<Option<u32>> = probes.iter().map(|&p| w.units[p].resource_target).collect();
+    assert!(
+        fields.contains(&Some(ids[0])) && fields.contains(&Some(ids[1])),
+        "{fields:?}"
+    );
+}

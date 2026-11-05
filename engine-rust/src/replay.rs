@@ -504,7 +504,7 @@ pub struct SaveFile {
 
 const SAVE_MAGIC: u32 = 0x4743_5356; // "GCSF"
 const SAVE_VERSION: u16 = 2;
-/// Largest encoded [`crate::multiplayer::GameSetup`] (12 slots x 4 + 2).
+/// Largest encoded [`crate::multiplayer::GameSetup`] (12 slots x 5 + 2).
 const MAX_SETUP_BYTES: usize = 64;
 
 fn encode_str(out: &mut Vec<u8>, s: &str) {
@@ -737,6 +737,7 @@ fn hash_unit(h: &mut DefaultHasher, u: &SimUnit) {
     hash_opt_u32(h, u.target);
     u.carry.hash(h);
     carry_tag(u.carry_kind).hash(h);
+    u.gather_timer.hash(h);
     u.build_remaining.hash(h);
     u.hangar.hash(h);
     // Status effect timers decide future damage/healing: hash them all.
@@ -799,6 +800,7 @@ pub fn state_hash(w: &World) -> u64 {
         p.start_gas.hash(&mut h);
         p.vision_from.hash(&mut h);
         p.units_produced.hash(&mut h);
+        p.color.hash(&mut h);
         p.structures_built.hash(&mut h);
     }
     h.write_usize(w.units.len());
