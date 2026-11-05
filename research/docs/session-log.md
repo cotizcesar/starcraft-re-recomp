@@ -4754,3 +4754,29 @@ need a click and the ready room runs by itself.
 `tests/campaign_episode1.rs` 9/9); clippy 0; fmt clean; `ui_visual_diff.py`
 51/51; walkthrough PASS (win, flow, skip tutorial); `progress.py --check`
 OK.
+
+## 2026-11-05 (95) — Backwater Station against its retail recording
+
+Source: `Screencast_20261105_113518` (765 s, video only): ready room
+10-68 s, game from 68.9 s, Infested Command Center down ~688 s, victory
+dialog 739.7 s, score screen (LinKa 13230 / Garm Brood 3175, 11:08).
+
+- **Opening (FACT).**  "RAYNOR / Glad to see you, boys" is on the first
+  game frame (68.9 s) and leaves at 73.2 s.  Trigger 1 needs Raynor under
+  the player's command; he starts as a Rescue Passive unit beside the
+  Marines.  Our rescue poll ran first on tick 15, after tick 1's trigger
+  pass, so the line came on the next cycle (1.25 s).  The poll now runs on
+  tick 1 and every 15 ticks after (INFERENCE: the order timer starts at
+  0); the line shows at tick 1 and stays 4.22 s (retail 4.3).
+- **Ending (FACT, matches).**  From the Adjutant's "Receiving incoming
+  transmission" (693.8 s): Duke +2.5, Raynor +19.9, Duke +29.0, Raynor
+  +38.8, all text gone +44.2, victory dialog +45.9 s.  Ours from the
+  Infested Command Center's death: +2.42, +19.71, +28.79, +38.46, +43.5
+  and victory +45.33 s.  New integration test.
+
+The new full Wasteland recording (`_112518`) is not analysed in this
+entry; its opening, rescue and victory were already fitted (89-92).
+
+**Verification.**  `cargo test` 486 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 11/11); clippy 0; fmt clean;
+`ui_visual_diff.py` 51/51; walkthrough PASS; `progress.py --check` OK.

@@ -426,3 +426,107 @@ fn trigger_locations_are_the_map_pixel_rectangles() {
     assert_eq!(t.locations[0], (l.left, l.top, l.right, l.bottom));
     assert!(t.locations[0].2 <= sc.width as i32 * 32);
 }
+
+#[test]
+fn backwater_station_ending_follows_the_retail_recording() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Screencast_20261105_113518`: after the Infested Command
+    // Center falls, from the Adjutant's "Receiving incoming transmission"
+    // (693.8 s): Duke +2.5 s, Raynor +19.9 s, Duke +29.0 s, Raynor +38.8 s,
+    // the victory dialog +45.9 s.
+    let (sc, mut w, human) = mission(&install, 3);
+    for _ in 0..24 * 40 {
+        w.step();
+    }
+    let shooter = w
+        .units
+        .iter()
+        .find(|u| u.alive && u.owner as usize == human)
+        .map(|u| u.id)
+        .expect("a player unit");
+    let ccs: Vec<u32> = w
+        .units
+        .iter()
+        .filter(|u| u.alive && u.type_id == galaxycraft::ids::unit::INFESTED_COMMAND_CENTER)
+        .map(|u| u.id)
+        .collect();
+    assert!(!ccs.is_empty(), "an Infested Command Center is placed");
+    for id in ccs {
+        if let Some(i) = w.units.iter().position(|u| u.id == id) {
+            w.units[i].last_damage_source = shooter;
+        }
+        w.damage_unit(id, 10_000_000).expect("damage");
+    }
+    let mut lines: Vec<(u64, String)> = Vec::new();
+    let mut seen = w.triggers.as_ref().expect("triggers").cues.len();
+    let mut won = None;
+    for _ in 0..24 * 70 {
+        w.step();
+        let t = w.triggers.as_ref().expect("triggers");
+        for c in &t.cues[seen..] {
+            if let TriggerCue::Text { player, string, .. } = *c {
+                if player == human {
+                    let text = sc.string(string).unwrap_or("").trim_start().to_string();
+                    lines.push((w.tick, text));
+                }
+            }
+        }
+        seen = t.cues.len();
+        if w.winner == Some(human as u8) {
+            won = Some(w.tick);
+            break;
+        }
+    }
+    let secs = |t: u64| t as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32;
+    let first = lines.first().expect("a transmission").0;
+    let expect = [
+        ("ADVISOR", 0.0),
+        ("DUKE", 2.5),
+        ("RAYNOR", 19.9),
+        ("DUKE", 29.0),
+        ("RAYNOR", 38.8),
+    ];
+    assert_eq!(lines.len(), expect.len(), "{lines:?}");
+    for ((at, text), (speaker, retail)) in lines.iter().zip(expect) {
+        assert!(text.starts_with(speaker), "{text:?}");
+        let gap = secs(at - first);
+        assert!(
+            (gap - retail).abs() <= 0.8,
+            "{speaker}: +{gap:.2} s vs +{retail}"
+        );
+    }
+    let victory = secs(won.expect("victory") - first);
+    assert!(
+        (victory - 45.9).abs() <= 1.25,
+        "victory +{victory:.2} s vs +45.9"
+    );
+}
+
+#[test]
+fn backwater_station_opens_with_raynor_on_the_first_frame() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Screencast_20261105_113518`: "RAYNOR / Glad to see you, boys"
+    // is on the first game frame (68.9 s) and leaves 4.3 s later.  Raynor
+    // starts as a rescuable unit next to the player's Marines.
+    let (sc, mut w, human) = mission(&install, 3);
+    w.step();
+    let t = w.triggers.as_ref().expect("triggers");
+    let line = t.cues.iter().find_map(|c| match *c {
+        TriggerCue::Text {
+            player, string, ms, ..
+        } if player == human => Some((string, ms)),
+        _ => None,
+    });
+    let (string, ms) = line.expect("Raynor's line at tick 1");
+    let text = sc.string(string).unwrap_or("");
+    assert!(text.contains("Glad to see you"), "{text:?}");
+    let life =
+        galaxycraft::transmission::text_life_ms(ms, galaxycraft::transmission::text_chars(text));
+    assert!(life.abs_diff(4_300) <= 200, "{life} ms on screen vs 4.3 s");
+}
