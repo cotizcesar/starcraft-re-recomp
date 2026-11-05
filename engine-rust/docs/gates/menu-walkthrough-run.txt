@@ -1,7 +1,7 @@
 PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples, ui_swish_out=36110 samples loaded from the retail install
-PASS transitions: 24 screen changes, each with the press cue and the swish-in (swish-out when a list dialog leaves)
-     Main -> GameType -> Lan -> GameType -> Lobby -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Registry -> Main
-PASS sounds: ui_click on 60 presses including 24 screen changes, ui_move on 49 pointer entries
+PASS transitions: 29 screen changes, each with the press cue and the swish-in (swish-out when a list dialog leaves)
+     Main -> GameType -> Lan -> GameType -> Connection -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Registry -> Main -> GameType -> Registry -> Episode -> Lobby -> Main
+PASS sounds: ui_click on 66 presses including 29 screen changes, ui_move on 51 pointer entries
      ui_move  <- sound/glue/mouseover.wav
      ui_click <- sound/glue/mousedown2.wav
      ui_swish <- sound/glue/swishin.wav
@@ -39,4 +39,4 @@ PASS wide layout    options-video    all controls inside the panel
 PASS wide layout    options-game     all controls inside the panel
 PASS wide layout    options-network  all controls inside the panel
 
-walkthrough gate: PASS (146 steps)
+walkthrough gate: PASS (159 steps)

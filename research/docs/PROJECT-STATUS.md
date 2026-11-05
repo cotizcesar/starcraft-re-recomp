@@ -33,9 +33,11 @@ Last update: 2026-11-05.
 
 ## Open (details and evidence in `PROGRESS.md`)
 
-- Gameplay gaps found while validating: alliances (`World::hostile` ignores
-  `Player.team`), single-player cheat codes, selectable game types, chat,
-  observer mode, Save Replay on the score screen.
+- Gameplay gaps: single-player cheat codes, the special rules of Greed /
+  Slaughter / Capture the Flag / Sudden Death, in-game chat, observer mode
+  after defeat, Save Replay on the campaign score screen.  (Alliances, the
+  multiplayer front end, lobby chat and OpenBW mining came with the LAN
+  flow branch, session log 2026-11-04 (86–87).)
 - Campaign: missions 4–11 and Episodes II–VI against retail recordings,
   audio timing (no recording so far has sound), Zerg/Protoss ready rooms.
 - Physical two-machine LAN test; locked-campaign prompt; localisation.
