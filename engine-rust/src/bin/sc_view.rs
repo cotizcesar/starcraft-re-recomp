@@ -4278,6 +4278,13 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             held = true;
         } else if step == "release" {
             held = false;
+        } else if let Some(name) = step.strip_prefix("result:") {
+            // Score screen key, through the same handler as the keyboard.
+            app.result_key(script_key(name));
+        } else if step == "intro:end" {
+            // The playing movie list runs to its end (as after the last
+            // film): the pending mission loads.
+            app.end_intro();
         } else if step == "fixture:win" {
             // End-to-end victory: every other player is defeated in the
             // running mission and the real result path records progress.
@@ -4533,6 +4540,12 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 app.lan.status
             ),
             _ => String::new(),
+        };
+        // Outside the front end the step records the campaign flow.
+        let state = if app.menu {
+            state
+        } else {
+            format!("{state} {}", app.flow_state()).trim().to_string()
         };
         log.push_str(&format!(
             "{i}\t{step}\t{screen}\t{}\t{state}\n",
@@ -5150,7 +5163,7 @@ fn main() {
     }
     app.ais = slots
         .iter()
-        .filter(|s| s.computer && !is_rescuable(&app.world, s.slot))
+        .filter(|s| s.computer && skirmish_ai(&app.world, s.slot))
         .map(|s| SimpleAi::new(s.slot as u8))
         .collect();
     app.center_on_base();
@@ -5811,9 +5824,12 @@ fn clear_menu_frame(fb: &mut Framebuffer) {
 /// menu that shows through on the retail panel).
 const COLLECTIONS_PLATE_ALPHA: u8 = 128;
 
-/// A "Rescue Passive" slot has no AI: its units wait to be rescued.
-fn is_rescuable(world: &World, slot: usize) -> bool {
-    world.players.get(slot).is_some_and(|p| p.rescuable)
+/// Whether a computer slot gets the skirmish AI.  Missions (worlds whose
+/// victory comes from triggers) drive their computers only through the
+/// map's `Run AI Script` actions, as the retail campaign does; a "Rescue
+/// Passive" slot never has an AI (its units wait to be rescued).
+fn skirmish_ai(world: &World, slot: usize) -> bool {
+    !world.trigger_victory && !world.players.get(slot).is_some_and(|p| p.rescuable)
 }
 
 /// Bank cue of the rescue sound for a race.
@@ -6580,7 +6596,7 @@ impl App {
         let local = self.local_player;
         self.ais = slots
             .iter()
-            .filter(|s| s.computer && s.slot != local && !is_rescuable(&world, s.slot))
+            .filter(|s| s.computer && s.slot != local && skirmish_ai(&world, s.slot))
             .map(|s| SimpleAi::new(s.slot as u8))
             .collect();
         self.campaign_ais.clear();
@@ -9320,6 +9336,14 @@ impl App {
 
     fn handle_result(&mut self, window: &Window) {
         for key in window.get_keys_pressed(KeyRepeat::No) {
+            self.result_key(key);
+        }
+    }
+
+    /// One key on the score/result screen (also driven by `--menu-script`
+    /// `result:<Key>` steps).
+    fn result_key(&mut self, key: Key) {
+        {
             match key {
                 Key::Enter | Key::Space if self.game_result == Some(true) => {
                     self.play("ui_swish");
@@ -9343,6 +9367,43 @@ impl App {
                 Key::Q => self.quit = true,
                 _ => {}
             }
+        }
+    }
+
+    /// Walkthrough record of the campaign flow outside the front end:
+    /// queued movies and the mission they lead to, the briefing, or the game.
+    fn flow_state(&self) -> String {
+        let name = |i: Option<usize>| {
+            i.and_then(|i| self.maps.get(i))
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| "-".into())
+        };
+        if self.intro {
+            format!(
+                "flow=intro clips={} pending={}",
+                self.intro_clips.join("+"),
+                name(self.intro_pending_map)
+            )
+        } else if self.briefing {
+            let first = self
+                .briefing_pages
+                .iter()
+                .map(|p| p.text.lines().find(|l| !l.trim().is_empty()).unwrap_or(""))
+                .next()
+                .unwrap_or("");
+            format!(
+                "flow=briefing map={} pages={} first={:?}",
+                name(Some(self.map_index)),
+                self.briefing_pages.len(),
+                first.trim()
+            )
+        } else {
+            format!(
+                "flow=game map={} result={:?} next={}",
+                name(Some(self.map_index)),
+                self.game_result,
+                name(self.next_map)
+            )
         }
     }
 

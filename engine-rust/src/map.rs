@@ -97,6 +97,9 @@ pub struct Scenario {
     pub owners: [u8; 12],
     pub sides: [u8; 12],
     pub triggers: Vec<u8>,
+    /// `FORC` force (0..=3) of players 1..8; all in force 1 without the
+    /// section.
+    pub forces: [u8; 8],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -421,6 +424,12 @@ impl Scenario {
                 *dst = *src;
             }
         }
+        let mut forces = [0u8; 8];
+        if let Some(raw) = sections.get("FORC") {
+            for (dst, src) in forces.iter_mut().zip(raw.iter()) {
+                *dst = (*src).min(3);
+            }
+        }
 
         Ok(Self {
             width,
@@ -439,6 +448,7 @@ impl Scenario {
             owners,
             sides,
             triggers: sections.get("TRIG").map(|s| s.to_vec()).unwrap_or_default(),
+            forces,
         })
     }
 

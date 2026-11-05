@@ -116,3 +116,30 @@ fn the_trump_card_opens_with_three_lines_in_sequence() {
         "one after another: {at:?}"
     );
 }
+
+#[test]
+fn every_episode_one_mission_sets_its_objectives_at_the_start() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Boot Camp, Desperate Alliance, New Gettysburg and The Hammer Falls
+    // set them from Force 1 triggers; The Jacobs Installation on "Elapsed
+    // Time at most 0".  Retail shows every list from the first second.
+    for m in 1..=11u16 {
+        let (sc, mut w, human) = mission(&install, m);
+        for _ in 0..2 {
+            w.step();
+        }
+        let t = w.triggers.as_ref().expect("triggers");
+        let text = t
+            .mission_objectives
+            .get(human)
+            .copied()
+            .flatten()
+            .and_then(|s| sc.string(s))
+            .unwrap_or("");
+        // A bullet list ("- Find Raynor.", or "-Eliminate ..." in The Big Push).
+        assert!(text.contains("\n-"), "mission {m} objectives: {text:?}");
+    }
+}

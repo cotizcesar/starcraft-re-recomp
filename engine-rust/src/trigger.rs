@@ -160,6 +160,11 @@ pub struct TriggerSystem {
     pub next_scenario: Option<u32>,
     pub leaderboard: Option<Leaderboard>,
     pub leaderboard_computer_players: bool,
+    /// Force (0..=3) of players 1..8, from the scenario's `FORC`.
+    pub forces: [u8; 8],
+    /// Players 1..8 in the game (`OWNR` not 0): only they run the
+    /// triggers enabled for a whole force.
+    pub present: [bool; 8],
 }
 
 impl Default for TriggerSystem {
@@ -185,6 +190,8 @@ impl Default for TriggerSystem {
             next_scenario: None,
             leaderboard: None,
             leaderboard_computer_players: true,
+            forces: [0; 8],
+            present: [true; 8],
         }
     }
 }
@@ -312,11 +319,16 @@ impl TriggerSystem {
             next_scenario: None,
             leaderboard: None,
             leaderboard_computer_players: true,
+            forces: [0; 8],
+            present: [true; 8],
         }
     }
 
     pub fn process(&mut self, world: &mut World) {
-        if !world.tick.is_multiple_of(TRIGGER_INTERVAL) {
+        // Triggers first run at game start (elapsed time 0: `terran04`
+        // sets its objectives on "Elapsed Time at most 0"), then on the
+        // 30-tick cadence.
+        if world.tick != 1 && !world.tick.is_multiple_of(TRIGGER_INTERVAL) {
             return;
         }
         if self.state.fired.len() != world.players.len() {
@@ -344,7 +356,7 @@ impl TriggerSystem {
             }
             for ti in 0..self.triggers.len() {
                 let trigger = self.triggers[ti].clone();
-                if !trigger.enabled[player] && !trigger.enabled[17] {
+                if !self.runs_for(&trigger, player) {
                     continue;
                 }
                 let preserved = self
@@ -678,21 +690,32 @@ impl TriggerSystem {
         }
     }
 
+    /// Owners a Command/Bring condition counts: one player, a force's
+    /// members, or `None` for any owner.
+    fn condition_owners(&self, group: u32, player: usize) -> Option<Vec<usize>> {
+        match group {
+            18..=21 => Some(self.force_members(group as usize - 18)),
+            _ => self.select_owner(group, player).map(|o| vec![o]),
+        }
+    }
+
     fn command_count(&self, world: &World, player: usize, c: &TriggerCondition) -> i32 {
-        let owner = self.select_owner(c.group, player);
+        let owners = self.condition_owners(c.group, player);
         world
             .units
             .iter()
             .filter(|u| {
                 u.alive
                     && Self::unit_matches(world, u.type_id, c.unit_id)
-                    && owner.is_none_or(|o| u.owner as usize == o)
+                    && owners
+                        .as_ref()
+                        .is_none_or(|o| o.contains(&(u.owner as usize)))
             })
             .count() as i32
     }
 
     fn bring_count(&self, world: &World, player: usize, c: &TriggerCondition) -> i32 {
-        let owner = self.select_owner(c.group, player);
+        let owners = self.condition_owners(c.group, player);
         let loc = c.location as usize;
         world
             .units
@@ -701,10 +724,11 @@ impl TriggerSystem {
                 if !u.alive {
                     return false;
                 }
-                if let Some(o) = owner {
-                    if u.owner as usize != o {
-                        return false;
-                    }
+                if owners
+                    .as_ref()
+                    .is_some_and(|o| !o.contains(&(u.owner as usize)))
+                {
+                    return false;
                 }
                 if !Self::unit_matches(world, u.type_id, c.unit_id) {
                     return false;
@@ -720,6 +744,22 @@ impl TriggerSystem {
                 x >= l.0 && x < l.2 && y >= l.1 && y < l.3
             })
             .count() as i32
+    }
+
+    /// Whether `player` executes `trigger`: enabled for the player, for All
+    /// Players (17) or for the player's force (18..=21, `FORC`).
+    fn runs_for(&self, trigger: &Trigger, player: usize) -> bool {
+        if trigger.enabled[player.min(27)] || trigger.enabled[17] {
+            return true;
+        }
+        player < 8 && self.present[player] && trigger.enabled[18 + self.forces[player] as usize]
+    }
+
+    /// Players of force `force` (0..=3) that are in the game.
+    fn force_members(&self, force: usize) -> Vec<usize> {
+        (0..8)
+            .filter(|&p| self.present[p] && self.forces[p] as usize == force)
+            .collect()
     }
 
     fn select_owner(&self, group: u32, current: usize) -> Option<usize> {
@@ -740,6 +780,7 @@ impl TriggerSystem {
             12 => (0..12).collect(),
             13 => vec![current],
             14..=17 => (0..12).collect(),
+            18..=21 => self.force_members(group as usize - 18),
             _ => vec![current],
         }
     }
@@ -1720,6 +1761,44 @@ mod tests {
         assert!(!w.units[id].invincible);
         w.damage_unit(w.units[id].id, 100).unwrap();
         assert!(w.units[id].hp < before);
+    }
+
+    #[test]
+    fn force_triggers_run_for_the_force_members_in_the_game() {
+        // A trigger enabled only for Force 1 (index 18) that sets minerals.
+        let mut r = vec![0u8; RECORD_SIZE];
+        r[15] = 22; // Always
+        r[320 + 20..320 + 24].copy_from_slice(&777u32.to_le_bytes());
+        r[320 + 16..320 + 20].copy_from_slice(&13u32.to_le_bytes()); // current player
+        r[320 + 26] = 26; // Set Resources
+        r[320 + 27] = 7; // set to
+        r[2372 + 18] = 1;
+        let mut t = TriggerSystem::parse(&r, &[]);
+        // Player 0 in force 1 (index 0), player 1 in force 2.
+        t.forces = [0, 1, 0, 0, 0, 0, 0, 0];
+        t.present = [true, true, false, false, false, false, false, false];
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        assert_eq!(w.players[0].minerals, 777, "force 1 member runs it");
+        assert_ne!(w.players[1].minerals, 777, "force 2 does not");
+        // Before the fix only per-player (0..8) and All Players (17)
+        // triggers ran, so Force 1 campaign triggers never executed.
+    }
+
+    #[test]
+    fn triggers_first_run_at_elapsed_time_zero() {
+        // `terran04`: Elapsed Time at most 0 -> set objectives.
+        let mut r = record(12, 26, 0);
+        r[13] = 1; // at most
+        r[8..12].copy_from_slice(&0u32.to_le_bytes());
+        r[320 + 20..320 + 24].copy_from_slice(&5u32.to_le_bytes());
+        r[320 + 27] = 7;
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        assert_eq!(w.players[0].minerals, 5);
     }
 
     #[test]
