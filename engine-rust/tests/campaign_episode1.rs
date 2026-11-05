@@ -184,3 +184,124 @@ fn wasteland_ready_room_follows_the_retail_recording() {
         .contains("End of Briefing"));
     assert!(room.finished());
 }
+
+#[test]
+fn wasteland_rescue_conversation_follows_the_retail_timing() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Screencast_20261105_074011`: Raynor rescued at 15.7 s, his
+    // line at 18.1 s (under Pause Game, text gone at 22.1 s = 4.0 s), "NEW
+    // MISSION OBJECTIVE" at 24.1 s (line 3956 ms + Wait 2000 ms later).
+    let (sc, mut w, human) = mission(&install, 2);
+    let raynor = w
+        .units
+        .iter()
+        .position(|u| u.alive && u.type_id == 19)
+        .expect("Raynor placed");
+    let (x, y) = (w.units[raynor].x / 256, w.units[raynor].y / 256);
+    w.spawn_px(human, galaxycraft::ids::unit::MARINE, x + 40, y)
+        .expect("marine");
+    let (mut rescued, mut line, mut objective) = (None, None, None);
+    let mut seen = 0;
+    for tick in 0..24 * 20u64 {
+        w.step();
+        if rescued.is_none() && w.units[raynor].owner as usize == human {
+            rescued = Some(tick);
+        }
+        let t = w.triggers.as_ref().expect("triggers");
+        for c in &t.cues[seen..] {
+            if let TriggerCue::Text {
+                string, ms, paused, ..
+            } = *c
+            {
+                // The map pads its lines with spaces.
+                let text = sc.string(string).unwrap_or("").trim_start();
+                if text.starts_with("RAYNOR") {
+                    line = Some((tick, ms, paused));
+                } else if text.starts_with("NEW MISSION OBJECTIVE") {
+                    objective = Some(tick);
+                }
+            }
+        }
+        seen = t.cues.len();
+    }
+    let rescued = rescued.expect("rescued");
+    let (at, ms, paused) = line.expect("Raynor's line");
+    assert!(paused, "spoken under Pause Game");
+    assert_eq!(
+        galaxycraft::transmission::text_life_ms(ms, 3, paused),
+        3_956,
+        "4.0 s on screen"
+    );
+    let secs = |t: u64| t as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32;
+    assert!(
+        (1.0..=3.4).contains(&secs(at - rescued)),
+        "line {:.2} s after the rescue",
+        secs(at - rescued)
+    );
+    let gap = secs(objective.expect("objective text") - at);
+    assert!(
+        (gap - 6.0).abs() <= 0.2,
+        "objective {gap:.2} s after the line"
+    );
+}
+
+#[test]
+fn wasteland_victory_fires_within_one_trigger_cycle() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Screencast_20261105_074531`: "10 of 10 Marines" at 3.0 s, the
+    // victory dialog at 3.57 s (the next 30-tick trigger cycle).  The
+    // Force 1 trigger needs 10 Marines, a Barracks and Raynor.
+    let (_, mut w, human) = mission(&install, 2);
+    let raynor = w
+        .units
+        .iter()
+        .position(|u| u.alive && u.type_id == 19)
+        .expect("Raynor placed");
+    let (x, y) = (w.units[raynor].x / 256, w.units[raynor].y / 256);
+    w.spawn_px(human, galaxycraft::ids::unit::BARRACKS, x + 200, y + 200)
+        .expect("barracks");
+    let have = w
+        .units
+        .iter()
+        .filter(|u| {
+            u.alive && u.owner as usize == human && u.type_id == galaxycraft::ids::unit::MARINE
+        })
+        .count() as i32;
+    for i in 0..(9 - have).max(0) {
+        w.spawn_px(human, galaxycraft::ids::unit::MARINE, x + 40 + 20 * i, y)
+            .expect("marine");
+    }
+    if have == 0 {
+        // Something must be next to Raynor to rescue him.
+        w.spawn_px(human, galaxycraft::ids::unit::SCV, x + 40, y)
+            .expect("scv");
+    }
+    // Let the opening conversations (Barracks, rescue, SCV at 8 s) finish:
+    // a Wait or Transmission holds the player's other triggers, as in BW.
+    for _ in 0..24 * 30 {
+        w.step();
+    }
+    assert_eq!(w.winner, None, "nine Marines are not enough");
+    w.spawn_px(human, galaxycraft::ids::unit::MARINE, x + 40, y + 30)
+        .expect("tenth marine");
+    let tenth = w.tick;
+    let mut won = None;
+    for _ in 0..24 * 3 {
+        w.step();
+        if w.winner == Some(human as u8) {
+            won = Some(w.tick);
+            break;
+        }
+    }
+    let delay = won.expect("victory") - tenth;
+    assert!(
+        delay <= galaxycraft::trigger::TRIGGER_INTERVAL,
+        "victory {delay} ticks after the tenth Marine"
+    );
+}

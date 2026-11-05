@@ -62,6 +62,8 @@ pub enum TriggerCue {
         always: bool,
         /// Transmission length (0 for Display Text Message).
         ms: u32,
+        /// A trigger's Pause Game was in force when the text was shown.
+        paused: bool,
     },
     Wav {
         player: usize,
@@ -882,14 +884,18 @@ impl TriggerSystem {
     ) {
         let owner = self.select_owner(action.group, player);
         match action.kind {
+            // Victory / Defeat end the game for the player running the
+            // trigger; their `group` operand is unused (0 in the shipped
+            // maps, which made player 1 win Wasteland "for" player 0).
             1 => {
-                if let Some(o) = owner {
-                    world.players[o].defeated = false;
+                if let Some(p) = world.players.get_mut(player) {
+                    p.defeated = false;
                 }
-                world.winner = owner.map(|o| o as u8);
+                world.winner = Some(player as u8);
             }
             2 => {
-                if let Some(o) = owner {
+                if player < world.players.len() {
+                    let o = player;
                     world.players[o].defeated = true;
                     for u in &mut world.units {
                         if u.owner as usize == o {
@@ -1226,6 +1232,7 @@ impl TriggerSystem {
                     string: action.text_id,
                     always: action.flags & ALWAYS_DISPLAY != 0,
                     ms,
+                    paused: self.paused,
                 });
             }
             8 => {
@@ -1240,6 +1247,7 @@ impl TriggerSystem {
                     string: action.text_id,
                     always: action.flags & ALWAYS_DISPLAY != 0,
                     ms: 0,
+                    paused: self.paused,
                 });
             }
             10 => {
@@ -1453,7 +1461,8 @@ mod tests {
                     player: 0,
                     string: 5,
                     always: true,
-                    ms: 2000
+                    ms: 2000,
+                    paused: false
                 },
                 TriggerCue::Wav {
                     player: 0,
@@ -1463,7 +1472,8 @@ mod tests {
                     player: 0,
                     string: 8,
                     always: false,
-                    ms: 0
+                    ms: 0,
+                    paused: false
                 },
             ]
         );
@@ -1839,6 +1849,25 @@ mod tests {
         w.tick = 49;
         t.process(&mut w);
         assert_eq!(w.players[0].minerals, 777, "resumed at tick 1 + 48");
+    }
+
+    #[test]
+    fn victory_and_defeat_apply_to_the_player_running_the_trigger() {
+        // Always -> Victory, enabled for player 2 (index 1), group 0.
+        let mut t = TriggerSystem::parse(&record(22, 1, 1), &[]);
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        assert_eq!(
+            w.winner,
+            Some(1),
+            "the trigger's player wins, not player 1 (group 0)"
+        );
+        let mut t = TriggerSystem::parse(&record(22, 2, 1), &[]);
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        assert!(w.players[1].defeated && !w.players[0].defeated);
     }
 
     #[test]

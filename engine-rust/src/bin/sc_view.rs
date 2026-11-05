@@ -6416,7 +6416,11 @@ impl App {
         for cue in new {
             match cue {
                 TriggerCue::Text {
-                    string, always, ms, ..
+                    string,
+                    always,
+                    ms,
+                    paused,
+                    ..
                 } => {
                     if !(always || self.game_options.subtitles) {
                         continue;
@@ -6425,6 +6429,7 @@ impl App {
                         let life = galaxycraft::transmission::text_life_ms(
                             ms,
                             galaxycraft::transmission::text_lines(raw).len(),
+                            paused,
                         );
                         self.trigger_text.push(raw, now, life);
                         done.0 += galaxycraft::transmission::clean_lines(raw).len();
