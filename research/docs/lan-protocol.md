@@ -48,6 +48,46 @@ diagnostics.
 - In game, all orders go through `send_order`/`send_train`: if there is a
   LAN session they are queued for the next turn; otherwise they are applied locally.
 
+## 3b. Retail multiplayer flow (protocol 3, 2026-11-04)
+
+The Multiplayer entry now follows the retail client as recorded on
+2026-11-04 21:11:48 (session log 2026-11-04 (86)): Select Game Type ->
+Select Connection (Local Area Network; Battle.net stays listed but Ok is
+only enabled for LAN) -> Registry -> Games -> Create -> "Creating game..."
+-> lobby -> countdown -> game.  Screens: `src/bin/sc_view/mp.rs`; rules:
+`src/multiplayer.rs`.  The key-**L** screen above remains.
+
+- **Games** keeps a non-blocking discovery socket and lists announces with
+  `upsert_game` (a game heard by broadcast and on loopback is one row).
+  `Announce` (protocol 3) also carries the game type, map name, map size
+  and speed index the information plate shows.
+- **Create** binds the lobby on `LOBBY_PORT` (7777) and announces it.
+  Joins are polled every frame; a joiner sits in the first Open slot.
+- Protocol 3 messages: `Join { .., name }` (Registry name); host ->
+  client `LobbyState { you, lobby }` on join, on every change and once a
+  second (`multiplayer::Lobby::encode`, slots/teams/observers, names
+  capped at 32 bytes); client -> host `LobbyRace { race }`; `Chat` relayed
+  by the host; `Setup { .., setup }` carries the resolved
+  `multiplayer::GameSetup` (races by slot, occupants, teams), from which
+  each peer finds its slot (`slot_of_peer`).  The joiner reads with
+  `TcpTransport::try_recv` (peeks a whole frame, never blocks), so its UI
+  keeps running in the lobby.  A peer that leaves the lobby is dropped
+  from the queue and later peers move down one index (`JoinQueue::remove`,
+  `Lobby::remove_peer`).
+- Computer slots run inside `Lockstep::commit` (`ai::run_computers`,
+  before every tick, on every peer) and are re-run by `apply_resync`
+  (`replay::replay_to_with`), so they never cross the wire and a rejoin
+  rebuilds them.
+- Evidence: `tests/lan.rs::a_joiner_sits_in_the_lobby_and_starts_with_the_setup`,
+  `a_joiner_leaving_the_lobby_reopens_its_slot`,
+  `tests/multiplayer.rs::lobby_computers_run_identically_on_every_peer_and_after_a_resync`,
+  and the two-process run of `scripts/mp_flow_gate.py` (host and joiner end
+  on the same state hash with no desync), `engine-rust/docs/gates/mp-flow.txt`.
+- Deviation (FACT about this client): the retail Games footer reads "Using
+  UDP ports: 5353 and 6112."; this client shows its own ports (TCP 7777,
+  UDP 7778).  Protocol 3 does not talk to protocol 2 peers (the version is
+  checked on every message).
+
 ## 4. Reconnection after a drop
 
 Design: **no state is transferred, the log is transferred**.

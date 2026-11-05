@@ -106,6 +106,10 @@ pub struct Scenario {
     /// `MBRF` mission-briefing triggers (`TRIG` layout, briefing actions;
     /// see `crate::ready_room`).
     pub briefing_triggers: Vec<u8>,
+    /// `SPRP` scenario properties: string ids (1-based, 0 = none) of the
+    /// map's title and description, as the map browser shows them.
+    pub title_id: u16,
+    pub description_id: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -437,7 +441,13 @@ impl Scenario {
             }
         }
 
+        let sprp = sections.get("SPRP").filter(|b| b.len() >= 4);
+        let title_id = sprp.map(|b| u16_at(b, 0)).unwrap_or(0);
+        let description_id = sprp.map(|b| u16_at(b, 2)).unwrap_or(0);
+
         Ok(Self {
+            title_id,
+            description_id,
             width,
             height,
             era: sections
@@ -609,6 +619,18 @@ impl Scenario {
     pub fn string(&self, id: u32) -> Option<&str> {
         let index = (id as usize).checked_sub(1)?;
         self.strings.get(index).map(String::as_str)
+    }
+
+    /// Map title from `SPRP` (the map browser's name line).
+    pub fn title(&self) -> Option<&str> {
+        self.string(self.title_id as u32).filter(|s| !s.is_empty())
+    }
+
+    /// Map description from `SPRP` ("Eight-player cutthroat." for
+    /// (8)The Hunters in the retail browser).
+    pub fn description(&self) -> Option<&str> {
+        self.string(self.description_id as u32)
+            .filter(|s| !s.is_empty())
     }
 
     /// Mission copy authored in the `STR` section: string 0 is the name,
@@ -1176,6 +1198,15 @@ mod tests {
         assert_eq!(s.string(3), Some("staredit\\wav\\combeep0.wav"));
         assert_eq!(s.string(0), None);
         assert_eq!(s.string(4), None);
+        // SPRP names the title/description strings (here 2 and 1).
+        assert_eq!(s.title(), None, "no SPRP yet");
+        chk.extend_from_slice(b"SPRP");
+        chk.extend_from_slice(&4u32.to_le_bytes());
+        chk.extend_from_slice(&2u16.to_le_bytes());
+        chk.extend_from_slice(&1u16.to_le_bytes());
+        let s = Scenario::parse(&chk).unwrap();
+        assert_eq!(s.title(), Some("Jim Raynor: Move out!"));
+        assert_eq!(s.description(), Some("Name"));
     }
 
     #[test]

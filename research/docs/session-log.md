@@ -4913,3 +4913,92 @@ ready room 0-126 s, game from 127.25 s, victory dialog 1347.37 s, score
 `tests/campaign_episode1.rs` 12/12); clippy 0; fmt clean;
 `ui_visual_diff.py` 51/51; walkthrough PASS; ultrawide 31/31; menu
 timing 4/4; `progress.py --check` OK.
+## 2026-11-04 (86) — Retail multiplayer flow from a recording (LAN)
+
+Goal (user): "quiero que el multiplayer funcione exactamente así" — the
+retail screencast `Screencast_20261104_211148.webm` (3440x1440, 60 fps,
+60.5 s) plus the 8-player score screenshot `Screenshot_20261104_211404.png`.
+Work done in a separate worktree (branch `multiplayer-lan-flow`) because
+another session had uncommitted work in the main tree.  Numbered (86): the
+other session's (85) (Credits) was already in its working copy.
+
+**What the recording shows (FACT, 2560x1440 content px).**  Select Game
+Type -> Select Connection (Battle.net selected on entry, Ok grey until Local
+Area Network is picked; the lower plate swishes out and back when the row
+changes, 5.8-7.0 s) -> Registry -> Games ("Game Title:/Game Type:/Map
+Name:/Map Size:/Game Speed:" plate, "Create Game", footer "Using UDP ports:
+5353 and 6112.") -> Create (map browser scrolled to (8)The Hunters, Game
+Type "Top vs Bottom", Teams "4 vs 4" = the even split, Speed Fastest) ->
+"Creating game..." popup 22.3-22.9 s -> plates swish -> lobby (Home/Away
+Team headers 38 px at y 96/346, dropdowns 44 px, columns 470-871 /
+892-1093 / 1114-1315, observers at 846/898, host "Select Race" grey and Ok
+grey until a race is chosen) -> Ok -> "Starting in: N seconds" (plural even
+for 1 and 0; 52.20/53.20/54.23/55.20/56.20/57.23 s; Cancel greys at 3, the
+dropdowns at 2) -> plates out at +5.1 s, black, the game at 58.6 s.  Text
+faces fitted by glyph-width against the shipped TTFs: glue titles and
+buttons Eurostile Extended 48 px, list rows regular 48, SMALLTEXT regular
+35, CEF panel text regular 24 (values Extended 27), map title Extended 30.
+Score sheet: every row's total is the sum of its three columns; LinKa
+(Protoss, never mined) 200/400/50 = 650; bars fill value / column maximum
+(400 of 550 -> 0.73); `iscore.dds.grp` = 3 tab icons, Zerg/Terran/Protoss
+portraits (3-5), then per colour a 3-slice fill and a 3-slice outline.  The
+scene behind the sheet is `glue/pal<race><v|d>/backgnd.dds`.
+
+**Built.**  `src/multiplayer.rs` (connection rows, 13 game types,
+`team_splits`/`default_split`, `Lobby` with wire encoding, `GameSetup`,
+countdown timing, `score_table`), `src/bin/sc_view/mp.rs` (the screens,
+plates read straight from CASC through the install handle, a hit list
+registered while drawing, dropdowns, popup, countdown and launch swish,
+score screen), thin hooks in `sc_view.rs`.  World: `same_side`/`is_enemy`/
+`has_won` (team = alliance, as the "Set Alliance Status" trigger already
+wrote), team victory, per-player `vision_from` (shared vision incl.
+detection), `from_scenario_occupied` (Open/Closed slots get no start
+force), engine score credit per OpenBW (`credited` flag swept once a tick;
+Men -> unit score, Building -> building score; kill/razing destroy scores),
+`units_produced`/`structures_built`, all hashed.  `SaveFile` v2 carries the
+setup (v1 loads).  `ai::run_computers` is the single computer step used by
+the local loop and `Lockstep::commit`; `replay_to_with` re-runs computers on
+a resync.  LAN protocol 3 (`research/docs/lan-protocol.md` §3b).
+
+**Bugs found on the way (FACT, each with a failing-then-passing test).**
+1. Trigger Victory/Defeat used `action.group` (0 in melee maps), so an
+   empty slot's "commands at most 0 buildings -> Defeat" defeated player 0
+   at tick 29 and destroyed everything it owned, the neutral resources
+   included (they are bookkept under player 0).  Now they act on the
+   trigger's player, defeated players run no triggers, and count
+   conditions resolve Foes/Allies/All Players/Non Allied Victory Players.
+   `tests/multiplayer.rs::an_empty_slots_melee_defeat_trigger_does_not_defeat_player_0`
+   fails without the fix.
+2. `apply_hit_from` stored the attacker's *index* as `last_damage_source`,
+   which is resolved as a unit *id*: kills went to whichever unit had that
+   id (usually none).  `the_other_score_tabs_count_what_their_headers_say`
+   (killed 0, lost 1 before).
+3. Not fixed, recorded: harvesting is instant on arrival (no mining time,
+   no one-worker-per-patch), so income runs ~2.5x retail (SimpleAi: 1 448
+   minerals in 1 857 ticks on Boxer; the retail sheet shows ~376 per
+   computer after 01:18).  New open item in `PROGRESS.md`.  A first
+   "melee units never hit" suspicion was falsified: the Drone target flees,
+   a Marine control deals damage, identical on main.
+
+**INFERENCES (with falsifiers).**  The order of the Teams list (the capture
+shows only the value); Cancel walking back along the chain (only forward
+moves were recorded); `can_start` needs players on two sides (a lobby with
+no opponent would end on its first frame); colour picks shown read-only
+(not applied in game yet).  A retail recording of the Teams dropdown open,
+of Cancel from each screen and of a one-sided lobby would settle them.
+
+**Deviations (FACT about this client).**  Games footer shows this client's
+ports (TCP 7777, UDP 7778); no Battle.net availability lines in the lobby
+chat; the joiner does not see the host's countdown (it starts on `Setup`).
+
+**Evidence.**  `cargo test --release` 471 passed / 0 failed (with
+`SC_INSTALL`); clippy `-D warnings` clean; `cargo fmt --check` clean;
+`scripts/menu_walkthrough.py` PASS (158 steps; Multiplayer -> Original now
+opens Select Connection, the Lobby race checks moved to Single Player ->
+Play Custom); `scripts/mp_flow_gate.py` PASS
+(`engine-rust/docs/gates/mp-flow.txt`): the scripted path Main -> ... ->
+lobby -> countdown -> game (teams `[0,0,0,0,1,1,1,1]`, 2 computers, game
+running), two processes host + joiner ending on the same state hash with no
+desync, and every step within 2.0-3.6 grey levels (640x360 mean |diff|) of
+the recording; wrong-screen pairs score 8.6-19.9, bound 5.0; score sheet
+6.23 (another game's numbers), bound 8.0.

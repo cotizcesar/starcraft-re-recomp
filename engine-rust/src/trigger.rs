@@ -373,6 +373,12 @@ impl TriggerSystem {
             self.mission_objectives = vec![None; world.players.len()];
         }
         for player in 0..world.players.len() {
+            // A player who is out of the game (defeated, or an empty lobby
+            // slot) runs no triggers; otherwise an empty slot's melee
+            // "commands at most 0 buildings" would fire for it.
+            if world.players[player].defeated {
+                continue;
+            }
             if world.tick < self.state.wait_until[player] {
                 continue;
             }
@@ -682,17 +688,8 @@ impl TriggerSystem {
         }
     }
 
-    /// Owners a Command/Bring condition counts: one player, a force's
-    /// members, or `None` for any owner.
-    fn condition_owners(&self, group: u32, player: usize) -> Option<Vec<usize>> {
-        match group {
-            18..=21 => Some(self.force_members(group as usize - 18)),
-            _ => self.select_owner(group, player).map(|o| vec![o]),
-        }
-    }
-
     fn command_count(&self, world: &World, player: usize, c: &TriggerCondition) -> i32 {
-        let owners = self.condition_owners(c.group, player);
+        let owners = self.condition_owners(world, c.group, player);
         world
             .units
             .iter()
@@ -706,8 +703,31 @@ impl TriggerSystem {
             .count() as i32
     }
 
+    /// Players a count condition's group selects (`None` = any owner):
+    /// 0..11 a player, 13 the current player, 14 Foes and 26 Non Allied
+    /// Victory Players (its enemies still in the game), 15 Allies (allied
+    /// players other than itself), 17 All Players, 18..21 the members of
+    /// Force 1..4 in the game.
+    fn condition_owners(&self, world: &World, group: u32, current: usize) -> Option<Vec<usize>> {
+        let n = world.players.len();
+        let cur = current as u8;
+        Some(match group {
+            0..=11 => vec![group as usize],
+            18..=21 => self.force_members(group as usize - 18),
+            13 => vec![current],
+            14 | 26 => (0..n)
+                .filter(|&p| world.is_enemy(cur, p as u8) && !world.players[p].defeated)
+                .collect(),
+            15 => (0..n)
+                .filter(|&p| p != current && world.same_side(cur, p as u8))
+                .collect(),
+            17 => (0..n).collect(),
+            _ => return None,
+        })
+    }
+
     fn bring_count(&self, world: &World, player: usize, c: &TriggerCondition) -> i32 {
-        let owners = self.condition_owners(c.group, player);
+        let owners = self.condition_owners(world, c.group, player);
         let loc = c.location as usize;
         world
             .units
@@ -893,24 +913,20 @@ impl TriggerSystem {
     ) {
         let owner = self.select_owner(action.group, player);
         match action.kind {
-            // Victory / Defeat end the game for the player running the
-            // trigger; their `group` operand is unused (0 in the shipped
-            // maps, which made player 1 win Wasteland "for" player 0).
+            // Victory and Defeat take no player argument: they end the game
+            // for the player running the trigger (CHK `TRIG` spec).  Reading
+            // `action.group` (0 in melee maps) defeated player 0 whenever any
+            // other player's Defeat trigger fired.
             1 => {
-                if let Some(p) = world.players.get_mut(player) {
-                    p.defeated = false;
-                }
+                world.players[player].defeated = false;
                 world.winner = Some(player as u8);
             }
             2 => {
-                if player < world.players.len() {
-                    let o = player;
-                    world.players[o].defeated = true;
-                    for u in &mut world.units {
-                        if u.owner as usize == o {
-                            u.alive = false;
-                            u.order = Order::Die;
-                        }
+                world.players[player].defeated = true;
+                for u in &mut world.units {
+                    if u.owner as usize == player && !crate::sim::is_resource_type(u.type_id) {
+                        u.alive = false;
+                        u.order = Order::Die;
                     }
                 }
             }
@@ -1940,6 +1956,23 @@ mod tests {
         assert!(!t.condition_holds(&w, 0, &c));
         w.tick = 160;
         assert!(t.condition_holds(&w, 0, &c), "160 ticks = 10 game seconds");
+    }
+
+    #[test]
+    fn set_alliance_status_stops_two_players_fighting() {
+        // Player 1 (index 0) allies with player 2 (index 1): action 57,
+        // group 13 (current player), group2 = player 2, extra 1 (ally).
+        let mut r = record(22, 57, 0);
+        r[320 + 16..320 + 20].copy_from_slice(&13u32.to_le_bytes());
+        r[320 + 20..320 + 24].copy_from_slice(&1u32.to_le_bytes());
+        r[320 + 24..320 + 26].copy_from_slice(&1u16.to_le_bytes());
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        w.players[1].team = 1;
+        assert!(w.hostile(0, 1), "enemies before the trigger");
+        w.tick = 1;
+        t.process(&mut w);
+        assert!(!w.hostile(0, 1) && !w.hostile(1, 0), "allied after it");
     }
 
     #[test]

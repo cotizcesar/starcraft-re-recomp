@@ -38,13 +38,15 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "engine-rust/target/release/sc_view"
 REF_DIR = ROOT / "engine-rust/docs/original_screenshots"
 
-# Main -> Multiplayer -> GameType -> LAN (two peers: select + join) -> Lobby
-# (race dropdowns) -> Main -> Options (five tabs, sliders, checks, Restore,
+# Main -> Multiplayer -> GameType -> LAN (two peers: select + join) ->
+# GameType -> Select Connection (LAN row) -> Main -> Options (five tabs, sliders, checks, Restore,
 # Ok) -> Main -> Collections (cells, Ok) -> Main -> Credits -> Main -> Hotkeys
 # (unit/action selection, rebind, restore dialog, race tabs) -> Main -> Single
 # Player -> GameType -> Registry -> Episode (locked-campaign prompt) ->
 # Mission (scroll/wheel/keys) -> Episode -> Saved -> Episode -> Replays ->
-# Episode -> Registry -> Main.
+# Episode -> Registry -> Main -> Single Player -> Registry -> Episode -> Play
+# Custom -> Lobby (race dropdowns) -> Main.  The multiplayer flow past Select
+# Connection has its own gate (scripts/mp_flow_gate.py).
 SCRIPT = ",".join(
     [
         "move:700:700", "click",            # Multiplayer
@@ -54,11 +56,9 @@ SCRIPT = ",".join(
         "move:1000:763", "click",           # select Peer2
         "move:1000:763", "click",           # join it (connection refused)
         "key:Escape",                       # back to Game Type
-        "move:1103:618", "click",           # Original
-        "move:1000:1028", "click",          # Lobby: open slot 1 race list
-        "move:1122:1039", "click",          # hover Zerg, pick it
-        "move:1000:980", "click",           # open slot 0 race list
-        "move:1122:1046", "click",          # pick Terran
+        "move:1103:618", "click",           # Original -> Select Connection
+        "wait-draw:900",                    # plates swish in
+        "move:620:361", "click",            # Local Area Network row
         "move:1964:1288", "click",          # Cancel -> Main
         "move:558:1042", "click",           # Options
         "move:1100:391", "click",           # game speed
@@ -129,6 +129,15 @@ SCRIPT = ",".join(
         "move:1964:1288", "click",          # Cancel -> Episode
         "move:1967:1242", "click",          # Cancel -> Registry (live client)
         "move:1869:1316", "click",          # Registry Cancel -> Main
+        "move:700:300", "click",            # Single Player
+        "move:1103:618", "click",           # Game Type: Original
+        "move:1869:1178", "click",          # Registry Ok -> Episode
+        "move:1307:1242", "click",          # Play Custom -> Lobby
+        "move:1000:1028", "click",          # Lobby: open slot 1 race list
+        "move:1122:1039", "click",          # hover Zerg, pick it
+        "move:1000:980", "click",           # open slot 0 race list
+        "move:1122:1046", "click",          # pick Terran
+        "move:1964:1288", "click",          # Cancel -> Main
     ]
 )
 
@@ -149,10 +158,10 @@ SCREEN_SHOTS = {
 }
 
 EXPECTED_TRANSITIONS = [
-    "GameType", "Lan", "GameType", "Lobby", "Main", "Options", "Main", "Collections", "Main",
-    "Credits", "Main", "Hotkeys", "Main", "GameType", "Registry", "Episode",
+    "GameType", "Lan", "GameType", "Connection", "Main", "Options", "Main", "Collections",
+    "Main", "Credits", "Main", "Hotkeys", "Main", "GameType", "Registry", "Episode",
     "Mission", "Episode", "SavedGames", "Episode", "Replays", "Episode",
-    "Registry", "Main",
+    "Registry", "Main", "GameType", "Registry", "Episode", "Lobby", "Main",
 ]
 
 CUE_PATHS = {

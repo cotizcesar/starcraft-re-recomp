@@ -497,10 +497,15 @@ pub struct SaveFile {
     pub local_player: usize,
     pub tick: u64,
     pub rec: Recording,
+    /// Lobby game setup (slot occupants, teams); `None` for single-player
+    /// and version-1 files.  Version 2 appends it to the payload.
+    pub setup: Option<crate::multiplayer::GameSetup>,
 }
 
 const SAVE_MAGIC: u32 = 0x4743_5356; // "GCSF"
-const SAVE_VERSION: u16 = 1;
+const SAVE_VERSION: u16 = 2;
+/// Largest encoded [`crate::multiplayer::GameSetup`] (12 slots x 4 + 2).
+const MAX_SETUP_BYTES: usize = 64;
 
 fn encode_str(out: &mut Vec<u8>, s: &str) {
     let b = s.as_bytes();
@@ -553,6 +558,9 @@ impl SaveFile {
         let rec_bytes = encode_recording(&self.rec);
         w_u32(&mut payload, rec_bytes.len() as u32);
         payload.extend_from_slice(&rec_bytes);
+        let setup = self.setup.as_ref().map(|s| s.encode()).unwrap_or_default();
+        w_u32(&mut payload, setup.len().min(MAX_SETUP_BYTES) as u32);
+        payload.extend_from_slice(&setup[..setup.len().min(MAX_SETUP_BYTES)]);
         let digest = Sha256::digest(&payload);
         let mut out = Vec::with_capacity(4 + 2 + payload.len() + 32);
         out.extend_from_slice(&SAVE_MAGIC.to_le_bytes());
@@ -570,7 +578,8 @@ impl SaveFile {
         if u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != SAVE_MAGIC {
             return None;
         }
-        if u16::from_le_bytes([bytes[4], bytes[5]]) != SAVE_VERSION {
+        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        if version != 1 && version != SAVE_VERSION {
             return None;
         }
         let payload = &bytes[6..bytes.len() - 32];
@@ -590,6 +599,20 @@ impl SaveFile {
         let rec_len = c.u32()? as usize;
         let rec_bytes = c.take(rec_len)?;
         let rec = decode_recording_from(rec_bytes)?;
+        let setup = if version >= 2 {
+            let n = c.u32()? as usize;
+            if n > MAX_SETUP_BYTES {
+                return None;
+            }
+            let bytes = c.take(n)?;
+            if n == 0 {
+                None
+            } else {
+                Some(crate::multiplayer::GameSetup::decode(bytes)?)
+            }
+        } else {
+            None
+        };
         if c.o != payload.len() {
             return None;
         }
@@ -603,6 +626,7 @@ impl SaveFile {
             local_player,
             tick,
             rec,
+            setup,
         })
     }
 }
@@ -703,6 +727,7 @@ fn hash_unit(h: &mut DefaultHasher, u: &SimUnit) {
     u.facing.hash(h);
     u.alive.hash(h);
     u.completed.hash(h);
+    u.credited.hash(h);
     u.cooldown.hash(h);
     hash_order(h, &u.order);
     h.write_usize(u.queue.len());
@@ -762,13 +787,19 @@ pub fn state_hash(w: &World) -> u64 {
         p.minerals_gathered.hash(&mut h);
         (
             p.units_produced,
-            p.buildings_built,
+            p.structures_built,
             p.units_lost,
             p.buildings_lost,
         )
             .hash(&mut h);
-        (p.minerals_spent, p.gas_spent, p.scores).hash(&mut h);
+        (p.minerals_spent, p.gas_spent).hash(&mut h);
         p.gas_gathered.hash(&mut h);
+        p.scores.hash(&mut h);
+        p.start_minerals.hash(&mut h);
+        p.start_gas.hash(&mut h);
+        p.vision_from.hash(&mut h);
+        p.units_produced.hash(&mut h);
+        p.structures_built.hash(&mut h);
     }
     h.write_usize(w.units.len());
     for u in &w.units {
@@ -804,12 +835,25 @@ pub fn state_hash(w: &World) -> u64 {
 /// is exact because the sim is deterministic and the log captures every
 /// external mutation in order.
 pub fn replay_to(world: &mut World, rec: &Recording, upto_tick: u64) {
+    replay_to_with(world, rec, upto_tick, |_| {});
+}
+
+/// [`replay_to`] that calls `before_step` after a tick's commands and before
+/// the tick is simulated: the place [`crate::net::Lockstep::commit`] runs
+/// the lobby's computer players, so a LAN resync rebuilds them identically.
+pub fn replay_to_with(
+    world: &mut World,
+    rec: &Recording,
+    upto_tick: u64,
+    mut before_step: impl FnMut(&mut World),
+) {
     let mut i = 0;
     while world.tick < upto_tick {
         while i < rec.cmds.len() && rec.cmds[i].tick == world.tick {
             apply_act(world, &rec.cmds[i].act);
             i += 1;
         }
+        before_step(world);
         world.step();
     }
     // Commands stamped exactly at the final tick apply without a step.

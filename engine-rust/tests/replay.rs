@@ -138,6 +138,7 @@ fn savefile_roundtrip_with_embedded_map() {
             map_hash: [7u8; 32],
             cmds: w.recorder.as_ref().unwrap().cmds.clone(),
         },
+        setup: None,
     };
     let path = std::env::temp_dir().join("galaxycraft_save_test.gcsave");
     save.save(&path).expect("save");
@@ -220,6 +221,7 @@ fn boxer_with_ai_save_reload_replays_identically() {
             map_hash: [0u8; 32],
             cmds: w.recorder.as_ref().unwrap().cmds.clone(),
         },
+        setup: None,
     };
     let path = std::env::temp_dir().join("galaxycraft_boxer_test.gcsave");
     save.save(&path).expect("save");
@@ -242,4 +244,75 @@ fn boxer_with_ai_save_reload_replays_identically() {
         h1,
         "AI-driven Boxer run must replay identically"
     );
+}
+
+#[test]
+fn saves_carry_the_lobby_setup_and_still_read_version_1() {
+    use galaxycraft::multiplayer::{GameSetup, GameType, SetupOccupant, SetupSlot};
+    use galaxycraft::sim::Race;
+    use sha2::{Digest, Sha256};
+    let setup = GameSetup {
+        game_type: GameType::TopVsBottom,
+        slots: vec![
+            SetupSlot {
+                occupant: SetupOccupant::Human { peer: 0 },
+                race: Race::Protoss,
+                team: 0,
+            },
+            SetupSlot {
+                occupant: SetupOccupant::Computer,
+                race: Race::Zerg,
+                team: 1,
+            },
+        ],
+    };
+    let save = SaveFile {
+        map_name: "The Hunters".into(),
+        map_chk: vec![1, 2, 3],
+        races: vec![Race::Protoss, Race::Zerg],
+        local_player: 0,
+        tick: 7,
+        rec: Recording {
+            seed: 1,
+            map_hash: [0; 32],
+            cmds: Vec::new(),
+        },
+        setup: Some(setup.clone()),
+    };
+    let dir = std::env::temp_dir().join(format!("gc-setup-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("v2.gcsave");
+    save.save(&path).unwrap();
+    assert_eq!(SaveFile::load(&path).expect("v2 loads").setup, Some(setup));
+
+    // A version-1 file (no setup block) still loads, with no setup.
+    let v1 = SaveFile {
+        setup: None,
+        ..save.clone()
+    };
+    v1.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let payload = &bytes[6..bytes.len() - 32];
+    let old_payload = &payload[..payload.len() - 4]; // drop the empty setup length
+    let mut old = Vec::new();
+    old.extend_from_slice(&bytes[..4]);
+    old.extend_from_slice(&1u16.to_le_bytes());
+    old.extend_from_slice(old_payload);
+    old.extend_from_slice(&Sha256::digest(old_payload));
+    std::fs::write(&path, &old).unwrap();
+    let loaded = SaveFile::load(&path).expect("v1 loads");
+    assert_eq!(loaded.setup, None);
+    assert_eq!(loaded.tick, 7);
+
+    // A corrupt setup block is rejected (bad race tag, checksum fixed up).
+    save.save(&path).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    let n = bytes.len();
+    let race_at = n - 32 - 4 + 2; // second slot's race byte
+    bytes[race_at] = 9;
+    let digest = Sha256::digest(&bytes[6..n - 32]);
+    bytes[n - 32..].copy_from_slice(&digest);
+    std::fs::write(&path, &bytes).unwrap();
+    assert!(SaveFile::load(&path).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
 }

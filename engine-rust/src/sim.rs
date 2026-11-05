@@ -350,6 +350,10 @@ pub struct Status {
     pub revealed_ticks: i32,
 }
 
+/// `units.dat` group flags (OpenBW `GroupFlags`): Men and Building.
+pub const GROUP_MEN: u8 = 0x08;
+pub const GROUP_BUILDING: u8 = 0x10;
+
 #[derive(Clone, Debug)]
 pub struct SimUnit {
     pub id: u32,
@@ -367,6 +371,10 @@ pub struct SimUnit {
     pub alive: bool,
     /// False while a building is under construction.
     pub completed: bool,
+    /// The unit's current completion has been credited to its owner's
+    /// score (`World::credit_scores`); cleared when a morph or construction
+    /// starts so the finished form is credited again.
+    pub credited: bool,
     /// True while a Terran building is lifted off the ground (`orders.dat`
     /// rows 69-73).  Lifted buildings move as air units and cannot produce.
     pub lifted: bool,
@@ -512,16 +520,24 @@ pub struct Player {
     /// units, buildings, units+buildings, kills, razings, kills+razings,
     /// custom.  Units/buildings accumulate the `units.dat` build score of
     /// what the player produces, kills/razings the destroy score of what
-    /// it kills (see `credit_completion` / `kill_unit`).
+    /// it kills (see `credit_scores` / `kill_unit`).
     pub scores: [i32; 8],
-    /// Score-screen tallies: units produced, structures constructed, units
-    /// and structures lost, resources spent.
-    pub units_produced: u32,
-    pub buildings_built: u32,
+    /// Score-screen tallies: units and structures lost, resources spent.
     pub units_lost: u32,
     pub buildings_lost: u32,
     pub minerals_spent: i32,
     pub gas_spent: i32,
+    /// Resources the player started with; the score screen's Resources
+    /// column counts them as gathered (BWAPI `gatheredMinerals`).
+    pub start_minerals: i32,
+    pub start_gas: i32,
+    /// Players whose vision this player receives (bit per player; its own
+    /// bit is always implied).  Team games share vision among allies.
+    pub vision_from: u16,
+    /// Units and structures completed (starting ones included), the score
+    /// screen's Produced / Constructed counts; credited with the score.
+    pub units_produced: u32,
+    pub structures_built: u32,
 }
 
 impl Player {
@@ -544,12 +560,15 @@ impl Player {
             death_counts: [0; 228],
             kill_counts: [0; 228],
             scores: [0; 8],
-            units_produced: 0,
-            buildings_built: 0,
             units_lost: 0,
             buildings_lost: 0,
             minerals_spent: 0,
             gas_spent: 0,
+            start_minerals: minerals,
+            start_gas: gas,
+            vision_from: 0,
+            units_produced: 0,
+            structures_built: 0,
         }
     }
 
@@ -693,6 +712,19 @@ impl World {
         scenario: &Scenario,
         tiles: &crate::map::TileData,
         races: &[Race],
+    ) -> Self {
+        Self::from_scenario_occupied(data, scenario, tiles, races, None)
+    }
+
+    /// [`Self::from_scenario`] for a lobby game: `occupied[p]` false (an
+    /// Open or Closed slot) gets no melee starting force and is defeated
+    /// from the first tick, as retail leaves empty start locations empty.
+    pub fn from_scenario_occupied(
+        data: Arc<GameData>,
+        scenario: &Scenario,
+        tiles: &crate::map::TileData,
+        races: &[Race],
+        occupied: Option<&[bool]>,
     ) -> Self {
         let terrain = Terrain::from_scenario(scenario, tiles);
         let mut world = Self::new(data, terrain, races.len());
@@ -847,6 +879,10 @@ impl World {
             if has_placed_force {
                 break;
             }
+            if occupied.is_some_and(|o| !o.get(p).copied().unwrap_or(false)) {
+                world.players[p].defeated = true;
+                continue;
+            }
             let race = world.players[p].race;
             let start = scenario
                 .start_location_of(p as u8)
@@ -989,6 +1025,7 @@ impl World {
             facing: 0,
             alive: true,
             completed: true,
+            credited: false,
             lifted: false,
             addon_attached: false,
             build_remaining: 0,
@@ -1074,6 +1111,7 @@ impl World {
             facing: 0,
             alive: true,
             completed: true,
+            credited: false,
             lifted: false,
             addon_attached: false,
             build_remaining: 0,
@@ -1571,6 +1609,7 @@ impl World {
         self.units[i].type_id = uid::EGG;
         self.units[i].morph_to = Some(unit_type);
         self.units[i].completed = false;
+        self.units[i].credited = false;
         self.units[i].build_total = build_ticks(ty.build_time);
         self.units[i].build_remaining = self.units[i].build_total;
         self.units[i].hp = fp(1);
@@ -1750,6 +1789,7 @@ impl World {
         }
         let idx = self.spawn_px(owner as usize, addon_type, px / fp(1), py / fp(1))?;
         self.units[idx].completed = false;
+        self.units[idx].credited = false;
         self.units[idx].build_total = build_ticks(ty.build_time);
         self.units[idx].build_remaining = self.units[idx].build_total;
         self.units[idx].hp = (ty.hit_points_raw as i32 / 10).max(1);
@@ -1794,6 +1834,7 @@ impl World {
         self.units[i].type_id = uid::EGG;
         self.units[i].morph_to = Some(target_type);
         self.units[i].completed = false;
+        self.units[i].credited = false;
         self.units[i].build_total = build_ticks(ty.build_time).max(1);
         self.units[i].build_remaining = self.units[i].build_total;
         self.units[i].hp = fp(1);
@@ -1973,6 +2014,7 @@ impl World {
         let new_max = ty.hit_points_raw.max(1) as i64;
         self.units[i].type_id = target_type;
         self.units[i].completed = false;
+        self.units[i].credited = false;
         self.units[i].build_total = build_ticks(ty.build_time);
         self.units[i].build_remaining = self.units[i].build_total;
         // Preserve the current health fraction across the morph.
@@ -2486,6 +2528,7 @@ impl World {
         if (self.tick - 1).is_multiple_of(RESCUE_INTERVAL) {
             self.update_rescues();
         }
+        self.credit_scores();
         self.check_victory();
         if self.triggers.is_some() {
             let mut triggers = self.triggers.take();
@@ -2587,26 +2630,6 @@ impl World {
         }
     }
 
-    /// A unit or structure the player made is finished: count it and add
-    /// its `units.dat` build score (pre-placed and temporary units never
-    /// pass here).
-    fn credit_completion(&mut self, i: usize) {
-        let (owner, type_id) = (self.units[i].owner as usize, self.units[i].type_id);
-        if owner >= self.players.len() || is_resource_type(type_id) {
-            return;
-        }
-        let ty = self.data.unit(type_id);
-        let (building, score) = (ty.is_building(), ty.build_score as i32);
-        let p = &mut self.players[owner];
-        if building {
-            p.buildings_built += 1;
-            p.scores[2] += score;
-        } else {
-            p.units_produced += 1;
-            p.scores[1] += score;
-        }
-    }
-
     fn update_construction(&mut self, i: usize) {
         if self.units[i].completed {
             return;
@@ -2618,7 +2641,6 @@ impl World {
                 if let Some(target) = self.units[i].morph_to.take() {
                     self.units[i].type_id = target;
                 }
-                self.credit_completion(i);
                 let ty = self.data.unit(self.units[i].type_id).clone();
                 self.units[i].hp = ty.hit_points_raw as i32;
                 if ty.has_shields {
@@ -2675,11 +2697,9 @@ impl World {
                     unit_type,
                     spawn_pos.0 / fp(1),
                     spawn_pos.1 / fp(1),
-                ) {
-                    self.credit_completion(new_idx);
-                    if let Some(rally) = rally {
-                        self.units[new_idx].order = Order::Move { pos: rally };
-                    }
+                ) && let Some(rally) = rally
+                {
+                    self.units[new_idx].order = Order::Move { pos: rally };
                 }
                 self.units[i].order = Order::Idle;
                 self.start_next_production(i);
@@ -2999,12 +3019,12 @@ impl World {
         }
     }
 
-    /// Whether units of `a` and `b` fight.  There are no alliances yet, so
-    /// any two owners are enemies except a rescuable player, whose units
+    /// Whether units of `a` and `b` fight: enemies ([`World::is_enemy`],
+    /// allies never) and neither side a rescuable player, whose units
     /// nobody targets (they wait to be rescued).
     pub fn hostile(&self, a: u8, b: u8) -> bool {
         let rescuable = |p: u8| self.players.get(p as usize).is_some_and(|p| p.rescuable);
-        a != b && !rescuable(a) && !rescuable(b)
+        self.is_enemy(a, b) && !rescuable(a) && !rescuable(b)
     }
 
     /// `Rescue Passive` (order 160): every [`RESCUE_INTERVAL`] ticks a unit
@@ -3462,7 +3482,10 @@ impl World {
     fn find_bounce_target(&self, b: &Projectile, current: u32) -> Option<u32> {
         let mut best: Option<(i32, u32)> = None;
         for u in &self.units {
-            if !u.alive || u.owner == b.owner || u.id == current || Some(u.id) == b.previous_target
+            if !u.alive
+                || !self.is_enemy(b.owner, u.owner)
+                || u.id == current
+                || Some(u.id) == b.previous_target
             {
                 continue;
             }
@@ -3672,7 +3695,7 @@ impl World {
             if air_only && !self.is_air_unit(j) {
                 continue;
             }
-            if enemy_only && self.units[j].owner == owner {
+            if enemy_only && !self.is_enemy(owner, self.units[j].owner) {
                 continue;
             }
             let dx = (self.units[j].x - impact.0) as i64;
@@ -3771,7 +3794,12 @@ impl World {
                 (self.units[target].shields - result.damage.shield_damage).max(0);
         }
         if result.damage.hp_damage > 0 {
-            self.damage_hp(target, result.damage.hp_damage, _source as u32);
+            // `_source` is the attacker's index (`usize::MAX` once it died);
+            // `last_damage_source` stores unit ids, which is what
+            // `kill_unit` resolves to credit the kill.  Passing the index
+            // credited kills to whichever unit had that id.
+            let source_id = self.units.get(_source).map(|u| u.id).unwrap_or(0);
+            self.damage_hp(target, result.damage.hp_damage, source_id);
         }
     }
 
@@ -3870,12 +3898,17 @@ impl World {
             if (type_id as usize) < self.players[killer].kill_counts.len() {
                 self.players[killer].kill_counts[type_id as usize] += 1;
             }
-            let destroy = self.data.unit(type_id).destroy_score as i32;
             if building {
                 self.players[killer].razings += 1;
-                self.players[killer].scores[5] += destroy;
-            } else {
+            }
+            // Kill score (Men) and razing score (Building): the victim's
+            // `units.dat` destroy score.
+            let ty = self.data.unit(type_id);
+            let destroy = ty.destroy_score as i32;
+            if ty.group_flags & GROUP_MEN != 0 {
                 self.players[killer].scores[4] += destroy;
+            } else if ty.group_flags & GROUP_BUILDING != 0 {
+                self.players[killer].scores[5] += destroy;
             }
         }
         // Loaded units die with their transport/bunker (retail behaviour);
@@ -3915,8 +3948,98 @@ impl World {
                     })
             })
             .collect();
-        if alive_players.len() <= 1 {
+        // The game ends when everyone still standing is on one side (a lone
+        // survivor, or one team in a team game); `winner` names the side's
+        // first player and `has_won` answers for the whole side.
+        let one_side = alive_players
+            .iter()
+            .all(|&p| alive_players.first().is_none_or(|&f| self.same_side(p, f)));
+        if one_side {
             self.winner = alive_players.first().copied();
+        }
+    }
+
+    /// Whether players `a` and `b` are on the same side: the same player,
+    /// or allied (equal `team`, which the lobby and the "Set Alliance
+    /// Status" trigger both write).
+    pub fn same_side(&self, a: u8, b: u8) -> bool {
+        a == b
+            || matches!(
+                (self.players.get(a as usize), self.players.get(b as usize)),
+                (Some(pa), Some(pb)) if pa.team == pb.team
+            )
+    }
+
+    /// Retail `unit_target_is_enemy`: neither the same player nor an ally.
+    pub fn is_enemy(&self, a: u8, b: u8) -> bool {
+        !self.same_side(a, b)
+    }
+
+    /// Town hall an AI of `player` attacks: `prefer`'s (the local player in
+    /// the client, as before teams existed) when `prefer` is an enemy, else
+    /// the first enemy player's by player order.  Allies are never chosen.
+    pub fn enemy_town_hall(&self, player: u8, prefer: u8) -> Option<(i32, i32)> {
+        let hall = |p: u8| {
+            self.units
+                .iter()
+                .find(|u| {
+                    u.alive
+                        && u.owner == p
+                        && matches!(
+                            u.type_id,
+                            uid::COMMAND_CENTER
+                                | uid::NEXUS
+                                | uid::HATCHERY
+                                | uid::LAIR
+                                | uid::HIVE
+                        )
+                })
+                .map(|u| (u.x / 256, u.y / 256))
+        };
+        if self.is_enemy(player, prefer)
+            && let Some(at) = hall(prefer)
+        {
+            return Some(at);
+        }
+        (0..self.players.len() as u8)
+            .filter(|&p| self.is_enemy(player, p) && !self.players[p as usize].defeated)
+            .find_map(hall)
+    }
+
+    /// Whether `p` won: the game has a winner and `p` is on its side.
+    pub fn has_won(&self, p: u8) -> bool {
+        self.winner.is_some_and(|w| self.same_side(w, p))
+    }
+
+    /// Engine score bookkeeping (OpenBW `add_completed_unit` and the kill
+    /// path): the first tick a unit is complete, its `units.dat` build score
+    /// goes to its owner's unit score (Men) or building score (Building).
+    /// Starting and pre-placed units count, which is why a fresh Protoss
+    /// melee start already shows Units 200 / Structures 400 (retail score
+    /// screen, 2026-11-04 21:14:04).  Hallucinations do not (OpenBW also
+    /// skips turret subunits, which this engine does not create as units).
+    pub fn credit_scores(&mut self) {
+        for i in 0..self.units.len() {
+            let u = &self.units[i];
+            if !u.alive || !u.completed || u.credited {
+                continue;
+            }
+            let owner = u.owner as usize;
+            let resource = is_resource_type(u.type_id);
+            let hallucination = u.status.hallucination;
+            self.units[i].credited = true;
+            if resource || hallucination || owner >= self.players.len() {
+                continue;
+            }
+            let ty = self.data.unit(self.units[i].type_id);
+            let score = ty.build_score as i32;
+            if ty.group_flags & GROUP_MEN != 0 {
+                self.players[owner].scores[1] += score;
+                self.players[owner].units_produced += 1;
+            } else if ty.group_flags & GROUP_BUILDING != 0 {
+                self.players[owner].scores[2] += score;
+                self.players[owner].structures_built += 1;
+            }
         }
     }
 
@@ -4582,6 +4705,7 @@ impl World {
             return;
         };
         self.units[bidx].completed = false;
+        self.units[bidx].credited = false;
         self.units[bidx].build_total = build_ticks(ty.build_time);
         self.units[bidx].build_remaining = self.units[bidx].build_total;
         self.units[bidx].hp = (ty.hit_points_raw as i32 / 10).max(1);
@@ -5166,7 +5290,7 @@ impl World {
                 if let Some((tx, ty)) = point {
                     for j in 0..self.units.len() {
                         if self.units[j].alive
-                            && self.units[j].owner != c_owner
+                            && self.is_enemy(c_owner, self.units[j].owner)
                             && self.distance_to_point(j, (tx, ty)) <= fp(96)
                         {
                             self.units[j].status.revealed_ticks = 400;
@@ -5540,7 +5664,7 @@ impl World {
             for j in 0..self.units.len() {
                 let ty = self.data.unit(self.units[j].type_id);
                 if !self.units[j].alive
-                    || self.units[j].owner != owner
+                    || self.is_enemy(owner, self.units[j].owner)
                     || !ty.is_organic()
                     || ty.is_building()
                     || self.units[j].hp >= ty.hit_points_raw as i32
@@ -5917,7 +6041,9 @@ mod tests {
             p.minerals_spent - before.minerals_spent,
             scv.mineral_cost as i32
         );
-        assert_eq!(p.buildings_built, 0, "the placed CC is not counted");
+        // Placed and starting units count too (OpenBW `add_completed_unit`;
+        // a fresh retail melee start shows Structures 400).
+        assert_eq!(p.structures_built, 1, "the placed CC counts");
         // A kill credits the destroy score and the loss to the victim.
         let enemy = w.spawn(1, uid::MARINE, 1500, 1500).unwrap();
         let marine_destroy = w.data.unit(uid::MARINE).destroy_score as i32;

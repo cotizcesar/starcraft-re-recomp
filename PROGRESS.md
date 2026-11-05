@@ -15,17 +15,17 @@ restating status.
 <!-- progress:summary:start -->
 | Area | Weight | Done | Total | Progress |
 |---|---:|---:|---:|---:|
-| [Simulation rules](#simulation-rules) | 25 | 14 | 16 | 88 % |
+| [Simulation rules](#simulation-rules) | 25 | 15 | 16 | 94 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
-| [Front end (menus)](#front-end-menus) | 10 | 6 | 7 | 86 % |
+| [Front end (menus)](#front-end-menus) | 10 | 7 | 8 | 88 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
 | [In-game client](#in-game-client) | 10 | 6 | 8 | 75 % |
 | [Persistence](#persistence) | 5 | 4 | 5 | 80 % |
-| [LAN multiplayer](#lan-multiplayer) | 10 | 3 | 6 | 50 % |
+| [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **60** | **78** | **76 %** |
+| **Overall (weighted)** | **100** | **65** | **82** | **80 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -52,8 +52,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Trigger VM: conditions 0–23, actions 1–59, `UPRP`; force triggers, tick-1 pass, pixel locations, wait-blocking, Victory/Defeat owner checked against retail — `src/trigger.rs` tests, `tests/campaign_episode1.rs`
 - [x] Campaign AI (`aiscript.bin` 293 / `bwscript.bin` 156 scripts) and skirmish AI — `src/aiscript.rs`, `src/ai.rs`, `tests/replay.rs`
 - [x] Rescuable players (Rescue Passive) — `sim::tests::rescuable_units_are_nobodys_target_and_join_the_first_comer`
-- [x] Score accounting (build/destroy scores, produced/lost, spending) — `sim::tests::score_tallies_follow_production_spending_and_kills`
-- [ ] Alliances: allied players must not fight (`World::hostile` ignores `Player.team`, which trigger action 57 and the AI already use)
+- [x] Score accounting as OpenBW (build score on completion incl. starting units, kill/razing destroy scores, kills credited to the attacker; losses and spending) — `tests/multiplayer.rs::a_melee_start_scores_like_the_retail_score_screen`, `sim::tests::score_tallies_follow_production_spending_and_kills`
+- [x] Alliances: allied players (lobby teams, trigger action 57) neither fight nor target each other and share vision in team games — `trigger::tests::set_alliance_status_stops_two_players_fighting`, `tests/multiplayer.rs::a_team_wins_together_and_never_targets_itself`, `teammates_share_vision`
 - [ ] Campaign AI opcodes that only advance today (`if_dif`, `if_towns`, `get_oldpeons`, `wait_upgrades`, `set_attacks`, `quick_attack`, …; only `get_oldpeons` is used by an Episode I map) — `research/docs/session-log.md` 2026-11-05 (93)
 
 ## Data and file formats
@@ -79,7 +79,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Saved Games and Replays browsers — `engine-rust/docs/replays.md`
 - [x] 16:9 to 4K and ultrawide: every screen pillarboxed, pixel-identical to 16:9 (31/31) — `engine-rust/docs/gates/ultrawide-diff.txt`
 - [x] Menu frame time under 20 ms at 3440x1440 — `engine-rust/docs/gates/menu-draw-time.txt`
-- [ ] Create-game screen with selectable game types and their rules (Top vs Bottom, Team Melee, …); today the row is a fixed "Free For All" label
+- [x] Retail multiplayer front end: Select Connection → Registry → Games → Create (map browser, 13 game types, teams, speed) → 8-slot lobby → countdown → game, each step within 2.0–3.6 grey levels of the recording — `scripts/mp_flow_gate.py`, `engine-rust/docs/gates/mp-flow.txt`
+- [ ] Special rules of Greed, Slaughter, Capture the Flag and Sudden Death (the types are selectable; their rules are not applied)
 
 ## Campaign
 
@@ -128,9 +129,12 @@ map/campaign editor, patches other than 1.23.10.13515.
 
 - [x] Command-only lockstep with per-turn state checksum over TCP (2400 ticks) and UDP — `tests/lan.rs`, `research/docs/lan-protocol.md`
 - [x] Discovery by UDP broadcast, lobby in `sc_view` (up to 8 players) — `tests/lan.rs`, `engine-rust/docs/gates/lan-lobby-reconnect.txt`
+- [x] Lobby protocol 3: named joins, live lobby for joiners, race and colour picks, lobby chat, the host's countdown, resolved setup at start; two `sc_view` processes end on the same state hash — `tests/lan.rs::a_joiner_sits_in_the_lobby_and_starts_with_the_setup`, `engine-rust/docs/gates/mp-flow.txt`
+- [x] Lobby games: colours drawn in game, teams ally and win together, computers run in the lockstep on every peer, saves keep the setup — `tests/multiplayer.rs`, `tests/replay.rs::saves_carry_the_lobby_setup_and_still_read_version_1`
+- [x] Retail score screen for lobby games — `sc_view --shot-screen score-defeat`, `engine-rust/docs/gates/mp-flow.txt`
 - [x] Reconnect by resyncing the command log, with backoff — `tests/lan.rs`
 - [ ] Physical test on two machines — `scripts/lan_two_machines.sh`
-- [ ] Lobby and in-game chat (the protocol carries `Msg::Chat`; no UI)
+- [ ] In-game chat (lobby chat exists)
 - [ ] Observer / "Become Observer" after defeat
 
 ## Packaging and platforms

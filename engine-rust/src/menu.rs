@@ -35,6 +35,14 @@ pub enum MenuScreen {
     Replays,
     /// LAN lobby: discovery, hosting and joining.
     Lan,
+    /// Multiplayer `Select Connection` (`gluConn`).
+    Connection,
+    /// LAN games list (`glujoin`).
+    Games,
+    /// Multiplayer `Create` (`glucreat`): map browser and game options.
+    MpCreate,
+    /// The game lobby (`glugamelobby`).
+    MpLobby,
     Lobby {
         map: Option<usize>,
     },
@@ -57,13 +65,15 @@ pub enum MenuScreen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameTypeFollowup {
     Registry,
-    MultiplayerLobby,
+    /// Multiplayer continues to `Select Connection` (retail capture
+    /// 2026-11-04 21:11:48, 2.9 s).
+    SelectConnection,
 }
 
 /// `Select Game Type` follow-up for the entry that opened the dialog.
 pub const fn gametype_followup(multiplayer: bool) -> GameTypeFollowup {
     if multiplayer {
-        GameTypeFollowup::MultiplayerLobby
+        GameTypeFollowup::SelectConnection
     } else {
         GameTypeFollowup::Registry
     }
@@ -786,6 +796,12 @@ pub fn back_destination(screen: &MenuScreen) -> Option<MenuScreen> {
         MenuScreen::SavedGames | MenuScreen::Replays => Some(MenuScreen::Episode),
         MenuScreen::Lan => Some(MenuScreen::GameType),
         MenuScreen::Lobby { .. } => Some(MenuScreen::Main),
+        // Multiplayer: Select Connection -> Registry -> Games -> Create ->
+        // lobby (retail capture 2026-11-04 21:11:48).  INFERENCE: Cancel
+        // walks the same chain back (the capture only goes forward).
+        MenuScreen::Connection => Some(MenuScreen::Main),
+        MenuScreen::Games => Some(MenuScreen::Connection),
+        MenuScreen::MpCreate | MenuScreen::MpLobby => Some(MenuScreen::Games),
         MenuScreen::Options { .. } => Some(MenuScreen::Main),
         MenuScreen::Hotkeys { .. } => Some(MenuScreen::Main),
         MenuScreen::Collections | MenuScreen::Credits => Some(MenuScreen::Main),
@@ -1587,8 +1603,8 @@ mod tests {
         );
         assert_eq!(
             gametype_followup(true),
-            GameTypeFollowup::MultiplayerLobby,
-            "Multiplayer -> Select Game Type -> connection/lobby"
+            GameTypeFollowup::SelectConnection,
+            "Multiplayer -> Select Game Type -> Select Connection"
         );
     }
 
@@ -1612,6 +1628,10 @@ mod tests {
             MenuScreen::Collections,
             MenuScreen::Credits,
             MenuScreen::Intro { expansion: false },
+            MenuScreen::Connection,
+            MenuScreen::Games,
+            MenuScreen::MpCreate,
+            MenuScreen::MpLobby,
         ];
         for screen in screens {
             let back = back_destination(&screen).expect("back destination");
@@ -1714,7 +1734,7 @@ mod tests {
         // Main -> Single Player opens `Select Game Type` in single mode.
         assert_eq!(gametype_followup(false), GameTypeFollowup::Registry);
         // Multiplayer goes to the connection/lobby instead.
-        assert_eq!(gametype_followup(true), GameTypeFollowup::MultiplayerLobby);
+        assert_eq!(gametype_followup(true), GameTypeFollowup::SelectConnection);
         // Original starts at Episode I, Expansion at Episode IV.
         assert_eq!(episode_start(false), 0);
         assert_eq!(episode_start(true), 3);

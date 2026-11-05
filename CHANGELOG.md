@@ -138,6 +138,35 @@ status is in [PROGRESS.md](PROGRESS.md).
   only drew that spinner is removed.
 - Screen changes play the glue swish: `swishin` when a screen appears,
   `swishout` when a classic list dialog leaves (cache marker v18).
+## 2026-11-04 — Retail multiplayer flow (LAN)
+
+### Added
+- Multiplayer follows the retail client recorded on 2026-11-04: Select
+  Game Type -> Select Connection (Local Area Network) -> Registry -> Games
+  (LAN discovery, game information plate, Create Game) -> Create (map
+  browser with the shipped icons, Game Type, Top vs Bottom Teams, Speed)
+  -> "Creating game..." -> the 8-slot lobby (Home/Away Team, Open / Closed
+  / Computer, races, observers, chat, map information) -> Ok -> "Starting
+  in: N seconds" -> the game.  Plates swish like the other glue screens.
+- Lobby games: teams ally, share vision and win together; computer slots
+  play (inside the LAN lockstep on every peer); empty slots stay empty;
+  saves and replays keep the lobby setup (save format v2, v1 still loads).
+- LAN protocol 3: named joins, the joiner sees the host's lobby live,
+  picks its race, chats, and starts with the resolved game setup.
+- Retail score screen for lobby games (`gluscore`): Defeat!/Victory!,
+  Overview/Units/Structures/Resources tabs, coloured bars per player, race
+  portraits, Elapsed Time, Save Replay / Watch Replay / Ok.
+- Engine score bookkeeping (build, kill and razing scores; produced and
+  constructed counts) as OpenBW credits them.
+- Gate `scripts/mp_flow_gate.py` (`engine-rust/docs/gates/mp-flow.txt`).
+
+### Fixed
+- Melee triggers: Victory/Defeat apply to the player running the trigger
+  (an empty slot's Defeat trigger defeated player 0), players out of the
+  game run no triggers, and Foes / Allies / All Players / Non Allied
+  Victory Players are resolved in count conditions.
+- Kills are credited to the attacker (the attacker's index was stored as
+  its unit id).
 
 ## 2026-11-04 — Front-end fidelity and ultrawide
 

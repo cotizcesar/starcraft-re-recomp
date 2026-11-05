@@ -542,3 +542,136 @@ fn rejoin_backoff_retries_until_the_host_listens() {
         "{err}"
     );
 }
+
+/// Protocol 3 lobby over loopback: a named join is seated, sees the lobby,
+/// picks a race the host applies, and starts with the resolved setup (its
+/// own slot, computers and teams included).
+#[test]
+fn a_joiner_sits_in_the_lobby_and_starts_with_the_setup() {
+    use galaxycraft::multiplayer::{
+        GameType, Lobby as GameLobby, Occupant, RaceChoice, SetupOccupant, race_choice_byte,
+    };
+    use galaxycraft::net::{JoinQueue, Msg, Transport, connect_lobby};
+    use std::time::{Duration, Instant};
+
+    let hash = [5u8; 32];
+    let host = Lobby::bind("127.0.0.1:0", hash, galaxycraft::net::WORLD_SEED).unwrap();
+    let addr = host.local_addr().unwrap().to_string();
+    let mut queue = JoinQueue::new(4);
+    let mut link = connect_lobby(
+        &addr,
+        hash,
+        galaxycraft::net::WORLD_SEED,
+        Race::Terran,
+        "Raynor",
+    )
+    .expect("connect");
+    host.poll_join(&mut queue, true).unwrap().expect("joined");
+    assert_eq!(queue.name(1), Some("Raynor"));
+
+    // Host seats the joiner in the first Open slot, adds a computer and
+    // sends the lobby.
+    let mut lobby = GameLobby::new_host("LinKa", "Boxer", 4, GameType::TopVsBottom, (2, 2));
+    lobby.slots[0].race = RaceChoice::Protoss;
+    let seat = lobby.first_open().unwrap();
+    lobby.slots[seat].occupant = Occupant::Human {
+        name: "Raynor".into(),
+        peer: 1,
+    };
+    lobby.set_occupant(2, Occupant::Computer);
+    assert!(queue.send_lobby(&lobby).is_empty());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let seen = loop {
+        if let Some(m) = link.try_recv().unwrap() {
+            break m;
+        }
+        assert!(Instant::now() < deadline, "no lobby state");
+        thread::sleep(Duration::from_millis(5));
+    };
+    let Msg::LobbyState { you, lobby: theirs } = seen else {
+        panic!("expected LobbyState, got {seen:?}");
+    };
+    assert_eq!((you, &theirs), (1, &lobby));
+    assert!(link.try_recv().unwrap().is_none(), "nothing else queued");
+
+    // The joiner picks Zerg; the host applies it.
+    link.send(&Msg::LobbyRace {
+        race: race_choice_byte(RaceChoice::Zerg),
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (msgs, gone) = loop {
+        let (m, g) = queue.poll_lobby();
+        if !m.is_empty() || !g.is_empty() {
+            break (m, g);
+        }
+        assert!(Instant::now() < deadline, "no race message");
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert!(gone.is_empty());
+    assert_eq!(msgs, vec![(1, Msg::LobbyRace { race: 1 })]);
+    lobby.slots[seat].race = RaceChoice::Zerg;
+
+    // Start: the joiner receives the setup and finds its slot in it.
+    let setup = lobby.resolve(galaxycraft::net::WORLD_SEED);
+    let (clients, races) = host.start_with_setup(queue, &setup).unwrap();
+    assert_eq!((clients.len(), races.len()), (1, 4));
+    let Msg::Setup {
+        you,
+        races: got,
+        setup: Some(theirs),
+        ..
+    } = link.recv().unwrap()
+    else {
+        panic!("expected Setup with a game setup");
+    };
+    assert_eq!((you, got, &theirs), (1, races, &setup));
+    assert_eq!(theirs.slot_of_peer(1), Some(seat));
+    assert_eq!(theirs.slots[seat].race, Race::Zerg);
+    assert_eq!(theirs.slots[2].occupant, SetupOccupant::Computer);
+    assert_eq!(theirs.slots[seat].team, 0, "slot 1 is on the Home Team");
+}
+
+/// A joiner that drops out of the lobby is reported gone, and the lobby
+/// reopens its slot.
+#[test]
+fn a_joiner_leaving_the_lobby_reopens_its_slot() {
+    use galaxycraft::multiplayer::{GameType, Lobby as GameLobby, Occupant};
+    use galaxycraft::net::{JoinQueue, connect_lobby};
+    use std::time::{Duration, Instant};
+
+    let hash = [6u8; 32];
+    let host = Lobby::bind("127.0.0.1:0", hash, galaxycraft::net::WORLD_SEED).unwrap();
+    let addr = host.local_addr().unwrap().to_string();
+    let mut queue = JoinQueue::new(4);
+    let link = connect_lobby(
+        &addr,
+        hash,
+        galaxycraft::net::WORLD_SEED,
+        Race::Terran,
+        "Fenix",
+    )
+    .unwrap();
+    host.poll_join(&mut queue, true).unwrap().expect("joined");
+    let mut lobby = GameLobby::new_host("LinKa", "Boxer", 2, GameType::Melee, (1, 1));
+    lobby.slots[1].occupant = Occupant::Human {
+        name: "Fenix".into(),
+        peer: 1,
+    };
+    drop(link);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let gone = loop {
+        let (_, g) = queue.poll_lobby();
+        if !g.is_empty() {
+            break g;
+        }
+        assert!(Instant::now() < deadline, "the drop was not noticed");
+        thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(gone, vec![1]);
+    queue.remove(1);
+    lobby.remove_peer(1);
+    assert_eq!(queue.players(), 1);
+    assert_eq!(lobby.first_open(), Some(1));
+}

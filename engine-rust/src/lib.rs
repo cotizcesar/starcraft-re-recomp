@@ -47,6 +47,7 @@ pub mod iscript;
 pub mod map;
 pub mod menu;
 pub mod menu_masks;
+pub mod multiplayer;
 pub mod net;
 pub mod orders;
 pub mod path;

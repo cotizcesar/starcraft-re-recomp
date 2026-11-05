@@ -17,6 +17,18 @@ pub struct SimpleAi {
     pub last_build: u64,
 }
 
+/// One tick of every computer player, in slot order: each attacks an enemy
+/// town hall (`prefer`'s when it is an enemy, see
+/// [`World::enemy_town_hall`]).  Shared by the local game loop and the LAN
+/// lockstep so every peer runs the same computers identically; `prefer`
+/// must therefore be the same on every peer in a LAN game.
+pub fn run_computers(world: &mut World, ais: &mut [SimpleAi], prefer: u8) {
+    for ai in ais.iter_mut() {
+        let enemy_base = world.enemy_town_hall(ai.player, prefer);
+        ai.update(world, enemy_base);
+    }
+}
+
 impl SimpleAi {
     pub fn new(player: u8) -> Self {
         Self {
@@ -320,7 +332,12 @@ impl SimpleAi {
                 world
                     .units
                     .iter()
-                    .filter(|u| u.alive && u.owner != owner && u.completed)
+                    .filter(|u| {
+                        u.alive
+                            && u.completed
+                            && world.is_enemy(owner, u.owner)
+                            && !crate::sim::is_resource_type(u.type_id)
+                    })
                     .map(|u| (u.x / 256, u.y / 256))
                     .next()
             })
