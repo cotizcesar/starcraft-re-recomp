@@ -4,6 +4,31 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — Episode I (Rebel Yell) campaign flow
+
+### Fixed
+- The campaign advances through `arr/mapdata.tbl`: Norad II is followed by
+  The Trump Card and The Big Push by New Gettysburg; the unused shipped
+  maps `terran07` ("Biting the Bullet") and `terran10` ("Operation Silent
+  Scream") are no longer played.
+- Mission titles come from the retail `gluhist` list (`terran11` was named
+  "Kerrigan has been killed.", now "New Gettysburg"; the tutorial is
+  "Boot Camp").
+- Cinematics follow the retail `MenuEntry` table with their location card:
+  `PreTerran_1` + Wasteland Patrol after Backwater Station, Norad II after
+  Revolution, Open Rebellion after The Big Push, The Inauguration after
+  The Hammer Falls (the old three-mission "acts" put them one mission
+  late); Brood War `x<Race>` films close their campaign instead of opening
+  it.
+- Rescue Passive players (`OWNR` 3): nobody targets their units and a human
+  player's unit within reach takes them over, with the retail rescue sound.
+  Raynor is no longer shot by the player's own Marines, so The Jacobs
+  Installation no longer ends in defeat after 12 s.
+- Missions end only through their triggers (no melee "last player
+  standing" rule freezing the closing transmissions), and a Transmission
+  holds its trigger for the line, so conversations play in sequence (The
+  Trump Card).
+
 ## 2026-11-05 — Menu playback, movies and frame time
 
 ### Fixed

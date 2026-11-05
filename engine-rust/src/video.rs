@@ -153,91 +153,6 @@ pub const CAMPAIGN_CINEMATICS: &[&str] = &[
     "smk/xzerg.webm",
 ];
 
-/// The act a campaign mission belongs to.  The shipped campaigns use four
-/// three-mission acts in the Terran episode and shorter closing acts in the
-/// Zerg/Protoss episodes, which is exactly what the `Pre*`/`*N` cinematic
-/// pairs in the intro table encode.
-pub fn campaign_act(episode_key: &str, order: usize) -> Option<u8> {
-    let boundaries: &[(usize, usize, u8)] = match episode_key {
-        "terran" => &[(1, 3, 1), (4, 6, 2), (7, 9, 3), (10, 12, 4)],
-        "zerg" => &[(1, 3, 1), (4, 6, 2), (7, 8, 3), (9, 10, 4)],
-        "protoss" => &[(1, 3, 1), (4, 6, 2), (7, 8, 3), (9, 10, 4)],
-        _ => return None,
-    };
-    boundaries
-        .iter()
-        .find(|(lo, hi, _)| order >= *lo && order <= *hi)
-        .map(|(_, _, act)| *act)
-}
-
-/// True when `order` is the first mission of its act (the `Pre*` movie plays
-/// before it).
-pub fn is_act_start(episode_key: &str, order: usize) -> bool {
-    match episode_key {
-        "terran" => matches!(order, 1 | 4 | 7 | 10),
-        "zerg" => matches!(order, 4 | 7 | 9),
-        "protoss" => matches!(order, 1 | 4 | 7),
-        _ => false,
-    }
-}
-
-/// True when `order` is the last mission of its act (the numbered episode
-/// movie plays after it).
-pub fn is_act_end(episode_key: &str, order: usize) -> bool {
-    match episode_key {
-        "terran" => matches!(order, 3 | 6 | 9 | 12),
-        "zerg" => matches!(order, 3 | 6 | 8 | 10),
-        "protoss" => matches!(order, 3 | 6 | 8 | 10),
-        _ => false,
-    }
-}
-
-/// Campaign cinematic for a mission start/end.
-///
-/// * `pre`  — `Pre<Race>_<act>.webm` before the first mission of an act
-///   (Zerg and Protoss have no act-1/act-4 pre movie, matching the shipped
-///   table, which starts at `PreZerg_2` and `PreProtoss_1`).
-/// * `post` — `<Race><act>.webm` after the last mission of an act.
-pub fn campaign_cinematic(episode_key: &str, order: usize, pre: bool) -> Option<&'static str> {
-    let act = campaign_act(episode_key, order)?;
-    let at_edge = if pre {
-        is_act_start(episode_key, order)
-    } else {
-        is_act_end(episode_key, order)
-    };
-    if !at_edge {
-        return None;
-    }
-    let race = match episode_key {
-        "terran" => "terran",
-        "zerg" => "zerg",
-        _ => "protoss",
-    };
-    let name = if pre {
-        format!("smk/pre{race}_{act}.webm")
-    } else {
-        format!("smk/{race}{act}.webm")
-    };
-    CAMPAIGN_CINEMATICS
-        .iter()
-        .find(|cinematic| cinematic.eq_ignore_ascii_case(&name))
-        .copied()
-}
-
-/// Brood War episode intro movie (`xProtoss`/`xTerran`/`xZerg`).
-pub fn expansion_episode_intro(episode_key: &str) -> Option<&'static str> {
-    let name = match episode_key {
-        "expprotoss" => "smk/xprotoss.webm",
-        "expterran" => "smk/xterran.webm",
-        "expzerg" => "smk/xzerg.webm",
-        _ => return None,
-    };
-    CAMPAIGN_CINEMATICS
-        .iter()
-        .find(|cinematic| cinematic.eq_ignore_ascii_case(name))
-        .copied()
-}
-
 /// The clips `View Intro` / first launch play, in order.
 pub fn intro_sequence(expansion: bool, include_logo: bool) -> Vec<&'static str> {
     let mut clips = Vec::with_capacity(2);
@@ -1510,37 +1425,6 @@ mod tests {
     }
 
     #[test]
-    fn every_campaign_act_has_its_shipped_cinematic() {
-        // Terran: four acts of three missions.
-        for (order, pre, post) in [
-            (1, "smk/preterran_1.webm", "smk/terran1.webm"),
-            (4, "smk/preterran_2.webm", "smk/terran2.webm"),
-            (7, "smk/preterran_3.webm", "smk/terran3.webm"),
-            (10, "smk/preterran_4.webm", "smk/terran4.webm"),
-        ] {
-            assert_eq!(campaign_cinematic("terran", order, true), Some(pre));
-            assert_eq!(campaign_cinematic("terran", order + 2, false), Some(post));
-        }
-        // Zerg: no act-1 pre movie, matches the shipped table (PreZerg_2..4).
-        assert_eq!(campaign_cinematic("zerg", 1, true), None);
-        assert_eq!(
-            campaign_cinematic("zerg", 4, true),
-            Some("smk/prezerg_2.webm")
-        );
-        assert_eq!(campaign_cinematic("zerg", 3, false), Some("smk/zerg1.webm"));
-        // Protoss: PreProtoss_1..3, no act-4 pre.
-        assert_eq!(
-            campaign_cinematic("protoss", 1, true),
-            Some("smk/preprotoss_1.webm")
-        );
-        assert_eq!(campaign_cinematic("protoss", 9, true), None);
-        assert_eq!(
-            campaign_cinematic("protoss", 10, false),
-            Some("smk/protoss4.webm")
-        );
-    }
-
-    #[test]
     fn the_campaign_table_covers_all_28_shipped_movies() {
         // 25 campaign movies + the 3 expansion episode intros.
         assert_eq!(CAMPAIGN_CINEMATICS.len(), 25);
@@ -1550,20 +1434,6 @@ mod tests {
         for rel in all {
             assert!(is_known_cinematic(rel), "{rel} is a retail cinematic");
         }
-    }
-
-    #[test]
-    fn expansion_episode_intros_are_the_x_movies() {
-        assert_eq!(
-            expansion_episode_intro("expprotoss"),
-            Some("smk/xprotoss.webm")
-        );
-        assert_eq!(
-            expansion_episode_intro("expterran"),
-            Some("smk/xterran.webm")
-        );
-        assert_eq!(expansion_episode_intro("expzerg"), Some("smk/xzerg.webm"));
-        assert_eq!(expansion_episode_intro("terran"), None);
     }
 
     #[test]

@@ -2064,8 +2064,9 @@ smk\starXintr.webm
 smk\xProtoss.webm / smk\xTerran.webm / smk\xZerg.webm
 ```
 
-`video::CAMPAIGN_CINEMATICS`, `campaign_cinematic`, `intro_sequence` and
-`expansion_episode_intro` encode this table; `every_intro_table_movie_is_readable_and_decodable`
+`video::CAMPAIGN_CINEMATICS` and `intro_sequence` encode this table (when
+each campaign film plays comes from the `MenuEntry` table:
+`campaign_progress::cinematic_movies` / `after_victory`, session log 87); `every_intro_table_movie_is_readable_and_decodable`
 opens and parses all 28 files from the player's installation
 (`SC_INSTALL=... cargo test --lib video::tests::`, 10/10).
 

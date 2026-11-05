@@ -393,6 +393,19 @@ impl TriggerSystem {
                     self.state.resume[player] = Some((trigger_index, ai + 1));
                     return;
                 }
+                7 => {
+                    // A Transmission holds its trigger for the line's
+                    // length, so a conversation plays line after line
+                    // (`The Trump Card` opens with three).  INFERENCE from
+                    // the public CHK trigger spec; falsifier: a retail
+                    // recording where the lines overlap.
+                    self.execute(world, player, trigger, action);
+                    let ms = transmission_ms(action) as u64;
+                    let ticks = (ms * crate::sim::TICKS_PER_SECOND as u64 / 1000).max(1);
+                    self.state.wait_until[player] = world.tick + ticks;
+                    self.state.resume[player] = Some((trigger_index, ai + 1));
+                    return;
+                }
                 _ => self.execute(world, player, trigger, action),
             }
         }
@@ -1367,6 +1380,10 @@ mod tests {
         let mut t = TriggerSystem::parse(&r, &[]);
         let mut w = world();
         t.process(&mut w);
+        // The transmission holds the trigger for its 2 s line.
+        assert_eq!(t.cues.len(), 2, "only the transmission so far");
+        w.tick += 60;
+        t.process(&mut w);
         assert_eq!(
             t.cues,
             vec![
@@ -1703,6 +1720,26 @@ mod tests {
         assert!(!w.units[id].invincible);
         w.damage_unit(w.units[id].id, 100).unwrap();
         assert!(w.units[id].hp < before);
+    }
+
+    #[test]
+    fn transmissions_play_one_after_another() {
+        // Two 3 s transmissions in one trigger: the second waits for the
+        // first line to finish instead of starting in the same tick.
+        let mut r = record(22, 7, 0);
+        r[320 + 12..320 + 16].copy_from_slice(&3000u32.to_le_bytes());
+        let a1 = add_action(&mut r, 1, 7);
+        r[a1 + 12..a1 + 16].copy_from_slice(&3000u32.to_le_bytes());
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        t.process(&mut w);
+        assert_eq!(t.transmissions.len(), 1);
+        w.tick += 30;
+        t.process(&mut w);
+        assert_eq!(t.transmissions.len(), 1, "still talking at 1.25 s");
+        w.tick += 60;
+        t.process(&mut w);
+        assert_eq!(t.transmissions.len(), 2, "next line after 3 s");
     }
 
     #[test]

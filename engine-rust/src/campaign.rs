@@ -90,7 +90,13 @@ pub fn episodes(install: &RetailInstall) -> Vec<Campaign> {
             let Ok(scenario) = crate::map::Scenario::parse(&raw) else {
                 continue;
             };
-            let mission_name = mission_name(&scenario);
+            // Retail missions are named by their `gluhist` entry; the CHK's
+            // first string is a trigger text on `terran11`.  Only the maps
+            // the campaign never plays keep the CHK name.
+            let mission_name = crate::campaign_progress::mission_of(episode, &key)
+                .and_then(crate::campaign_progress::mission_title)
+                .map(str::to_string)
+                .unwrap_or_else(|| mission_name(&scenario));
             // Follow the OWNR human seat; campaign missions do not always
             // put the player at slot 0 (Zerg 01 uses slot 3, Enslavers 01
             // uses slot 6), and the human's SIDE is the mission race.
