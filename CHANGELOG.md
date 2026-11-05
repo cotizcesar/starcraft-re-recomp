@@ -22,6 +22,8 @@ status is in [PROGRESS.md](PROGRESS.md).
   and resources spent (also what trigger Score conditions read).
 
 ### Fixed
+- Rescuable units are first checked on the first tick, so Backwater
+  Station's Raynor speaks on the first frame (was 1.25 s late).
 - Trigger locations were scaled x32 (MRGN is already in pixels), so every
   location condition and action covered the whole map: Boot Camp jumped
   to its Marine lesson 18 s in.

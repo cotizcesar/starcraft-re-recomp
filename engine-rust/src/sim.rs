@@ -2467,7 +2467,11 @@ impl World {
         self.update_larva();
         self.update_vision();
         self.resolve_deaths();
-        if self.tick.is_multiple_of(RESCUE_INTERVAL) {
+        // The first check runs on the first tick (the order's timer starts
+        // at 0), before the triggers: Backwater Station's "Glad to see you,
+        // boys" (needs Raynor rescued) shows on the first game frame of the
+        // retail recording.  Then every 15 ticks.
+        if (self.tick - 1).is_multiple_of(RESCUE_INTERVAL) {
             self.update_rescues();
         }
         self.check_victory();
@@ -5860,19 +5864,27 @@ mod tests {
         w.spawn(1, uid::MARINE, 1020, 1000).unwrap();
         let hp = w.units[raynor].hp;
         assert!(!w.hostile(0, 2) && !w.hostile(2, 1) && w.hostile(0, 1));
-        // The retail handler polls every 15 ticks; until then Raynor waits
-        // next to the Marine without being shot.
+        // The retail handler polls on the first tick (Backwater Station's
+        // Raynor line is on the first game frame), then every 15 ticks.
+        w.step();
+        assert_eq!(w.units[raynor].owner, 0, "rescued by the adjacent Marine");
+        assert_eq!(w.units[marine].target, None);
+        // One placed next to the Marine after the first poll waits for the
+        // next one (tick 16) without being shot.
+        let late = w.spawn(2, uid::MARINE, 100, 120).unwrap();
         for _ in 0..14 {
             w.step();
         }
-        assert_eq!(w.units[raynor].owner, 2);
-        assert_eq!(w.units[marine].target, None);
+        assert_eq!(w.units[late].owner, 2, "tick 15: not polled yet");
         w.step();
-        assert_eq!(w.units[raynor].owner, 0, "rescued by the adjacent Marine");
+        assert_eq!(w.units[late].owner, 0, "tick 16: rescued");
         assert_eq!(w.units[raynor].hp, hp, "never attacked");
         assert_eq!(w.units[far].owner, 2, "nobody within reach");
         assert_eq!(w.units[held].owner, 2, "computers never rescue");
-        assert_eq!(w.rescues, vec![(w.units[raynor].id, 0)]);
+        assert_eq!(
+            w.rescues,
+            vec![(w.units[raynor].id, 0), (w.units[late].id, 0)]
+        );
     }
 
     #[test]

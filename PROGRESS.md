@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 35 | 37 | 95 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 36 | 38 | 95 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **86** | **90** | **96 %** |
+| **Overall (weighted)** | **100** | **87** | **91** | **96 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -93,6 +93,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Wasteland in-game HUD against the recording: retail error lines from `stat_txt` ("Not enough minerals...mine more minerals.", ink box within 2 px), Terran town-hall rows "Supplies Used/Provided/Total/Max", the trigger leaderboard ("9 of 10 Marines", computers hidden by action 32) — `refused_orders_show_the_retail_error_strings`, `town_hall_supply_rows_use_the_race_labels`, `a_control_leaderboard_counts_the_players_units`, `--shot-screen game-error|select-cc|leaderboard-marines`
 - [x] All 11 Episode I missions audited against their shipped data: every trigger condition/action and briefing action they use is implemented, every AI script they run exists (one stubbed opcode in use: `get_oldpeons`, Revolution's `ClrC`), every ready room runs to "End of Briefing" with real portrait clips, Boot Camp's Skip Tutorial goes to Wasteland — `every_episode_one_ready_room_runs_to_the_end_with_real_portraits`, walkthrough `campaign skip tutorial`
 - [x] Boot Camp against its retail recording: trigger locations in pixels (were x32, every location covered the map), a Wait holds the player's later triggers in the same cycle, the opening conversation in order and time, trigger text lifetime by characters (9 samples within 0.2 s), up to 11 lines, `DISPLAYTIME` per page with click-to-advance video pages and `VIDEOAUTOPROCEED`, ready-room text hold 4.0 s then linear scroll — `boot_camp_opening_follows_the_retail_recording`, `trigger_locations_are_the_map_pixel_rectangles`, `a_wait_holds_the_players_later_triggers_in_the_same_cycle`, `text_lifetimes_follow_the_retail_measurement`, `pages_leave_after_their_display_time_or_video`, `ready_text_scroll_follows_the_retail_recording`
+- [x] Backwater Station against its retail recording: Raynor's line on the first game frame (first rescue poll on tick 1), the ending conversation and victory within 0.7 s of retail — `backwater_station_opens_with_raynor_on_the_first_frame`, `backwater_station_ending_follows_the_retail_recording`
 - [ ] Zerg and Protoss ready rooms (`glurdyz`/`glurdyp`)
 - [x] Menu walkthrough gate: transitions, retail UI sounds, mouse on every screen — `engine-rust/docs/gates/menu-walkthrough.txt`
 - [x] In-game HUD per race, minimap, selection, command card and hotkeys — `tests/render.rs`
