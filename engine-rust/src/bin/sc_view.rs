@@ -1084,6 +1084,14 @@ struct App {
     content_box: (i32, i32, i32, i32),
     /// Decoded score backdrop and its fitted copy.
     result_panel: Option<DdsImage>,
+    /// Score screen: selected tab (0 Overview, 1 Units, 2 Structures,
+    /// 3 Resources) and its art (`backgnd`, `pinset`, `scorebox`) for the
+    /// race/result it was loaded for.
+    score_tab: usize,
+    score_art: Option<(Race, bool, [Option<DdsImage>; 3])>,
+    score_icons: Option<galaxycraft::dds::DdsGrp>,
+    /// `network.json` `strNATION_*` names (computer players).
+    nation_names: Option<std::collections::HashMap<String, String>>,
     result_fit: Option<(usize, usize, DdsImage)>,
     /// Number of acknowledgements, used to cycle voice takes.
     ack_variant: usize,
@@ -1196,6 +1204,11 @@ struct App {
     paused: bool,
     /// `Some(true)` victory, `Some(false)` defeat.
     game_result: Option<bool>,
+    /// The in-game "Congratulations! You are victorious!" (`wmission`) or
+    /// "You failed to achieve victory!" (`lmission`) dialog is up, before
+    /// the score screen (retail Wasteland recording: dialog at 3.5 s, the
+    /// score screen after its Victory button).
+    end_dialog: bool,
     /// Win-only: the `Next Scenario` action resolved into the bundled pack.
     next_map: Option<usize>,
     tiles_dir: PathBuf,
@@ -2935,6 +2948,80 @@ const DIALOG_TITLE_BASE: f32 = 48.0;
 const DIALOG_TITLE_DX: f32 = -3.0;
 const DIALOG_BODY_DX: f32 = -1.0;
 const DIALOG_BODY_BASE: f32 = 48.0;
+/// One score-screen row.
+struct ScoreRow {
+    slot: usize,
+    human: bool,
+    name: String,
+    force: String,
+    apm: Option<i64>,
+    player: galaxycraft::sim::Player,
+}
+
+impl ScoreRow {
+    /// The three bar columns and the Total Score of a tab.
+    fn columns(&self, tab: usize) -> [i64; 4] {
+        let p = &self.player;
+        let units = (p.scores[1] + p.scores[4]) as i64;
+        let structures = (p.scores[2] + p.scores[5]) as i64;
+        let resources = (p.minerals_gathered + p.gas_gathered) as i64;
+        match tab {
+            1 => [
+                p.units_produced as i64,
+                p.kills.saturating_sub(p.razings) as i64,
+                p.units_lost as i64,
+                units,
+            ],
+            2 => [
+                p.buildings_built as i64,
+                p.razings as i64,
+                p.buildings_lost as i64,
+                structures,
+            ],
+            3 => [
+                p.gas_gathered as i64,
+                p.minerals_gathered as i64,
+                (p.minerals_spent + p.gas_spent) as i64,
+                resources,
+            ],
+            _ => [units, structures, resources, units + structures + resources],
+        }
+    }
+}
+
+/// Score screen text (content px baselines from each control top).
+const SCORE_TITLE_BASE: f32 = 58.0;
+const SCORE_TAB_PX: f32 = 40.0;
+const SCORE_TAB_BASE: f32 = 64.0;
+const SCORE_SMALL_PX: f32 = 30.7;
+const SCORE_HEAD_BASE: f32 = 36.0;
+const SCORE_TOTAL_HEAD_BASE: f32 = 64.0;
+/// Fitted on the recording (9 s): "Garm Brood" ink 238 px (Eurostile at
+/// the glue big size), base +47; force names `blizzard-regular` 30.7
+/// ("Unidentified Creatures" 327 px) at +68.7 UI, base +90; APM right edge
+/// UI 176, base +47 from the row band.
+const SCORE_NAME_PX: f32 = GLUE_BIG_PX;
+const SCORE_NAME_BASE: f32 = 47.0;
+const SCORE_FORCE_DX: f32 = 68.7;
+const SCORE_FORCE_BASE: f32 = 90.0;
+const SCORE_VALUE_BASE: f32 = 47.0;
+const SCORE_APM_RIGHT: f32 = 176.0;
+const SCORE_BOX_VALUE_BASE: f32 = 38.0;
+const SCORE_BOX_H: f32 = 18.0;
+/// Race icon from the name rect (UI px) and the bar fill inset.
+const SCORE_ICON_DX: f32 = 7.5;
+const SCORE_ICON_DY: f32 = 21.0;
+const SCORE_FILL_INSET: f32 = 2.0;
+const SCORE_TOTAL_BASE: f32 = 55.0;
+const SCORE_ELAPSED_BASE: f32 = 60.0;
+const SCORE_BUTTON_BASE: f32 = 64.0;
+const SCORE_DISABLED: Rgb = Rgb::new(0x80, 0x80, 0x80);
+
+/// `wmission` message: baselines from the CTEXT top and the pale lavender
+/// of the recording ("Congratulations!" / "You are victorious!").
+const END_DIALOG_BASE: f32 = 49.0;
+const END_DIALOG_PITCH: f32 = 63.0;
+const END_DIALOG_TEXT: Rgb = Rgb::new(220, 222, 240);
 /// Label pen x from the control's left edge (content px).
 const DIALOG_CHECK_DX: f32 = 59.0;
 const DIALOG_CHECK_PX: f32 = HUD_NAME_PX;
@@ -3023,7 +3110,7 @@ fn console_dialog_shift(dialog: &str, view_w: i32, content_w: i32, s: f32) -> f3
     match dialog {
         "minimap" => 0.0,
         "statdata" => ((view_w - 640).max(0) / 2) as f32,
-        "objctdlg" | "tips_dlg" => screen_extra / 2.0,
+        "objctdlg" | "tips_dlg" | "wmission" | "lmission" => screen_extra / 2.0,
         _ => screen_extra,
     }
 }
@@ -4287,6 +4374,10 @@ fn script_key(name: &str) -> Key {
         "H" => Key::H,
         "S" => Key::S,
         "C" => Key::C,
+        "V" => Key::V,
+        "U" => Key::U,
+        "T" => Key::T,
+        "O" => Key::O,
         _ => Key::Unknown,
     }
 }
@@ -5075,6 +5166,10 @@ fn main() {
         ui_ox: 0,
         ui_oy: 0,
         result_panel: None,
+        score_tab: 0,
+        score_art: None,
+        score_icons: None,
+        nation_names: None,
         result_fit: None,
         ack_variant: 0,
         actions: 0,
@@ -5111,6 +5206,7 @@ fn main() {
         briefing_fit: None,
         paused: false,
         game_result: None,
+        end_dialog: false,
         next_map: None,
         tiles_dir: tiles_dir.clone(),
         menu_race,
@@ -5684,6 +5780,15 @@ fn main() {
                 app.load_map(app.map_index);
                 app.briefing = false;
                 app.paused = true;
+                app.draw(&mut fb);
+            }
+            "win-dialog" | "lose-dialog" => {
+                app.load_map(app.map_index);
+                app.briefing = false;
+                app.intro = false;
+                app.menu = false;
+                app.game_result = Some(shot_screen == "win-dialog");
+                app.end_dialog = true;
                 app.draw(&mut fb);
             }
             "score" | "victory" | "defeat" => {
@@ -9582,14 +9687,93 @@ impl App {
     }
 
     fn handle_result(&mut self, window: &Window) {
+        let down = window.get_mouse_down(MouseButton::Left);
+        if down && !self.mouse_was_down {
+            if let Some(key) = self.pointer.and_then(|(x, y)| self.result_button_at(x, y)) {
+                self.result_key(key);
+            }
+        }
+        self.mouse_was_down = down;
         for key in window.get_keys_pressed(KeyRepeat::No) {
             self.result_key(key);
         }
     }
 
+    /// Clickable control under a window point on the end dialog (its
+    /// default button) or the score screen (tabs 3..6, Ok 7), as its key.
+    fn result_button_at(&self, mx: i32, my: i32) -> Option<Key> {
+        let (cx, _, _, ch) = self.content_box;
+        let k = ch as f32 / 1440.0;
+        if self.end_dialog {
+            let dialog = if self.game_result == Some(true) {
+                "wmission"
+            } else {
+                "lmission"
+            };
+            let layout = self.console.as_ref()?.layout(dialog)?;
+            let r = self.hud_rect(dialog, layout.controls.iter().find(|c| c.id == -2)?.abs);
+            return (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h)
+                .then_some(Key::Enter);
+        }
+        let layout = self
+            .glue
+            .as_ref()
+            .and_then(|g| g.score.as_ref())
+            .or_else(|| self.console.as_ref().and_then(|c| c.layout("gluscore")))?;
+        let hit = |id: i32| {
+            layout
+                .controls
+                .iter()
+                .find(|c| c.id == id)
+                .is_some_and(|c| {
+                    let r = c.abs;
+                    let x0 = cx + ((320 + r.x * 3) as f32 * k) as i32;
+                    let y0 = (r.y as f32 * 3.0 * k) as i32;
+                    mx >= x0
+                        && mx < x0 + (r.w as f32 * 3.0 * k) as i32
+                        && my >= y0
+                        && my < y0 + (r.h as f32 * 3.0 * k) as i32
+                })
+        };
+        [
+            (3, Key::V),
+            (4, Key::U),
+            (5, Key::T),
+            (6, Key::R),
+            (7, Key::Enter),
+        ]
+        .into_iter()
+        .find(|(id, _)| hit(*id))
+        .map(|(_, key)| key)
+    }
+
     /// One key on the score/result screen (also driven by `--menu-script`
     /// `result:<Key>` steps).
     fn result_key(&mut self, key: Key) {
+        if self.end_dialog {
+            // `wmission`/`lmission` default button: Victory (V) / OK (O),
+            // also Enter; then the score screen.
+            if matches!(key, Key::Enter | Key::Space | Key::V | Key::O | Key::Escape) {
+                self.play("ui_click");
+                self.end_dialog = false;
+            }
+            return;
+        }
+        // Score tabs: `gluScore-1..4` hotkeys (oVerview, Units, sTructures,
+        // Resources); Ok is O as well as Enter.
+        let tab = match key {
+            Key::V => Some(0),
+            Key::U => Some(1),
+            Key::T => Some(2),
+            Key::R if self.game_result.is_some() => Some(3),
+            _ => None,
+        };
+        if let Some(tab) = tab {
+            self.play("ui_click");
+            self.score_tab = tab;
+            return;
+        }
+        let key = if key == Key::O { Key::Enter } else { key };
         {
             match key {
                 Key::Enter | Key::Space if self.game_result == Some(true) => {
@@ -9666,10 +9850,12 @@ impl App {
             )
         } else {
             format!(
-                "flow=game map={} result={:?} next={}",
+                "flow=game map={} result={:?} next={} dialog={} tab={}",
                 name(Some(self.map_index)),
                 self.game_result,
-                name(self.next_map)
+                name(self.next_map),
+                self.end_dialog,
+                self.score_tab
             )
         }
     }
@@ -10411,7 +10597,7 @@ impl App {
             }
             _ => {}
         }
-        if self.game_result.is_some() {
+        if self.game_result.is_some() && !self.end_dialog {
             draw_in_box(self, fb, Self::draw_score_screen);
             return;
         }
@@ -10427,7 +10613,7 @@ impl App {
                 Rgb::new(255, 220, 80),
                 "ESC resume   R restart   M menu   Q quit",
             )
-        } else if let Some(win) = self.game_result {
+        } else if let Some(win) = self.game_result.filter(|_| !self.end_dialog) {
             if win {
                 (
                     "VICTORY",
@@ -10628,229 +10814,417 @@ impl App {
 
     /// Retail `glue/score*` score screen with the eight shipped row
     /// rectangles and the `msnstats` summary panel.
+    /// The retail score screen (`gluscore.ui.json` over the race's
+    /// `pal<race><v|d>/backgnd`, `score<race><v|d>/pmain` anchored right):
+    /// title, the four tabs, per-tab column headers, one row per player in
+    /// the game (name, force name, APM, three bar boxes, Total Score),
+    /// Elapsed Time and Save Replay / Watch Replay / Ok.  Columns per tab
+    /// from the retail Wasteland recording (`Screencast_20261105_074531`).
     fn draw_score_screen(&mut self, fb: &mut Framebuffer) {
-        let (scale, ox, oy) = self.ui_metrics(fb);
-        let w = fb.width as usize;
-        let h = fb.height as usize;
         let won = self.game_result == Some(true);
-        if self.result_panel.is_none() {
-            self.result_panel =
-                GlueArt::load_score_panel(&self.assets_root, self.local_race(), won);
-            self.result_fit = None;
+        let race = self.local_race();
+        if self.score_art.as_ref().map(|a| (a.0, a.1)) != Some((race, won)) {
+            let part = |n: &str| GlueArt::load_score_part(&self.assets_root, race, won, n);
+            self.score_art = Some((
+                race,
+                won,
+                [part("backgnd"), part("pinset"), part("scorebox")],
+            ));
+            self.score_icons = GlueArt::load_score_icons(&self.assets_root, race, won);
+            self.result_panel = GlueArt::load_score_panel(&self.assets_root, race, won);
         }
-        let stale = self
-            .result_fit
-            .as_ref()
-            .map(|(fw, fh, _)| *fw != w || *fh != h)
-            .unwrap_or(true);
-        if stale {
-            self.result_fit = self
-                .result_panel
-                .as_ref()
-                .map(|art| (w, h, art.cover(w, h)));
-        }
-        // Starfield behind the translucent retail score frame (`pmain` is a
-        // border surface with a transparent interior).
-        for y in 0..h {
-            let t = y as f32 / h as f32;
-            let c = Rgb::new(
-                (8.0 + 18.0 * t) as u8,
-                (12.0 + 24.0 * t) as u8,
-                (28.0 + 40.0 * t) as u8,
-            );
-            fb.rect(0, y as i32, fb.width, 1, c);
-        }
-        if let Some((_, _, art)) = &self.result_fit {
-            art.draw_scaled(fb, 0, 0, fb.width, fb.height);
-        }
-
-        let score = self
+        let Some(layout) = self
             .glue
             .as_ref()
             .and_then(|g| g.score.as_ref())
             .or_else(|| self.console.as_ref().and_then(|c| c.layout("gluscore")))
-            .cloned();
-        let rows = if let Some(dialog) = &score {
-            dialog
-                .controls_of("RECT")
-                .filter(|c| c.rect.w == 588)
-                .map(|c| c.abs.scaled(scale, ox, oy))
-                .collect::<Vec<_>>()
-        } else {
-            (0..8)
-                .map(|i| UiRect::new(30, 76 + i * 40, 588, 37).scaled(scale, ox, oy))
-                .collect::<Vec<_>>()
+            .cloned()
+        else {
+            return;
         };
-
-        let title = if won {
-            "MISSION ACCOMPLISHED"
-        } else {
-            "MISSION FAILED"
+        let (cx, _cy, cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let sx = |ux: f32| cx + ((320.0 + ux * 3.0) * k).round() as i32;
+        let sy = |uy: f32| (uy * 3.0 * k).round() as i32;
+        let sl = |u: f32| (u * 3.0 * k).round() as i32;
+        let ctl = |id: i32| layout.controls.iter().find(|c| c.id == id).map(|c| c.abs);
+        fb.clear(Rgb::new(0, 0, 0));
+        let art = self.score_art.take();
+        if let Some((_, _, [bg, pinset, scorebox])) = &art {
+            if let Some(bg) = bg {
+                bg.draw_scaled(fb, cx, 0, cw, ch);
+            }
+            if let Some(main) = &self.result_panel {
+                let (w, h) = (
+                    (main.width as f32 * 0.75 * k) as i32,
+                    (main.height as f32 * 0.75 * k) as i32,
+                );
+                main.draw_scaled(fb, sx(640.0) - w, 0, w, h);
+            }
+            let rows = self.score_rows();
+            for (n, _) in rows.iter().enumerate() {
+                if let (Some(img), Some(r)) = (pinset, ctl(13 + 6 * n as i32)) {
+                    let (w, h) = (
+                        (img.width as f32 * 0.75 * k) as i32,
+                        (img.height as f32 * 0.75 * k) as i32,
+                    );
+                    img.draw_scaled(fb, sx(r.x as f32), sy(r.y as f32), w, h);
+                }
+                if let (Some(img), Some(r)) = (scorebox, ctl(18 + 6 * n as i32)) {
+                    let (w, h) = (
+                        (img.width as f32 * 0.75 * k) as i32,
+                        (img.height as f32 * 0.75 * k) as i32,
+                    );
+                    img.draw_scaled(fb, sx(r.x as f32), sy(r.y as f32), w, h);
+                }
+            }
+        }
+        self.score_art = art;
+        let cxu = |ux: f32| 320.0 + ux * 3.0;
+        let centred = |app: &mut Self,
+                       fb: &mut Framebuffer,
+                       r: UiRect,
+                       text: &str,
+                       px: f32,
+                       face: GlueFace,
+                       colour: Rgb,
+                       base: f32| {
+            let w = app.glue_measure(text, px, face);
+            app.glue_text_face(
+                fb,
+                cxu(r.x as f32 + r.w as f32 / 2.0) - w / 2.0,
+                r.y as f32 * 3.0 + base,
+                text,
+                px,
+                colour,
+                None,
+                face,
+            );
         };
-        fb.text_centered(
-            fb.width / 2,
-            oy + (12.0 * scale) as i32,
-            title,
-            if won {
-                Rgb::new(120, 255, 140)
-            } else {
-                Rgb::new(255, 100, 100)
-            },
-            (2.0 * scale).round().max(1.0) as i32,
-        );
-        let name = self
-            .maps
-            .get(self.map_index)
-            .map(|m| m.name.clone())
-            .unwrap_or_default();
-        fb.text_centered(
-            fb.width / 2,
-            oy + (48.0 * scale) as i32,
-            &format!("{}   {}", name, format_time(self.world.tick)),
-            Rgb::new(225, 230, 240),
-            1,
-        );
+        let white = Rgb::new(0xee, 0xee, 0xee);
+        if let Some(r) = ctl(2) {
+            centred(
+                self,
+                fb,
+                r,
+                if won { "Victory!" } else { "Defeat!" },
+                GLUE_BIGGER_PX,
+                GlueFace::Bigger,
+                white,
+                SCORE_TITLE_BASE,
+            );
+        }
+        for (t, (id, label)) in [
+            (3, "Overview"),
+            (4, "Units"),
+            (5, "Structures"),
+            (6, "Resources"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if let Some(r) = ctl(id) {
+                let colour = if t == self.score_tab {
+                    GLUE_BRIGHT
+                } else {
+                    GLUE_GREEN
+                };
+                centred(
+                    self,
+                    fb,
+                    r,
+                    label,
+                    SCORE_TAB_PX,
+                    GlueFace::Big,
+                    colour,
+                    SCORE_TAB_BASE,
+                );
+            }
+        }
+        let heads: [&str; 3] = match self.score_tab {
+            1 => ["Produced", "Killed", "Lost"],
+            2 => ["Constructed", "Razed", "Lost"],
+            3 => ["Gas Mined", "Minerals Mined", "Total Spent"],
+            _ => ["Units", "Structures", "Resources"],
+        };
+        if let Some(r) = ctl(62) {
+            let w = self.glue_measure("APM", SCORE_SMALL_PX, GlueFace::Hud);
+            self.glue_text_face(
+                fb,
+                cxu((r.x + r.w) as f32) - w,
+                r.y as f32 * 3.0 + SCORE_HEAD_BASE,
+                "APM",
+                SCORE_SMALL_PX,
+                GLUE_INFO,
+                None,
+                GlueFace::Hud,
+            );
+        }
+        for (id, h) in [10, 11, 12].into_iter().zip(heads) {
+            if let Some(r) = ctl(id) {
+                centred(
+                    self,
+                    fb,
+                    r,
+                    h,
+                    SCORE_SMALL_PX,
+                    GlueFace::Hud,
+                    GLUE_INFO,
+                    SCORE_HEAD_BASE,
+                );
+            }
+        }
+        if let Some(r) = ctl(8) {
+            centred(
+                self,
+                fb,
+                r,
+                "Total Score",
+                GLUE_BIGGER_PX,
+                GlueFace::Bigger,
+                white,
+                SCORE_TOTAL_HEAD_BASE,
+            );
+        }
+        let rows = self.score_rows();
+        let columns: Vec<[i64; 4]> = rows.iter().map(|r| r.columns(self.score_tab)).collect();
+        for (n, row) in rows.iter().enumerate() {
+            let base_id = 14 + 6 * n as i32;
+            let icons = self.score_icons.take();
+            if let (Some(g), Some(r)) = (&icons, ctl(base_id)) {
+                let frame = match row.player.race {
+                    Race::Zerg => 3,
+                    Race::Protoss => 5,
+                    _ => 4,
+                };
+                if let Some(img) = g.frame(frame) {
+                    let (w, h) = (
+                        (img.width as f32 * 0.75 * k) as i32,
+                        (img.height as f32 * 0.75 * k) as i32,
+                    );
+                    img.draw_scaled(
+                        fb,
+                        sx(r.x as f32 + SCORE_ICON_DX),
+                        sy(r.y as f32 + SCORE_ICON_DY),
+                        w,
+                        h,
+                    );
+                }
+            }
+            if let Some(r) = ctl(base_id) {
+                self.glue_text_face(
+                    fb,
+                    cxu(r.x as f32),
+                    r.y as f32 * 3.0 + SCORE_NAME_BASE,
+                    &row.name,
+                    SCORE_NAME_PX,
+                    if row.human { white } else { GLUE_INFO },
+                    None,
+                    GlueFace::Big,
+                );
+                self.glue_text_face(
+                    fb,
+                    cxu(r.x as f32 + SCORE_FORCE_DX),
+                    r.y as f32 * 3.0 + SCORE_FORCE_BASE,
+                    &row.force,
+                    SCORE_SMALL_PX,
+                    white,
+                    None,
+                    GlueFace::Hud,
+                );
+            }
+            if let (Some(apm), Some(r)) = (row.apm, ctl(62)) {
+                let t = apm.to_string();
+                let w = self.glue_measure(&t, SCORE_SMALL_PX, GlueFace::Hud);
+                let _ = r;
+                self.glue_text_face(
+                    fb,
+                    cxu(SCORE_APM_RIGHT) - w,
+                    (76 + 40 * n as i32) as f32 * 3.0 + SCORE_VALUE_BASE,
+                    &t,
+                    SCORE_SMALL_PX,
+                    white,
+                    None,
+                    GlueFace::Hud,
+                );
+            }
+            for c in 0..3 {
+                let Some(r) = ctl(base_id + 1 + c as i32) else {
+                    continue;
+                };
+                let max = columns.iter().map(|v| v[c]).max().unwrap_or(0).max(1);
+                let v = columns[n][c];
+                let (bx, by, bw, bh) = (
+                    sx(r.x as f32),
+                    sy(r.y as f32),
+                    sl(r.w as f32),
+                    sl(SCORE_BOX_H),
+                );
+                let fill = (bw as i64 * v.max(0) / max) as i32;
+                let base = 6 + 6 * (row.slot % 12);
+                if let Some(g) = &icons {
+                    // Fill share, then the frame: left / stretched middle /
+                    // right pieces (16 UI px ends at 4x HD, 0.75 at 1440p).
+                    let pieces =
+                        |fb: &mut Framebuffer, first: usize, x: i32, y: i32, w: i32, h: i32| {
+                            let (Some(l), Some(m), Some(rr)) =
+                                (g.frame(first), g.frame(first + 1), g.frame(first + 2))
+                            else {
+                                return;
+                            };
+                            let end = ((l.width as f32 * 0.75 * k) as i32).min(w / 2);
+                            l.draw_scaled(fb, x, y, end, h);
+                            m.draw_scaled(fb, x + end, y, (w - 2 * end).max(0), h);
+                            rr.draw_scaled(fb, x + w - end, y, end, h);
+                        };
+                    if fill > 0 {
+                        let inset = sl(SCORE_FILL_INSET);
+                        pieces(
+                            fb,
+                            base,
+                            bx,
+                            by + inset,
+                            fill.max(2 * inset),
+                            bh - 2 * inset,
+                        );
+                    }
+                    pieces(fb, base + 3, bx, by, bw, bh);
+                }
+                centred(
+                    self,
+                    fb,
+                    UiRect::new(r.x, r.y, r.w, r.h),
+                    &v.to_string(),
+                    SCORE_SMALL_PX,
+                    GlueFace::Hud,
+                    white,
+                    SCORE_BOX_VALUE_BASE,
+                );
+            }
+            self.score_icons = icons;
+            if let Some(r) = ctl(base_id + 4) {
+                centred(
+                    self,
+                    fb,
+                    r,
+                    &columns[n][3].to_string(),
+                    GLUE_BIG_PX,
+                    GlueFace::Big,
+                    white,
+                    SCORE_TOTAL_BASE,
+                );
+            }
+        }
+        if let Some(r) = ctl(9) {
+            let secs = self.world.tick / galaxycraft::sim::TICKS_PER_SECOND as u64;
+            let text = format!("Elapsed Time: {:02}:{:02}", secs / 60, secs % 60);
+            self.glue_text_face(
+                fb,
+                cxu(r.x as f32),
+                r.y as f32 * 3.0 + SCORE_ELAPSED_BASE,
+                &text,
+                GLUE_BIG_PX,
+                white,
+                None,
+                GlueFace::Big,
+            );
+        }
+        for (id, label, colour) in [
+            (61, "Save Replay", SCORE_DISABLED),
+            (63, "Watch Replay", SCORE_DISABLED),
+            (7, "Ok", GLUE_GREEN),
+        ] {
+            if let Some(r) = ctl(id) {
+                centred(
+                    self,
+                    fb,
+                    r,
+                    label,
+                    GLUE_BIGGER_PX,
+                    GlueFace::Bigger,
+                    colour,
+                    SCORE_BUTTON_BASE,
+                );
+            }
+        }
+    }
 
-        for row in 0..8 {
-            let Some(r) = rows.get(row) else {
-                break;
-            };
-            let player = self.world.players.get(row);
-            fb.rect(
-                r.x,
-                r.y,
-                r.w,
-                r.h,
-                if row == self.local_player {
-                    Rgb::new(30, 48, 66).blend(Rgb::new(20, 28, 40), 130)
-                } else {
-                    Rgb::new(10, 16, 24).blend(Rgb::new(20, 28, 40), 170)
-                },
-            );
-            fb.rect_outline(
-                r.x,
-                r.y,
-                r.w,
-                r.h,
-                if row == self.local_player {
-                    Rgb::new(100, 200, 255)
-                } else {
-                    Rgb::new(75, 90, 110)
-                },
-            );
-            let base = r.y + (6.0 * scale) as i32;
-            let Some(player) = player else {
-                fb.text(
-                    r.x + 6,
-                    base,
-                    &format!("P{}  -", row + 1),
-                    Rgb::new(120, 130, 145),
-                    1,
-                );
-                fb.text(
-                    r.x + 6,
-                    base + (14.0 * scale) as i32,
-                    "not in game",
-                    Rgb::new(95, 105, 120),
-                    1,
-                );
+    /// Players on the score screen: every slot in the game except rescuable
+    /// and neutral ones, in slot order.
+    fn score_rows(&mut self) -> Vec<ScoreRow> {
+        let slots = self.scenario.player_slots();
+        let minutes = (self.world.tick as f64 / galaxycraft::sim::TICKS_PER_SECOND as f64 / 60.0)
+            .max(1.0 / 60.0);
+        let actions = self.world.recorder.as_ref().map_or(0, |r| r.cmds.len());
+        let mut rows = Vec::new();
+        for s in slots.iter().filter(|s| s.active && (s.human || s.computer)) {
+            let Some(p) = self.world.players.get(s.slot).cloned() else {
                 continue;
             };
-            fb.text(
-                r.x + 6,
-                base,
-                &format!("P{}", row + 1),
-                if row == self.local_player {
-                    Rgb::new(255, 240, 170)
-                } else {
-                    Rgb::new(220, 225, 235)
-                },
-                1,
-            );
-            fb.text(
-                r.x + (158.0 * scale) as i32,
-                base,
-                &format!("{}", player.kills),
-                Rgb::new(210, 230, 210),
-                1,
-            );
-            fb.text(
-                r.x + (262.0 * scale) as i32,
-                base,
-                &format!("{}", player.deaths),
-                Rgb::new(230, 210, 210),
-                1,
-            );
-            fb.text(
-                r.x + (366.0 * scale) as i32,
-                base,
-                &format!("{}", player.razings),
-                Rgb::new(220, 220, 160),
-                1,
-            );
-            fb.text(
-                r.x + (474.0 * scale) as i32,
-                base,
-                &format!("{}", player.scores[0]),
-                Rgb::new(180, 210, 255),
-                1,
-            );
-            fb.text(
-                r.x + 6,
-                base + (14.0 * scale) as i32,
-                &format!(
-                    "{:?}  {}m {}g  {}",
-                    player.race,
-                    player.minerals_gathered,
-                    player.gas_gathered,
-                    if player.defeated {
-                        "defeated"
-                    } else {
-                        "active"
-                    }
-                ),
-                Rgb::new(145, 160, 180),
-                1,
-            );
+            if p.rescuable {
+                continue;
+            }
+            let human = s.slot == self.local_player;
+            let name = if human {
+                self.active_name()
+            } else {
+                self.nation_name(p.race, s.slot)
+            };
+            let force = self
+                .scenario
+                .force_names
+                .get(self.scenario.forces.get(s.slot).copied().unwrap_or(0) as usize)
+                .and_then(|&id| self.scenario.string(id as u32))
+                .unwrap_or("")
+                .to_string();
+            rows.push(ScoreRow {
+                slot: s.slot,
+                human,
+                name,
+                force,
+                apm: human.then(|| (actions as f64 / minutes).round() as i64),
+                player: p,
+            });
         }
-        // Column labels, placed over the shipped header separators.
-        let col_y = oy + (58.0 * scale) as i32;
-        for (offset, label) in [
-            (36, "PLAYER"),
-            (188, "KILLS"),
-            (292, "LOSSES"),
-            (396, "RAZED"),
-            (504, "SCORE"),
-        ] {
-            fb.text(
-                ox + (offset as f32 * scale) as i32,
-                col_y,
-                label,
-                Rgb::new(140, 210, 160),
-                1,
-            );
-        }
+        rows
+    }
 
-        let next = self
-            .next_map
-            .and_then(|i| self.maps.get(i))
-            .map(|m| m.name.clone());
-        let help = if let Some(name) = next {
-            format!("ENTER: next mission ({name})    M: menu    R: replay    Q: quit")
-        } else {
-            "ENTER: menu    M: menu    R: replay    Q: quit".to_string()
-        };
-        fb.text_centered(
-            fb.width / 2,
-            oy + (430.0 * scale) as i32,
-            &help,
-            Rgb::new(190, 205, 225),
-            1,
-        );
-        // The stats panel is available from the score screen as well.
-        if self.show_stats {
-            self.draw_mission_stats(fb, scale, ox, oy);
+    /// Computer player name: `network.json` `strNATION_<RACE>_<slot>`
+    /// ("Garm Brood" is the Zerg in slot 4).
+    fn nation_name(&mut self, race: Race, slot: usize) -> String {
+        if self.nation_names.is_none() {
+            let parsed = self
+                .install
+                .as_ref()
+                .and_then(|i| i.read_by_path("locales/enus/assets/rez/network.json").ok())
+                .and_then(|b| {
+                    let text =
+                        String::from_utf8_lossy(b.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&b))
+                            .to_string();
+                    serde_json::from_str::<Vec<serde_json::Value>>(&text).ok()
+                })
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|e| {
+                            Some((
+                                e.get("Key")?.as_str()?.to_string(),
+                                e.get("Value")?.as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.nation_names = Some(parsed);
         }
+        let r = match race {
+            Race::Zerg => "ZERG",
+            Race::Protoss => "PROTOSS",
+            _ => "TERRAN",
+        };
+        self.nation_names
+            .as_ref()
+            .and_then(|m| m.get(&format!("strNATION_{r}_{slot}")).cloned())
+            .unwrap_or_else(|| format!("Player {}", slot + 1))
     }
 
     fn center_on_base(&mut self) {
@@ -11714,6 +12088,7 @@ impl App {
             if defeat || victory {
                 let won = !defeat && victory;
                 self.game_result = Some(won);
+                self.end_dialog = true;
                 if won {
                     self.next_map = self.resolve_next_map();
                 }
@@ -11732,6 +12107,9 @@ impl App {
     /// client is black outside it on all 56 reference captures.
     fn draw(&mut self, fb: &mut Framebuffer) {
         self.draw_frame(fb);
+        if self.end_dialog && self.game_result.is_some() && !self.menu && !self.intro {
+            self.draw_end_dialog(fb);
+        }
         let (cx, _, cw, _) = Self::content_rect(fb);
         mask_pillarbox(fb, cx, cw);
     }
@@ -18121,6 +18499,56 @@ impl App {
         }
     }
 
+    /// End-of-mission dialog over the game (`wmission` / `lmission`, 288x128
+    /// centred): the two-line `RC_BIGTEXT` message centred in CTEXT -20 and
+    /// the default button -2 (Victory / OK).  The campaign shows no
+    /// Continue Playing / Become Observer button (retail recording).
+    fn draw_end_dialog(&mut self, fb: &mut Framebuffer) {
+        let won = self.game_result == Some(true);
+        let (dialog, text, button) = if won {
+            (
+                "wmission",
+                "Congratulations!\nYou are victorious!",
+                "v\u{4}V\u{1}ictory",
+            )
+        } else {
+            (
+                "lmission",
+                "You failed to\nachieve victory!",
+                "o\u{4}O\u{1}K",
+            )
+        };
+        self.draw_glue_dialog(fb, dialog, "", (0, ""), &[(-2, button, true)], None);
+        let Some(layout) = self
+            .console
+            .as_ref()
+            .and_then(|c| c.layout(dialog))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(c) = layout.controls.iter().find(|c| c.id == -20) else {
+            return;
+        };
+        let k = self.content_box.3 as f32 / 1440.0;
+        let r = self.hud_rect(dialog, c.abs);
+        let (x, y, w) = (
+            (r.x - self.content_box.0) as f32 / k,
+            r.y as f32 / k,
+            r.w as f32 / k,
+        );
+        for (i, line) in text.lines().enumerate() {
+            let tw = self.glue_measure(line, GLUE_BIG_PX, GlueFace::Big);
+            self.glue_shadow_text(
+                fb,
+                x + (w - tw) / 2.0,
+                y + END_DIALOG_BASE + i as f32 * END_DIALOG_PITCH,
+                line,
+                Some(END_DIALOG_TEXT),
+            );
+        }
+    }
+
     /// Mission Objectives (`objctdlg`): title, the objective text and the
     /// default `Previous (Esc)` button (134919).
     fn draw_objectives_panel(&mut self, fb: &mut Framebuffer) {
@@ -18411,6 +18839,30 @@ mod timestamp_tests {
 #[cfg(test)]
 mod menu_frame_tests {
     use super::{clear_menu_frame, Framebuffer, Rgb};
+
+    #[test]
+    fn score_columns_follow_the_retail_tabs() {
+        use super::ScoreRow;
+        let mut p = galaxycraft::sim::Player::new(galaxycraft::sim::Race::Terran, 0, 0, 0);
+        p.scores = [0, 850, 525, 0, 50, 0, 0, 0];
+        p.minerals_gathered = 776;
+        (p.units_produced, p.kills, p.razings, p.units_lost) = (17, 3, 0, 0);
+        (p.buildings_built, p.minerals_spent) = (3, 400);
+        let row = ScoreRow {
+            slot: 1,
+            human: true,
+            name: "LinKa".into(),
+            force: "Colonial Militia".into(),
+            apm: Some(13),
+            player: p,
+        };
+        // Overview: Units, Structures, Resources and their sum (retail
+        // Wasteland: 900 + 525 + 776 = 2201).
+        assert_eq!(row.columns(0), [900, 525, 776, 2201]);
+        assert_eq!(row.columns(1), [17, 3, 0, 900]);
+        assert_eq!(row.columns(2), [3, 0, 0, 525]);
+        assert_eq!(row.columns(3), [0, 776, 400, 776]);
+    }
 
     #[test]
     fn layer_cache_reproduces_a_translucent_draw() {

@@ -100,6 +100,9 @@ pub struct Scenario {
     /// `FORC` force (0..=3) of players 1..8; all in force 1 without the
     /// section.
     pub forces: [u8; 8],
+    /// `FORC` force names (1-based `STR` ids, 0 = unnamed): the score
+    /// screen's second line ("Colonial Militia").
+    pub force_names: [u16; 4],
     /// `MBRF` mission-briefing triggers (`TRIG` layout, briefing actions;
     /// see `crate::ready_room`).
     pub briefing_triggers: Vec<u8>,
@@ -428,9 +431,15 @@ impl Scenario {
             }
         }
         let mut forces = [0u8; 8];
+        let mut force_names = [0u16; 4];
         if let Some(raw) = sections.get("FORC") {
             for (dst, src) in forces.iter_mut().zip(raw.iter()) {
                 *dst = (*src).min(3);
+            }
+            for (k, name) in force_names.iter_mut().enumerate() {
+                if raw.len() >= 10 + 2 * k {
+                    *name = u16_at(raw, 8 + 2 * k);
+                }
             }
         }
 
@@ -452,6 +461,7 @@ impl Scenario {
             sides,
             triggers: sections.get("TRIG").map(|s| s.to_vec()).unwrap_or_default(),
             forces,
+            force_names,
             briefing_triggers: sections.get("MBRF").map(|s| s.to_vec()).unwrap_or_default(),
         })
     }

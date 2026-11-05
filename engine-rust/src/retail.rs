@@ -578,7 +578,7 @@ impl RetailInstall {
     pub fn ensure_cache(&self, dest: &Path) -> Result<AssetReport> {
         let marker = dest.join(".complete");
         let want =
-            b"galaxycraft retail cache v19 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates, swish-out sound, retail mission titles, rescue sounds, terran ready room + slot frames + projector)\n";
+            b"galaxycraft retail cache v19 (map trigger sounds, creep edges, objectives/tips dialogs, hd console dlg, hd hud art, minimap layout, hd terrain, consoles, menus, cinematics, fonts, ui layouts, campaign console, palcs backdrop, phist popup, campaign prompt, glue small font, create variants, chat + toon registry, login/load list plates, swish-out sound, retail mission titles, rescue sounds, terran ready room + slot frames + projector, score backdrops + icons)\n";
         if fs::read(&marker)
             .map(|current| current == want)
             .unwrap_or(false)
@@ -1316,6 +1316,19 @@ pub const GLUE_ART: &[&str] = &[
     "glue/readyt/start.webm",
     "glue/readyt/proj.webm",
     "glue/readyt/proloop.webm",
+    // Score-screen backdrops: `pal<race><victory|defeat>/backgnd.dds`.
+    "glue/scoretv/iscore.dds.grp",
+    "glue/scoretd/iscore.dds.grp",
+    "glue/scorezv/iscore.dds.grp",
+    "glue/scorezd/iscore.dds.grp",
+    "glue/scorepv/iscore.dds.grp",
+    "glue/scorepd/iscore.dds.grp",
+    "glue/paltv/backgnd.dds",
+    "glue/paltd/backgnd.dds",
+    "glue/palzv/backgnd.dds",
+    "glue/palzd/backgnd.dds",
+    "glue/palpv/backgnd.dds",
+    "glue/palpd/backgnd.dds",
     "glue/scoretd/pmain.dds",
     "glue/scoretd/pinset.dds",
     "glue/scoretd/scorebox.dds",

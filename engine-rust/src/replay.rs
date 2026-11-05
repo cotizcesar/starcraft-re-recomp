@@ -760,6 +760,14 @@ pub fn state_hash(w: &World) -> u64 {
         p.upgrades.hash(&mut h);
         p.defeated.hash(&mut h);
         p.minerals_gathered.hash(&mut h);
+        (
+            p.units_produced,
+            p.buildings_built,
+            p.units_lost,
+            p.buildings_lost,
+        )
+            .hash(&mut h);
+        (p.minerals_spent, p.gas_spent, p.scores).hash(&mut h);
         p.gas_gathered.hash(&mut h);
     }
     h.write_usize(w.units.len());

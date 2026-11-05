@@ -832,6 +832,37 @@ impl GlueArt {
         load_dds(root, &format!("glue/score{suffix}{variant}/pmain.dds"))
     }
 
+    /// A score-screen surface: `glue/score<race><v|d>/<name>.dds`
+    /// (`pmain`, `pinset`, `scorebox`) or, for `backgnd`, the
+    /// `glue/pal<race><v|d>/backgnd.dds` art behind the panel.
+    pub fn load_score_part(root: &Path, race: Race, victory: bool, name: &str) -> Option<DdsImage> {
+        let r = match race {
+            Race::Zerg => "z",
+            Race::Protoss => "p",
+            _ => "t",
+        };
+        let v = if victory { "v" } else { "d" };
+        let path = if name == "backgnd" {
+            format!("glue/pal{r}{v}/backgnd.dds")
+        } else {
+            format!("glue/score{r}{v}/{name}.dds")
+        };
+        load_dds(root, &path)
+    }
+
+    /// `glue/score<race><v|d>/iscore.dds.grp`: frames 3/4/5 are the Zerg,
+    /// Terran and Protoss row icons, then six bar pieces per player colour
+    /// (fill left/middle/right, frame left/middle/right) from frame 6.
+    pub fn load_score_icons(root: &Path, race: Race, victory: bool) -> Option<dds::DdsGrp> {
+        let r = match race {
+            Race::Zerg => "z",
+            Race::Protoss => "p",
+            _ => "t",
+        };
+        let v = if victory { "v" } else { "d" };
+        load_dds_grp(root, &format!("glue/score{r}{v}/iscore.dds.grp"))
+    }
+
     pub fn score_panel_path(root: &Path, race: Race, victory: bool) -> PathBuf {
         let suffix = match race {
             Race::Zerg => "z",

@@ -6,7 +6,29 @@ status is in [PROGRESS.md](PROGRESS.md).
 
 ## 2026-11-05 — Episode I (Rebel Yell) campaign flow
 
+### Added
+- The retail ready room after each Terran establishing shot: the map's
+  `MBRF` briefing script (portraits that talk, the transmission box that
+  scrolls and clears, objectives, "End of Briefing."), `glurdyt` art,
+  Start / Replay / Cancel, the projector and the Start hologram; timeline
+  measured on a retail Wasteland recording.
+- The retail end of a mission: "Congratulations! You are victorious!"
+  (`wmission`) / "You failed to achieve victory!" (`lmission`) over the
+  game, then the `gluscore` score screen with Overview / Units /
+  Structures / Resources tabs, per-player bars (`iscore`), force and
+  computer nation names ("Garm Brood"), APM and Elapsed Time.
+- Score accounting in the simulation: build scores of produced units and
+  structures, destroy scores of kills and razings, units/structures lost
+  and resources spent (also what trigger Score conditions read).
+
 ### Fixed
+- Triggers owned by a force (`FORC`) run for its players and groups 18-21
+  count the force: Boot Camp, Desperate Alliance, New Gettysburg and The
+  Hammer Falls ran none of their scripts.  Triggers first run at game
+  start ("Elapsed Time at most 0" in The Jacobs Installation).
+- Mission computers run only their `Run AI Script` scripts (the melee AI
+  made The Trump Card lose at 4 minutes); rescue range 2 tiles, from the
+  retail recording.
 - The campaign advances through `arr/mapdata.tbl`: Norad II is followed by
   The Trump Card and The Big Push by New Gettysburg; the unused shipped
   maps `terran07` ("Biting the Bullet") and `terran10` ("Operation Silent

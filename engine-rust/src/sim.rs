@@ -499,8 +499,18 @@ pub struct Player {
     pub kill_counts: [u32; 228],
     /// Trigger score categories, indexed by the CHK score type: total,
     /// units, buildings, units+buildings, kills, razings, kills+razings,
-    /// custom.
+    /// custom.  Units/buildings accumulate the `units.dat` build score of
+    /// what the player produces, kills/razings the destroy score of what
+    /// it kills (see `credit_completion` / `kill_unit`).
     pub scores: [i32; 8],
+    /// Score-screen tallies: units produced, structures constructed, units
+    /// and structures lost, resources spent.
+    pub units_produced: u32,
+    pub buildings_built: u32,
+    pub units_lost: u32,
+    pub buildings_lost: u32,
+    pub minerals_spent: i32,
+    pub gas_spent: i32,
 }
 
 impl Player {
@@ -523,7 +533,25 @@ impl Player {
             death_counts: [0; 228],
             kill_counts: [0; 228],
             scores: [0; 8],
+            units_produced: 0,
+            buildings_built: 0,
+            units_lost: 0,
+            buildings_lost: 0,
+            minerals_spent: 0,
+            gas_spent: 0,
         }
+    }
+
+    /// Pay minerals (counted as spent for the score screen).
+    pub fn pay_minerals(&mut self, amount: i32) {
+        self.minerals -= amount;
+        self.minerals_spent += amount;
+    }
+
+    /// Pay gas (counted as spent for the score screen).
+    pub fn pay_gas(&mut self, amount: i32) {
+        self.gas -= amount;
+        self.gas_spent += amount;
     }
 
     pub fn has_tech(&self, id: u8) -> bool {
@@ -1474,8 +1502,8 @@ impl World {
         }
         {
             let p = &mut self.players[owner as usize];
-            p.minerals -= ty.mineral_cost as i32;
-            p.gas -= ty.gas_cost as i32;
+            p.pay_minerals(ty.mineral_cost as i32);
+            p.pay_gas(ty.gas_cost as i32);
         }
         let order = Order::Train { unit_type };
         self.units[i].production.push_back(order);
@@ -1519,8 +1547,8 @@ impl World {
             if p.gas < ty.gas_cost as i32 {
                 return Err(SimError::NotEnoughGas);
             }
-            p.minerals -= ty.mineral_cost as i32;
-            p.gas -= ty.gas_cost as i32;
+            p.pay_minerals(ty.mineral_cost as i32);
+            p.pay_gas(ty.gas_cost as i32);
         }
         if self.supply_used(owner) + ty.supply_required as i32 > self.supply_cap(owner) {
             return Err(SimError::NotEnoughSupply);
@@ -1702,8 +1730,8 @@ impl World {
         }
         {
             let pl = &mut self.players[owner as usize];
-            pl.minerals -= ty.mineral_cost as i32;
-            pl.gas -= ty.gas_cost as i32;
+            pl.pay_minerals(ty.mineral_cost as i32);
+            pl.pay_gas(ty.gas_cost as i32);
         }
         let idx = self.spawn_px(owner as usize, addon_type, px / fp(1), py / fp(1))?;
         self.units[idx].completed = false;
@@ -1745,8 +1773,8 @@ impl World {
             if p.gas < ty.gas_cost as i32 {
                 return Err(SimError::NotEnoughGas);
             }
-            p.minerals -= ty.mineral_cost as i32;
-            p.gas -= ty.gas_cost as i32;
+            p.pay_minerals(ty.mineral_cost as i32);
+            p.pay_gas(ty.gas_cost as i32);
         }
         self.units[i].type_id = uid::EGG;
         self.units[i].morph_to = Some(target_type);
@@ -1922,8 +1950,8 @@ impl World {
             if p.gas < ty.gas_cost as i32 {
                 return Err(SimError::NotEnoughGas);
             }
-            p.minerals -= ty.mineral_cost as i32;
-            p.gas -= ty.gas_cost as i32;
+            p.pay_minerals(ty.mineral_cost as i32);
+            p.pay_gas(ty.gas_cost as i32);
         }
         let old_max = self.data.unit(self.units[i].type_id).hit_points_raw.max(1) as i64;
         let old_hp = self.units[i].hp.max(1) as i64;
@@ -1993,8 +2021,8 @@ impl World {
             if p.gas < t.gas_cost as i32 {
                 return Err(SimError::NotEnoughGas);
             }
-            p.minerals -= t.mineral_cost as i32;
-            p.gas -= t.gas_cost as i32;
+            p.pay_minerals(t.mineral_cost as i32);
+            p.pay_gas(t.gas_cost as i32);
         }
         if self.units[i].order != Order::Idle {
             return Err(SimError::ProducerBusy);
@@ -2050,8 +2078,8 @@ impl World {
             if p.gas < g as i32 {
                 return Err(SimError::NotEnoughGas);
             }
-            p.minerals -= m as i32;
-            p.gas -= g as i32;
+            p.pay_minerals(m as i32);
+            p.pay_gas(g as i32);
         }
         if self.units[i].order != Order::Idle {
             return Err(SimError::ProducerBusy);
@@ -2540,6 +2568,26 @@ impl World {
         }
     }
 
+    /// A unit or structure the player made is finished: count it and add
+    /// its `units.dat` build score (pre-placed and temporary units never
+    /// pass here).
+    fn credit_completion(&mut self, i: usize) {
+        let (owner, type_id) = (self.units[i].owner as usize, self.units[i].type_id);
+        if owner >= self.players.len() || is_resource_type(type_id) {
+            return;
+        }
+        let ty = self.data.unit(type_id);
+        let (building, score) = (ty.is_building(), ty.build_score as i32);
+        let p = &mut self.players[owner];
+        if building {
+            p.buildings_built += 1;
+            p.scores[2] += score;
+        } else {
+            p.units_produced += 1;
+            p.scores[1] += score;
+        }
+    }
+
     fn update_construction(&mut self, i: usize) {
         if self.units[i].completed {
             return;
@@ -2551,6 +2599,7 @@ impl World {
                 if let Some(target) = self.units[i].morph_to.take() {
                     self.units[i].type_id = target;
                 }
+                self.credit_completion(i);
                 let ty = self.data.unit(self.units[i].type_id).clone();
                 self.units[i].hp = ty.hit_points_raw as i32;
                 if ty.has_shields {
@@ -2608,6 +2657,7 @@ impl World {
                     spawn_pos.0 / fp(1),
                     spawn_pos.1 / fp(1),
                 ) {
+                    self.credit_completion(new_idx);
                     if let Some(rally) = rally {
                         self.units[new_idx].order = Order::Move { pos: rally };
                     }
@@ -3792,8 +3842,14 @@ impl World {
                 u.addon = None;
             }
         }
+        let building = self.data.unit(type_id).is_building();
         if owner < self.players.len() {
             self.players[owner].deaths += 1;
+            if building {
+                self.players[owner].buildings_lost += 1;
+            } else {
+                self.players[owner].units_lost += 1;
+            }
             if (type_id as usize) < self.players[owner].death_counts.len() {
                 self.players[owner].death_counts[type_id as usize] += 1;
             }
@@ -3803,8 +3859,12 @@ impl World {
             if (type_id as usize) < self.players[killer].kill_counts.len() {
                 self.players[killer].kill_counts[type_id as usize] += 1;
             }
-            if self.data.unit(type_id).is_building() {
+            let destroy = self.data.unit(type_id).destroy_score as i32;
+            if building {
                 self.players[killer].razings += 1;
+                self.players[killer].scores[5] += destroy;
+            } else {
+                self.players[killer].scores[4] += destroy;
             }
         }
         // Loaded units die with their transport/bunker (retail behaviour);
@@ -4502,8 +4562,8 @@ impl World {
         }
         {
             let p = &mut self.players[owner];
-            p.minerals -= ty.mineral_cost as i32;
-            p.gas -= ty.gas_cost as i32;
+            p.pay_minerals(ty.mineral_cost as i32);
+            p.pay_gas(ty.gas_cost as i32);
         }
         let worker_is_drone = self.units[i].type_id == uid::DRONE;
         let Ok(bidx) = self.spawn_px(owner, unit_type, pos.0, pos.1) else {
@@ -4576,7 +4636,7 @@ impl World {
             return;
         }
         if payable > 0 {
-            self.players[owner].minerals -= payable;
+            self.players[owner].pay_minerals(payable);
             self.units[i].repair_debt %= 256;
         }
         self.units[t].hp += heal;
@@ -5178,8 +5238,8 @@ impl World {
                     SimError::NotEnoughGas
                 });
             }
-            p.minerals -= 200;
-            p.gas -= 200;
+            p.pay_minerals(200);
+            p.pay_gas(200);
         }
         let w = self.data.weapon(wid::NUCLEAR_STRIKE).cloned();
         let Some(w) = w else {
@@ -5253,7 +5313,7 @@ impl World {
         if self.players[owner as usize].minerals < cost {
             return Err(SimError::NotEnoughMinerals);
         }
-        self.players[owner as usize].minerals -= cost;
+        self.players[owner as usize].pay_minerals(cost);
         self.units[i].hangar += 1;
         let _ = child;
         Ok(())
@@ -5810,6 +5870,40 @@ mod tests {
         assert_eq!(w.units[far].owner, 2, "nobody within reach");
         assert_eq!(w.units[held].owner, 2, "computers never rescue");
         assert_eq!(w.rescues, vec![(w.units[raynor].id, 0)]);
+    }
+
+    #[test]
+    fn score_tallies_follow_production_spending_and_kills() {
+        let mut w = open_world();
+        w.players[0].minerals = 1000;
+        let cc = w.spawn(0, uid::COMMAND_CENTER, 300, 300).unwrap();
+        let before = w.players[0].clone();
+        w.train(w.units[cc].id, uid::SCV).expect("train SCV");
+        for _ in 0..24 * 30 {
+            w.step();
+        }
+        let p = &w.players[0];
+        let scv = w.data.unit(uid::SCV).clone();
+        assert_eq!(p.units_produced, 1, "one SCV produced");
+        assert_eq!(
+            p.scores[1], scv.build_score as i32,
+            "units score = build score"
+        );
+        assert_eq!(
+            p.minerals_spent - before.minerals_spent,
+            scv.mineral_cost as i32
+        );
+        assert_eq!(p.buildings_built, 0, "the placed CC is not counted");
+        // A kill credits the destroy score and the loss to the victim.
+        let enemy = w.spawn(1, uid::MARINE, 1500, 1500).unwrap();
+        let marine_destroy = w.data.unit(uid::MARINE).destroy_score as i32;
+        let shooter = w.spawn(0, uid::MARINE, 1800, 1800).unwrap();
+        w.units[enemy].last_damage_source = w.units[shooter].id;
+        let id = w.units[enemy].id;
+        w.damage_unit(id, 100_000).expect("damage");
+        w.step();
+        assert_eq!(w.players[0].scores[4], marine_destroy);
+        assert_eq!(w.players[1].units_lost, 1);
     }
 
     #[test]
