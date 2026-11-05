@@ -1,5 +1,5 @@
 PASS sound bank: ui_move=2578 samples, ui_click=19805 samples, ui_swish=49223 samples, ui_swish_out=36110 samples loaded from the retail install
-PASS transitions: 29 screen changes, each with the press cue and the swish-in (swish-out when a list dialog leaves)
+PASS transitions: 29 screen changes, each with the press cue and the swish-in (swish-out when a list dialog leaves; press only when Main opens an entry)
      Main -> GameType -> Lan -> GameType -> Connection -> Main -> Options -> Main -> Collections -> Main -> Credits -> Main -> Hotkeys -> Main -> GameType -> Registry -> Episode -> Mission -> Episode -> SavedGames -> Episode -> Replays -> Episode -> Registry -> Main -> GameType -> Registry -> Episode -> Lobby -> Main
 PASS sounds: ui_click on 66 presses including 29 screen changes, ui_move on 51 pointer entries
      ui_move  <- sound/glue/mouseover.wav
@@ -13,10 +13,11 @@ PASS campaign win: New Gettysburg won -> profiles.bin Terran next=11, games/wins
 PASS campaign flow: Backwater Station won -> victory dialog -> score (Units tab) -> PreTerran_1 + Terran1 -> Desperate Alliance establishing shot -> ready room -> Start -> game
      ready room at 1 s: episode=1 len=5 sel=2 top=0 profile=REA next=[4, 12, 22, 32, 40, 49] result=None flow=ready map=T: Desperate Alliance t=1000 portraits=[None, None, None, Some(106)] speaking=Some(3) line="Receiving incoming trans" objectives="- Survive for 30 minutes." finished=false
 PASS campaign skip tutorial: Boot Camp ready room -> T -> Wasteland briefing
+PASS view intro: View Intro -> Select Game Type (press only) -> Expansion plays smk/starxintr.webm, Original smk/starintr.webm -> Main without a whoosh
 PASS profiles: 2 new IDs + active + Game Timer survive a restart; deleting the active ID survives another (temporary artifacts)
 PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls
 PASS lobby: race dropdowns set [Terran, Zerg, Random, Random, Random, Random, Random, Random]
-PASS frame GameType     == verified headless render (gametype) outside the menu clips (footprint 25.71%, 0 transient px)
+PASS frame GameType     == verified headless render (gametype) outside the menu clips (footprint 25.69%, 0 transient px)
 PASS frame Options      == verified headless render (options-speed) outside the menu clips (footprint 18.12%, 0 transient px)
 PASS frame Collections  == verified headless render (collections)
 PASS frame Credits      == verified headless render (credits)

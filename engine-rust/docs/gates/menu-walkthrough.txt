@@ -1,6 +1,6 @@
 step	action	screen	sounds	state
 0	move:700:700	Main	ui_move	
-1	click	GameType	ui_click+ui_swish	
+1	click	GameType	ui_click	
 2	move:1103:618	GameType		
 3	key:L	Lan	ui_click+ui_swish	lan_sel=0 entries=0 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
 4	fixture:lan-peer	Lan		lan_sel=0 entries=1 lobby= net= map=(1)Enslavers01.chk status=no games found (H to host)
@@ -18,7 +18,7 @@ step	action	screen	sounds	state
 16	move:1964:1288	Connection	ui_move	colors=[-1, -1, -1, -1] lobby_colors=[] net=none defeated=D.D. units=[9, 19, 0, 16] winner=None in_game=false tick=0 lobby_game=false local=1 computers=0 ais=0 teams=[0, 1, 2, 3] countdown=false result=None
 17	click	Main	ui_click+ui_swish_out+ui_swish	
 18	move:558:1042	Main	ui_move	
-19	click	Options	ui_click+ui_swish	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
+19	click	Options	ui_click	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 20	move:1100:391	Options	ui_move	tab=Speed speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 21	click	Options	ui_click	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 22	move:1000:544	Options	ui_move	tab=Speed speed=0.67 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
@@ -62,7 +62,7 @@ step	action	screen	sounds	state
 60	move:1860:1254	Options	ui_move	tab=Network speed=1.00 key=0.50 mouse=0.50 sens=0.50 music=0.25 sfx=0.50 flags=1111111001111000011111100101
 61	click	Main	ui_click+ui_swish	
 62	move:558:1123	Main	ui_move	
-63	click	Collections	ui_click+ui_swish	
+63	click	Collections	ui_click	
 64	move:587:386	Collections	ui_move	
 65	click	Collections	ui_click	
 66	move:963:707	Collections	ui_move	
@@ -72,7 +72,7 @@ step	action	screen	sounds	state
 70	move:2017:1277	Collections	ui_move	
 71	click	Main	ui_click+ui_swish	
 72	move:558:1273	Main	ui_move	
-73	click	Credits	ui_click+ui_swish	
+73	click	Credits	ui_click	
 74	move:558:1348	Credits		
 75	click	Credits		
 76	key:Escape	Main	ui_click+ui_swish	
@@ -97,7 +97,7 @@ step	action	screen	sounds	state
 95	click	Hotkeys	ui_click	race=Protoss sel=Some(64) action=None key=None reset=false error=false
 96	key:Escape	Main	ui_click+ui_swish	
 97	move:700:300	Main	ui_move	
-98	click	GameType	ui_click+ui_swish	
+98	click	GameType	ui_click	
 99	move:1103:618	GameType		
 100	click	Registry	ui_click+ui_swish	ids=["REA", "LinKa"] sel=0 active=REA
 101	move:800:390	Registry		ids=["REA", "LinKa"] sel=0 active=REA
@@ -141,7 +141,7 @@ step	action	screen	sounds	state
 139	move:1869:1316	Registry		ids=["REA", "LinKa"] sel=1 active=LinKa
 140	click	Main	ui_click+ui_swish_out+ui_swish	
 141	move:700:300	Main		
-142	click	GameType	ui_click+ui_swish	
+142	click	GameType	ui_click	
 143	move:1103:618	GameType		
 144	click	Registry	ui_click+ui_swish	ids=["REA", "LinKa"] sel=1 active=LinKa
 145	move:1869:1178	Registry		ids=["REA", "LinKa"] sel=1 active=LinKa
