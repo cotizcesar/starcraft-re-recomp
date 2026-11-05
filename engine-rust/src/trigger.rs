@@ -62,8 +62,6 @@ pub enum TriggerCue {
         always: bool,
         /// Transmission length (0 for Display Text Message).
         ms: u32,
-        /// A trigger's Pause Game was in force when the text was shown.
-        paused: bool,
     },
     Wav {
         player: usize,
@@ -392,6 +390,13 @@ impl TriggerSystem {
                 }
                 self.state.fired[player][ti] = true;
                 self.run_actions(world, player, ti, &trigger, 0);
+                // A Wait or Transmission holds the player's later triggers
+                // too (BW wait-blocking): Boot Camp's opening (Wait 1500)
+                // must keep its trigger 10 ("MARINE ...") from running in
+                // the same cycle, as on the retail recording.
+                if self.state.resume[player].is_some() {
+                    break;
+                }
             }
         }
     }
@@ -1268,7 +1273,6 @@ impl TriggerSystem {
                     string: action.text_id,
                     always: action.flags & ALWAYS_DISPLAY != 0,
                     ms,
-                    paused: self.paused,
                 });
             }
             8 => {
@@ -1283,7 +1287,6 @@ impl TriggerSystem {
                     string: action.text_id,
                     always: action.flags & ALWAYS_DISPLAY != 0,
                     ms: 0,
-                    paused: self.paused,
                 });
             }
             10 => {
@@ -1498,7 +1501,6 @@ mod tests {
                     string: 5,
                     always: true,
                     ms: 2000,
-                    paused: false
                 },
                 TriggerCue::Wav {
                     player: 0,
@@ -1509,7 +1511,6 @@ mod tests {
                     string: 8,
                     always: false,
                     ms: 0,
-                    paused: false
                 },
             ]
         );
@@ -1921,6 +1922,30 @@ mod tests {
         t.process(&mut w);
         assert_eq!(t.leaderboard_value(&w, 0), 3);
         assert_eq!(t.leaderboard_value(&w, 1), 1);
+    }
+
+    #[test]
+    fn a_wait_holds_the_players_later_triggers_in_the_same_cycle() {
+        // Trigger 0: Always -> Wait 1000. Trigger 1: Always -> 777 minerals.
+        let mut r = record(22, 4, 0);
+        r[320 + 12..320 + 16].copy_from_slice(&1000u32.to_le_bytes());
+        let mut r2 = record(22, 26, 0);
+        r2[320 + 20..320 + 24].copy_from_slice(&777u32.to_le_bytes());
+        r2[320 + 27] = 7;
+        r.extend_from_slice(&r2);
+        let mut t = TriggerSystem::parse(&r, &[]);
+        let mut w = world();
+        w.tick = 1;
+        t.process(&mut w);
+        assert_ne!(w.players[0].minerals, 777, "held by the wait of trigger 0");
+        for tick in 2..=60 {
+            w.tick = tick;
+            t.process(&mut w);
+        }
+        assert_eq!(
+            w.players[0].minerals, 777,
+            "runs on the next cycle after the wait"
+        );
     }
 
     #[test]

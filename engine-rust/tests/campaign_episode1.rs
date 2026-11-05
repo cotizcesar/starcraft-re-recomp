@@ -118,17 +118,19 @@ fn the_trump_card_opens_with_three_lines_in_sequence() {
 }
 
 #[test]
-fn every_episode_one_mission_sets_its_objectives_at_the_start() {
+fn every_episode_one_mission_sets_its_objectives() {
     let Some(install) = RetailInstall::from_env() else {
         eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
         return;
     };
     // Boot Camp, Desperate Alliance, New Gettysburg and The Hammer Falls
     // set them from Force 1 triggers; The Jacobs Installation on "Elapsed
-    // Time at most 0".  Retail shows every list from the first second.
+    // Time at most 0".  An opening conversation holds the player's later
+    // triggers (BW wait-blocking): The Hammer Falls sets its objectives
+    // after its 17.2 s + 3.4 s transmissions.
     for m in 1..=11u16 {
         let (sc, mut w, human) = mission(&install, m);
-        for _ in 0..2 {
+        for _ in 0..24 * 25 {
             w.step();
         }
         let t = w.triggers.as_ref().expect("triggers");
@@ -192,7 +194,7 @@ fn wasteland_rescue_conversation_follows_the_retail_timing() {
         return;
     };
     // Retail `Screencast_20261105_074011`: Raynor rescued at 15.7 s, his
-    // line at 18.1 s (under Pause Game, text gone at 22.1 s = 4.0 s), "NEW
+    // line at 18.1 s (text gone at 22.1 s = 4.0 s), "NEW
     // MISSION OBJECTIVE" at 24.1 s (line 3956 ms + Wait 2000 ms later).
     let (sc, mut w, human) = mission(&install, 2);
     let raynor = w
@@ -212,14 +214,11 @@ fn wasteland_rescue_conversation_follows_the_retail_timing() {
         }
         let t = w.triggers.as_ref().expect("triggers");
         for c in &t.cues[seen..] {
-            if let TriggerCue::Text {
-                string, ms, paused, ..
-            } = *c
-            {
+            if let TriggerCue::Text { string, ms, .. } = *c {
                 // The map pads its lines with spaces.
                 let text = sc.string(string).unwrap_or("").trim_start();
                 if text.starts_with("RAYNOR") {
-                    line = Some((tick, ms, paused));
+                    line = Some((tick, ms, galaxycraft::transmission::text_chars(text)));
                 } else if text.starts_with("NEW MISSION OBJECTIVE") {
                     objective = Some(tick);
                 }
@@ -228,11 +227,10 @@ fn wasteland_rescue_conversation_follows_the_retail_timing() {
         seen = t.cues.len();
     }
     let rescued = rescued.expect("rescued");
-    let (at, ms, paused) = line.expect("Raynor's line");
-    assert!(paused, "spoken under Pause Game");
+    let (at, ms, chars) = line.expect("Raynor's line");
     assert_eq!(
-        galaxycraft::transmission::text_life_ms(ms, 3, paused),
-        3_956,
+        galaxycraft::transmission::text_life_ms(ms, chars),
+        4_000,
         "4.0 s on screen"
     );
     let secs = |t: u64| t as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32;
@@ -357,4 +355,74 @@ fn every_episode_one_ready_room_runs_to_the_end_with_real_portraits() {
             }
         }
     }
+}
+
+#[test]
+fn boot_camp_opening_follows_the_retail_recording() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Retail `Screencast_20261105_111714` (game time from the fade-in):
+    // T-280 1.6 s, Roger that 9.1 s, In order 10.3 s, You can build 14.9 s,
+    // "- Select the Command Center" 18.1 s.  Trigger 1's Wait holds the
+    // player's other triggers, so trigger 10 ("MARINE ...") does not run.
+    let (sc, mut w, human) = mission(&install, 1);
+    let mut cues: Vec<(f32, String)> = Vec::new();
+    let mut seen = 0;
+    for tick in 0..24 * 25u64 {
+        w.step();
+        let t = w.triggers.as_ref().expect("triggers");
+        for c in &t.cues[seen..] {
+            if let TriggerCue::Text { player, string, .. } = *c {
+                if player == human {
+                    let text = sc.string(string).unwrap_or("").trim_start().to_string();
+                    cues.push((
+                        tick as f32 / galaxycraft::sim::TICKS_PER_SECOND as f32,
+                        text,
+                    ));
+                }
+            }
+        }
+        seen = t.cues.len();
+    }
+    let expect = [
+        ("ADVISOR", "The T-280", 1.6),
+        ("SCV", "Roger that", 9.1),
+        ("ADVISOR", "In order", 10.3),
+        ("ADVISOR", "You can build", 14.9),
+        ("- Select the Command Center", "", 18.1),
+    ];
+    assert!(cues.len() >= expect.len(), "{cues:?}");
+    let first = cues[0].0;
+    for ((at, text), (head, body, retail)) in cues.iter().zip(expect) {
+        assert!(text.starts_with(head) && text.contains(body), "{text:?}");
+        let gap = at - first;
+        assert!(
+            (gap - (retail - 1.6)).abs() <= 0.6,
+            "{head} {body}: {gap:.2} s after the first vs {:.2}",
+            retail - 1.6
+        );
+    }
+    assert!(
+        !cues.iter().any(|(_, t)| t.starts_with("MARINE")),
+        "{cues:?}"
+    );
+}
+
+#[test]
+fn trigger_locations_are_the_map_pixel_rectangles() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    // Boot Camp's location 1 is MRGN (0,0)-(1280,2048) px; the trigger VM
+    // multiplied it by 32, so "Bring 1 Marine to location 1" held at once
+    // and trigger 10 ("MARINE ...") ran 18.7 s in (retail: not in the
+    // first 100 s).
+    let (sc, w, _) = mission(&install, 1);
+    let t = w.triggers.as_ref().expect("triggers");
+    let l = &sc.locations[0];
+    assert_eq!(t.locations[0], (l.left, l.top, l.right, l.bottom));
+    assert!(t.locations[0].2 <= sc.width as i32 * 32);
 }

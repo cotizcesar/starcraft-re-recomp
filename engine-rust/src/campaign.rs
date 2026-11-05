@@ -320,6 +320,25 @@ pub struct BriefingPage {
     /// `</DISPLAYTIME ms>`: how long the page stays before the next one
     /// (the establishing shots use 5000).
     pub display_ms: Option<u32>,
+    /// `</VIDEOAUTOPROCEED>`: the page leaves when its video ends.
+    pub auto_proceed: bool,
+}
+
+impl BriefingPage {
+    /// When the page leaves on its own (ms after it showed), given its
+    /// video's length: `DISPLAYTIME n > 0` after n ms, `VIDEOAUTOPROCEED`
+    /// when the video ends (Boot Camp's TR1035: 0.67 s, retail 28.6 ->
+    /// 29.3 s); otherwise never.  `DISPLAYTIME 0` pages wait for the
+    /// player (INFERENCE: Rebel Yell's three text pages stayed 7.95 /
+    /// 9.65 / 9.0 s on the retail recording, matching neither their 3.3 s
+    /// videos nor their 4.0-5.7 s sounds).
+    pub fn due_ms(&self, video_ms: Option<u64>) -> Option<u64> {
+        match self.display_ms {
+            Some(ms) if ms > 0 => Some(ms as u64),
+            _ if self.auto_proceed => video_ms,
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -364,6 +383,8 @@ pub fn parse_script(source: &str) -> BriefingScript {
                     {
                         pages.push(std::mem::take(&mut current));
                     }
+                    // A page without its own DISPLAYTIME keeps the last one.
+                    current.display_ms = display_ms;
                 }
                 "BACKGROUND" => {
                     background = non_empty(arg).map(|s| s.to_string());
@@ -372,10 +393,16 @@ pub fn parse_script(source: &str) -> BriefingScript {
                     font = non_empty(arg).map(|s| s.to_string());
                 }
                 "TEXTBOX" => textbox = true,
-                "DISPLAYTIME" => display_ms = arg.parse().ok(),
+                "DISPLAYTIME" => {
+                    // Per page: Rebel Yell's video pages say 0, its
+                    // establishing shot 6000 in the same script.
+                    display_ms = arg.parse().ok();
+                    current.display_ms = display_ms;
+                }
                 "SCREENLOWERLEFT" => lower_left = true,
                 "VIDEO" | "VIDEOAUTOPROCEED" => {
                     current.video = non_empty(arg).map(|s| s.to_string());
+                    current.auto_proceed = tag == "VIDEOAUTOPROCEED";
                 }
                 // Timing, fades, comments and unknown directives do not add
                 // copy; unknown tags are ignored rather than rendered.
@@ -405,7 +432,6 @@ pub fn parse_script(source: &str) -> BriefingScript {
         page.font = font.clone();
         page.textbox = textbox;
         page.screen_lower_left = lower_left;
-        page.display_ms = display_ms;
         page.text = page.text.trim().to_string();
     }
     // A page's `TEXTBOX`/`SCREENLOWERLEFT` state applies from the directive
@@ -471,6 +497,25 @@ pub fn load_briefing(install: &RetailInstall, mission: &CampaignMission) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pages_leave_after_their_display_time_or_video() {
+        let script = parse_script(
+            "</DISPLAYTIME 0>\n</VIDEO a.webm>\n</TEXTBOX>\nText\n</PAGE>\n\
+             </DISPLAYTIME 0>\n</VIDEOAUTOPROCEED b.webm>\n</PAGE>\n\
+             </DISPLAYTIME 6000>\n\"BOOT CAMP\"\n</PAGE>\n",
+        );
+        let p = &script.pages;
+        assert_eq!(p.len(), 3);
+        assert_eq!(
+            p[0].due_ms(Some(3_334)),
+            None,
+            "DISPLAYTIME 0 waits for the player"
+        );
+        assert!(p[1].auto_proceed);
+        assert_eq!(p[1].due_ms(Some(667)), Some(667));
+        assert_eq!(p[2].due_ms(None), Some(6_000));
+    }
 
     #[test]
     fn mission_order_keeps_branches_consecutive() {

@@ -21,6 +21,18 @@ status is in [PROGRESS.md](PROGRESS.md).
   structures, destroy scores of kills and razings, units/structures lost
   and resources spent (also what trigger Score conditions read).
 
+### Fixed
+- Trigger locations were scaled x32 (MRGN is already in pixels), so every
+  location condition and action covered the whole map: Boot Camp jumped
+  to its Marine lesson 18 s in.
+- A Wait or Transmission now holds the player's later triggers in the
+  same cycle (BW wait-blocking), not only from the next one.
+- Trigger text stays 62 ms per character (at least 4 s, at least the
+  transmission); up to 11 lines on screen.
+- Briefing pages honour their own `DISPLAYTIME`: video pages with 0 wait
+  for a click (they flashed past), `VIDEOAUTOPROCEED` leaves when its
+  video ends; the ready-room text holds 4 s, then scrolls linearly.
+
 ### Added
 - Boot Camp's "Skip Tutorial" in the ready room (MBRF action 9): marks
   the tutorial done and opens the Wasteland briefing.
