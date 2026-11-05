@@ -310,6 +310,38 @@ FLOW_SCRIPT = ",".join(
 )
 
 
+# Boot Camp's briefing enables Skip Tutorial (MBRF action 9): a fresh
+# profile starts the tutorial, its five establishing pages, the ready room,
+# then T opens the Wasteland briefing (session log 93).
+SKIP_SCRIPT = ",".join(
+    TO_TERRAN_LIST + ["move:1262:666", "click"] + ["briefing-key:Enter"] * 5
+    + ["ready-at:120000", "briefing-key:T"]
+)
+
+
+def campaign_skip_tutorial_check(args) -> None:
+    saves = Path(tempfile.mkdtemp(prefix="gc-flow-"))
+    outdir = Path(tempfile.mkdtemp(prefix="gc-flow-walk-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(outdir),
+               GALAXYCRAFT_SAVES=str(saves))
+    proc = subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", "2560",
+         "--height", "1440", "--menu-at", WALK_MENU_AT, "--menu-script", SKIP_SCRIPT],
+        env=env, text=True, capture_output=True,
+    )
+    if proc.returncode != 0:
+        fail(f"skip check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
+    rows = parse_tsv(outdir / "walk.tsv")
+    room = rows[-2]["state"]
+    if "flow=ready map=T: Boot Camp" not in room or "Supply Depots" not in room:
+        fail(f"Boot Camp ready room: {room!r}")
+    if "flow=briefing map=T: Wasteland" not in rows[-1]["state"]:
+        fail(f"after Skip Tutorial: {rows[-1]['state']!r}")
+    shutil.rmtree(saves, ignore_errors=True)
+    shutil.rmtree(outdir, ignore_errors=True)
+    print("PASS campaign skip tutorial: Boot Camp ready room -> T -> Wasteland briefing")
+
+
 def campaign_flow_check(args) -> None:
     saves = Path(tempfile.mkdtemp(prefix="gc-flow-"))
     outdir = Path(tempfile.mkdtemp(prefix="gc-flow-walk-"))
@@ -602,6 +634,7 @@ def main() -> int:
             fail(f"mission list state after {what} not observed ({frag}); saw {sorted(set(mis))}")
     campaign_win_check(args)
     campaign_flow_check(args)
+    campaign_skip_tutorial_check(args)
     profile_persistence_check(args)
     print("PASS campaign: locked prompt, list opens at top with entry 0, arrow/wheel scroll "
           "keep the selection, Down scrolls it into view, row click selects, thumb drag scrolls")

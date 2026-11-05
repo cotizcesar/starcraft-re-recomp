@@ -4671,3 +4671,35 @@ the 51-screen visual gate; three campaign-specific elements differed:
 **Verification.**  `cargo test` 479 passed, 0 failed (with `SC_INSTALL`);
 clippy 0; fmt clean; `ui_visual_diff.py` 51/51; walkthrough PASS;
 `ultrawide_diff.py` 31/31; `progress.py --check` OK.
+
+## 2026-11-05 (93) — All of Episode I audited against the shipped mission data
+
+PR #14 merged (`6cfc0ff`).  The user points out the goal is the whole of
+campaign 1, not Wasteland.  With no retail recording of the other
+missions, the evidence is what each shipped map asks for:
+
+- **Triggers (FACT, 11 CHKs).**  Conditions used: 1 countdown, 2 command,
+  3 bring, 4 accumulate, 5 kill, 11 switch, 12 elapsed time, 15 deaths;
+  actions 1-16, 17, 19, 22-24, 26, 28, 30-32, 38, 39, 42, 43 — all
+  implemented by the VM (only action 47, Draw, is not, and no Episode I
+  map uses it).  Briefing actions 1-9 all implemented.
+- **AI scripts (FACT).**  Run by the maps: Ter3, Suic, ClrC, EnBk, Rscu,
+  Te5H, Ter5, Te6b, Ter6, Ter8, Tr9H, Tr9L, SuiR, T11a, T11b, T11z, T12N,
+  T12P; all present in `aiscript.bin`/`bwscript.bin`.  Opcodes whose
+  `CampaignAi` arm only advances the program counter: if_dif, if_towns,
+  move_dt, debug, value_area, get_oldpeons, wait_upgrades, set_attacks,
+  implode, guard_all, wait_finishattack, quick_attack, fake_nuke,
+  help_iftrouble.  Of these only `get_oldpeons` appears, in Revolution's
+  `ClrC`.
+- **Ready rooms.**  All 11 scripts run to their end (48.9 s New
+  Gettysburg ... 166.7 s Boot Camp), set objectives, and use portraits of
+  units 16 / 19 / 20 / 23 / 27 / 29 / 106, whose idle and talking clips
+  all exist in the install.  Only Boot Camp enables Skip Tutorial (MBRF
+  action 9): it had no label or effect; now `gluRdyT-3` on FLCBTN 19,
+  key T, records the tutorial as done (progress only, INFERENCE) and
+  opens the Wasteland briefing (walkthrough `campaign skip tutorial`).
+
+**Verification.**  `cargo test` 480 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 7/7); clippy 0; fmt clean; `ui_visual_diff.py`
+51/51; walkthrough PASS (win, flow, skip tutorial); `progress.py --check`
+OK.

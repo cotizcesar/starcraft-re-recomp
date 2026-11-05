@@ -305,3 +305,56 @@ fn wasteland_victory_fires_within_one_trigger_cycle() {
         "victory {delay} ticks after the tenth Marine"
     );
 }
+
+#[test]
+fn every_episode_one_ready_room_runs_to_the_end_with_real_portraits() {
+    let Some(install) = RetailInstall::from_env() else {
+        eprintln!("skipping: set SC_INSTALL to a StarCraft installation");
+        return;
+    };
+    use galaxycraft::portrait::{clip_path, PortData, PortraitClip};
+    let data = install.game_data().expect("game data");
+    let dat = PortData::parse(&install.read("arr/portdata.dat").expect("portdata")).expect("parse");
+    let tbl =
+        galaxycraft::tables::StringTable::parse(&install.read("arr/portdata.tbl").expect("tbl"))
+            .expect("tbl parse");
+    for m in 1..=11u16 {
+        let (sc, _, human) = mission(&install, m);
+        let mut room = galaxycraft::ready_room::ReadyRoom::from_scenario(&sc, human)
+            .unwrap_or_else(|| panic!("mission {m} has an MBRF briefing"));
+        let mut units = std::collections::BTreeSet::new();
+        let mut t = 0;
+        while !room.finished() && t < 300_000 {
+            room.advance(t);
+            units.extend(room.portraits.iter().flatten().copied());
+            t += 100;
+        }
+        assert!(room.finished(), "mission {m}: briefing ends (at {t} ms)");
+        assert!(
+            room.objectives.is_some(),
+            "mission {m}: briefing objectives"
+        );
+        assert_eq!(
+            room.skip_tutorial,
+            m == 1,
+            "mission {m}: Skip Tutorial only in Boot Camp"
+        );
+        for unit in units {
+            for talking in [false, true] {
+                let portrait = data.unit(unit).portrait;
+                let path = clip_path(
+                    &dat,
+                    &tbl,
+                    PortraitClip {
+                        portrait,
+                        talking,
+                        clip: 0,
+                    },
+                    0,
+                )
+                .unwrap_or_else(|| panic!("mission {m}: portrait of unit {unit}"));
+                assert!(install.read_by_path(&path).is_ok(), "mission {m}: {path}");
+            }
+        }
+    }
+}

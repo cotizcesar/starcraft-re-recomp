@@ -21,6 +21,10 @@ status is in [PROGRESS.md](PROGRESS.md).
   structures, destroy scores of kills and razings, units/structures lost
   and resources spent (also what trigger Score conditions read).
 
+### Added
+- Boot Camp's "Skip Tutorial" in the ready room (MBRF action 9): marks
+  the tutorial done and opens the Wasteland briefing.
+
 ### Fixed
 - In-game messages as retail: refused production / orders show the
   `stat_txt` error line centred over the console (was a "Cannot train:
