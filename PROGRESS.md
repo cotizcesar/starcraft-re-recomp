@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 29 | 31 | 94 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 31 | 33 | 94 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **80** | **84** | **96 %** |
+| **Overall (weighted)** | **100** | **82** | **86** | **96 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -87,7 +87,9 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Terran ready room (`MBRF` + `glurdyt`): portraits with `tframe`/`tframeh` and scanlines, transmission box, objectives, Start/Replay/Cancel, projector and hologram (frame diff vs recording 9.9 → 7.6) — `ready_room::tests`, `--shot-screen ready`
 - [x] Retail end of mission: `wmission`/`lmission` dialog and the `gluscore` score screen (four tabs, per-player rows with `iscore` bars, force and nation names, APM, Elapsed Time) on accumulated build/destroy scores — `sim::tests::score_tallies_follow_production_spending_and_kills`, `score_columns_follow_the_retail_tabs`, `--shot-screen win-dialog|victory`
 - [ ] Episode I audio timing (briefing WAVs, transmissions, rescue and victory sounds) against a retail recording with sound
-- [ ] Zerg and Protoss ready rooms (`glurdyz`/`glurdyp`) and the score-screen count-up animation
+- [x] Score-screen motion from the recording: panel slide-in (edge within 2 px at 7.8/7.9/8.0 s) and the count-up (x0.59 per 0.1 s, restarted on tab change) — `score_count_up_follows_the_retail_curve`
+- [x] In-game trigger text as retail: `blizzard-regular` 31.1 px/em at x 77 / baseline 847, lines flush left, 6 slots with blank lines, lifetime by lines; Waits resume on their tick (Raynor → NEW MISSION OBJECTIVE 5.92 s vs 6.0 s) — `a_blank_line_keeps_its_slot`, `a_wait_resumes_on_the_tick_it_ends`, `--shot-screen trigger-text`
+- [ ] Zerg and Protoss ready rooms (`glurdyz`/`glurdyp`)
 - [x] Menu walkthrough gate: transitions, retail UI sounds, mouse on every screen — `engine-rust/docs/gates/menu-walkthrough.txt`
 - [x] In-game HUD per race, minimap, selection, command card and hotkeys — `tests/render.rs`
 - [x] Pause, victory, defeat and score screens — `sc_view --shot-screen pause|score`

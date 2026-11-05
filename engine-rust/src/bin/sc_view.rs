@@ -1088,6 +1088,10 @@ struct App {
     /// 3 Resources) and its art (`backgnd`, `pinset`, `scorebox`) for the
     /// race/result it was loaded for.
     score_tab: usize,
+    /// When the score screen appeared and when its numbers started
+    /// counting (reset by a tab change).
+    score_epoch: Option<Instant>,
+    score_count_epoch: Option<Instant>,
     score_art: Option<(Race, bool, [Option<DdsImage>; 3])>,
     score_icons: Option<galaxycraft::dds::DdsGrp>,
     /// `network.json` `strNATION_*` names (computer players).
@@ -2986,6 +2990,53 @@ impl ScoreRow {
             ],
             _ => [units, structures, resources, units + structures + resources],
         }
+    }
+}
+
+/// In-game trigger text (content px, see `draw_hud`): ink widths 603 / 376
+/// / 325 px on the recording fit 31.1 px/em; line tops 729 / 777 / 825.
+const TRIGGER_TEXT_X: f32 = 77.0;
+const TRIGGER_TEXT_BOTTOM: f32 = 847.0;
+const TRIGGER_TEXT_PITCH: f32 = 48.0;
+const TRIGGER_TEXT_PX: f32 = 31.1;
+const TRIGGER_TEXT_COLOUR: Rgb = Rgb::new(214, 210, 240);
+
+/// Score-screen motion, fitted on the retail Wasteland recording
+/// (`Screencast_20261105_074531`, backdrop at 7.0 s): the panel's right
+/// edge (2187 content px at rest) is at 1653 / 1959 / 2088 at 7.8 / 7.9 /
+/// 8.0 s (slide from the left starting 0.63 s in, the remaining offset
+/// x0.43 per 0.1 s); the numbers start at 8.375 s and the remaining part
+/// shrinks x0.59 per 0.1 s (Overview 112/437/627/739/804/843/865 of 900,
+/// the same fractions on every column and again after a tab change).
+const SCORE_SLIDE_DELAY: f32 = 0.63;
+const SCORE_SLIDE_RATE: f32 = 8.44;
+const SCORE_SLIDE_FROM: f32 = 2240.0;
+const SCORE_COUNT_DELAY: f32 = 1.375;
+const SCORE_COUNT_RATE: f32 = 5.276;
+
+/// Panel x offset (content px) `t` seconds after the score screen showed.
+fn score_panel_shift(t: f32) -> f32 {
+    if t < SCORE_SLIDE_DELAY {
+        return -10_000.0;
+    }
+    let off = SCORE_SLIDE_FROM * (-(t - SCORE_SLIDE_DELAY) * SCORE_SLIDE_RATE).exp();
+    if off < 1.0 {
+        0.0
+    } else {
+        -off
+    }
+}
+
+/// A score value `t` seconds into its count-up (0 before it starts).
+fn score_count(target: i64, t: f32) -> i64 {
+    if t <= 0.0 {
+        return 0;
+    }
+    let left = target as f64 * (-(t as f64) * SCORE_COUNT_RATE as f64).exp();
+    if left.abs() < 0.5 {
+        target
+    } else {
+        target - left.round() as i64
     }
 }
 
@@ -5167,6 +5218,8 @@ fn main() {
         ui_oy: 0,
         result_panel: None,
         score_tab: 0,
+        score_epoch: None,
+        score_count_epoch: None,
         score_art: None,
         score_icons: None,
         nation_names: None,
@@ -5782,6 +5835,26 @@ fn main() {
                 app.paused = true;
                 app.draw(&mut fb);
             }
+            "trigger-text" | "trigger-objective" => {
+                // The map's own strings, as the trigger shows them.
+                app.load_map(app.map_index);
+                app.briefing = false;
+                let want = if shot_screen == "trigger-text" {
+                    "Howdy"
+                } else {
+                    "NEW MISSION OBJECTIVE"
+                };
+                if let Some(raw) = app
+                    .scenario
+                    .strings
+                    .iter()
+                    .find(|t| t.contains(want))
+                    .cloned()
+                {
+                    app.trigger_text.push(&raw, 0, 60_000);
+                }
+                app.draw(&mut fb);
+            }
             "win-dialog" | "lose-dialog" => {
                 app.load_map(app.map_index);
                 app.briefing = false;
@@ -6349,7 +6422,10 @@ impl App {
                         continue;
                     }
                     if let Some(raw) = self.scenario.string(string) {
-                        let life = galaxycraft::transmission::text_life_ms(ms);
+                        let life = galaxycraft::transmission::text_life_ms(
+                            ms,
+                            galaxycraft::transmission::text_lines(raw).len(),
+                        );
                         self.trigger_text.push(raw, now, life);
                         done.0 += galaxycraft::transmission::clean_lines(raw).len();
                     }
@@ -9770,6 +9846,10 @@ impl App {
         };
         if let Some(tab) = tab {
             self.play("ui_click");
+            if tab != self.score_tab {
+                // Retail restarts the count-up on every tab change.
+                self.score_count_epoch = Some(Instant::now());
+            }
             self.score_tab = tab;
             return;
         }
@@ -10844,7 +10924,36 @@ impl App {
         };
         let (cx, _cy, cw, ch) = Self::content_rect(fb);
         let k = ch as f32 / 1440.0;
-        let sx = |ux: f32| cx + ((320.0 + ux * 3.0) * k).round() as i32;
+        // Timeline (retail recording): backdrop at 0, the panel slides in
+        // from the left, the numbers count up; a pinned capture
+        // (`--menu-at`) shows that second, otherwise the live clock.
+        let since =
+            |e: &mut Option<Instant>| e.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
+        let (t_screen, t_count) = match self.menu_at.filter(|_| self.headless) {
+            Some(at) => (at, at - SCORE_COUNT_DELAY),
+            None => {
+                let t = since(&mut self.score_epoch);
+                let c = match self.score_count_epoch {
+                    Some(e) => e.elapsed().as_secs_f32(),
+                    None => t - SCORE_COUNT_DELAY,
+                };
+                (t, c)
+            }
+        };
+        let headless_settled = self.headless && self.menu_at.is_none();
+        let shift = if headless_settled {
+            0.0
+        } else {
+            score_panel_shift(t_screen)
+        };
+        let count = |v: i64| {
+            if headless_settled {
+                v
+            } else {
+                score_count(v, t_count)
+            }
+        };
+        let sx = |ux: f32| cx + ((320.0 + ux * 3.0 + shift) * k).round() as i32;
         let sy = |uy: f32| (uy * 3.0 * k).round() as i32;
         let sl = |u: f32| (u * 3.0 * k).round() as i32;
         let ctl = |id: i32| layout.controls.iter().find(|c| c.id == id).map(|c| c.abs);
@@ -10861,7 +10970,14 @@ impl App {
                 );
                 main.draw_scaled(fb, sx(640.0) - w, 0, w, h);
             }
-            let rows = self.score_rows();
+            // The empty frame slides in; rows, labels and numbers appear
+            // together when the count starts (retail: nothing but the
+            // frame at 7.8 s, everything at 8.4 s).
+            let rows = if headless_settled || t_screen >= SCORE_COUNT_DELAY {
+                self.score_rows()
+            } else {
+                Vec::new()
+            };
             for (n, _) in rows.iter().enumerate() {
                 if let (Some(img), Some(r)) = (pinset, ctl(13 + 6 * n as i32)) {
                     let (w, h) = (
@@ -10880,7 +10996,10 @@ impl App {
             }
         }
         self.score_art = art;
-        let cxu = |ux: f32| 320.0 + ux * 3.0;
+        if !headless_settled && t_screen < SCORE_COUNT_DELAY {
+            return;
+        }
+        let cxu = |ux: f32| 320.0 + ux * 3.0 + shift;
         let centred = |app: &mut Self,
                        fb: &mut Framebuffer,
                        r: UiRect,
@@ -10987,7 +11106,10 @@ impl App {
             );
         }
         let rows = self.score_rows();
-        let columns: Vec<[i64; 4]> = rows.iter().map(|r| r.columns(self.score_tab)).collect();
+        let columns: Vec<[i64; 4]> = rows
+            .iter()
+            .map(|r| r.columns(self.score_tab).map(count))
+            .collect();
         for (n, row) in rows.iter().enumerate() {
             let base_id = 14 + 6 * n as i32;
             let icons = self.score_icons.take();
@@ -12089,6 +12211,9 @@ impl App {
                 let won = !defeat && victory;
                 self.game_result = Some(won);
                 self.end_dialog = true;
+                self.score_tab = 0;
+                self.score_epoch = None;
+                self.score_count_epoch = None;
                 if won {
                     self.next_map = self.resolve_next_map();
                 }
@@ -12643,16 +12768,26 @@ impl App {
             .into_iter()
             .map(str::to_string)
             .collect();
-        // Bottom line just above the console plates (their top is ~65 % of
-        // the 16:9 content height).
-        let bottom = cy + (ch as f32 * 0.62) as i32;
+        // Retail (Wasteland recording, 1440p): `blizzard-regular` at 30.7
+        // px/em in lavender, pen x 77, the newest line's baseline at 845
+        // content px and older lines 48 px above it ("RAYNOR / Howdy, boys.
+        // ... / of these parts.", "NEW MISSION OBJECTIVE: / - Raynor must
+        // survive.").
+        let _ = (cx, ch);
+        // The maps pad lines with leading spaces (1998 layout); Remastered
+        // draws every line flush at x 77 (recording: "RAYNOR" and its body
+        // both start at 79).
         for (i, line) in lines.iter().rev().enumerate() {
-            fb.text(
-                cx + 12,
-                bottom - 14 * i as i32,
+            let line = line.trim_start();
+            self.glue_text_face(
+                fb,
+                TRIGGER_TEXT_X,
+                TRIGGER_TEXT_BOTTOM - TRIGGER_TEXT_PITCH * i as f32,
                 line,
-                Rgb::new(230, 230, 230),
-                1,
+                TRIGGER_TEXT_PX,
+                TRIGGER_TEXT_COLOUR,
+                None,
+                GlueFace::Hud,
             );
         }
         // Status line in the game view.
@@ -18839,6 +18974,28 @@ mod timestamp_tests {
 #[cfg(test)]
 mod menu_frame_tests {
     use super::{clear_menu_frame, Framebuffer, Rgb};
+
+    #[test]
+    fn score_count_up_follows_the_retail_curve() {
+        use super::{score_count, score_panel_shift};
+        // Overview "Units" (900) on the recording, 0.1 s apart from
+        // 8.4 s (count start 8.375 s): 112, 437, 627, 739, 804, 843, 865.
+        let seen = [112, 437, 627, 739, 804, 843, 865];
+        for (i, want) in seen.iter().enumerate() {
+            let got = score_count(900, 0.025 + 0.1 * i as f32);
+            assert!((got - want).abs() <= 12, "{i}: {got} vs {want}");
+        }
+        assert_eq!(score_count(900, 0.0), 0);
+        assert_eq!(score_count(900, 2.0), 900, "settles on the value");
+        // Panel right edge (2187 content px at rest) at 7.8 / 7.9 / 8.0 s
+        // = 0.8 / 0.9 / 1.0 s after the backdrop: 1653 / 1959 / 2088.
+        for (t, edge) in [(0.8, 1653.0), (0.9, 1959.0), (1.0, 2088.0)] {
+            let got = 2187.0 + score_panel_shift(t);
+            assert!((got - edge).abs() < 25.0, "{t}: {got} vs {edge}");
+        }
+        assert!(score_panel_shift(0.3) < -2000.0, "not in yet");
+        assert_eq!(score_panel_shift(2.0), 0.0);
+    }
 
     #[test]
     fn score_columns_follow_the_retail_tabs() {

@@ -4571,3 +4571,34 @@ keep the establishing shot only).
 steps, campaign win + flow); `menu_hover_text.py` 10/10;
 `ultrawide_diff.py` 31/31; `glue_swish_check.py` PASS; `progress.py
 --check` OK (96 %).
+
+## 2026-11-05 (90) — Score count-up, trigger text and trigger timing from the recordings
+
+- **Score count-up (FACT, `Screencast_20261105_074531`).**  Backdrop at
+  7.0 s; the empty `pmain` frame slides in from the left (right edge 1653
+  / 1959 / 2088 / 2187 content px at 7.8 / 7.9 / 8.0 s / rest: start
+  0.63 s, remaining offset x0.43 per 0.1 s); rows, labels and numbers
+  appear at 8.375 s and count up with the remaining part x0.59 per 0.1 s
+  (Overview Units 112 / 437 / 627 / 739 / 804 / 843 / 865 of 900; every
+  column the same fractions; the Units tab restarts the count: Total
+  296 / 544 / 690 / 776 / 826 / 856 / 873 / 889 / 900).
+  `score_panel_shift` / `score_count`; captures pinned with `--menu-at`
+  reproduce the edge within 2 px.
+- **Trigger text (FACT, `_074011` and `_073713`).**  `blizzard-regular`
+  31.1 px/em (ink widths 603 / 376 / 325 px), lavender, pen x 77, newest
+  baseline 847, 48 px pitch; the maps' leading spaces are not drawn; at
+  most 6 lines, a blank line keeps its slot (TIP).  Ours now matches the
+  retail ink boxes within 1-2 px (`--shot-screen trigger-text`).
+  Lifetimes: TIP 10.1 s (6 lines), SCV transmission 7.2 s (4 lines,
+  4920 ms), NEW MISSION OBJECTIVE 4.0 s (2 lines) -> 950 ms + 1525 ms per
+  line, at least the transmission (the 10.4 s / 7 s model is falsified).
+  Unexplained: Raynor's 3-line transmission under Pause Game left after
+  4.0 s (model 5.5 s).
+- **Trigger timing (FACT).**  Rescue 15.7 s, Raynor's line 18.1 s, NEW
+  MISSION OBJECTIVE 24.1 s = line 3956 ms + Wait 2000 ms after it.  Waits
+  resumed only on the 30-tick cycle (gap 7.5 s); they now resume on the
+  tick they end (gap 5.92 s; rescue -> line 2.62 s vs 2.4 s).
+
+**Verification.**  `cargo test` 472 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51; walkthrough PASS (campaign
+flow); `ultrawide_diff.py` 31/31; `menu_time_diff.py` 4/4.
