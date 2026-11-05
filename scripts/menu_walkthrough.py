@@ -305,7 +305,7 @@ def campaign_win_check(args) -> None:
 FLOW_SCRIPT = ",".join(
     TO_TERRAN_LIST
     + ["fixture:progress:1=4", "move:1262:666", "click", "key:Down", "key:Down",
-       "key:Enter", "fixture:win", "result:Enter", "intro:end",
+       "key:Enter", "fixture:win", "result:V", "result:U", "result:Enter", "intro:end",
        "briefing-key:Enter", "ready-at:1000", "briefing-key:S"]
 )
 
@@ -324,7 +324,11 @@ def campaign_flow_check(args) -> None:
         fail(f"flow check: sc_view exited {proc.returncode}: {proc.stderr[-500:]}")
     state = {r["action"]: r["state"] for r in parse_tsv(outdir / "walk.tsv")}
     want = {
-        "fixture:win": "flow=game map=T: Backwater Station result=Some(true) next=T: Desperate Alliance",
+        # The wmission dialog first, Victory (V) to the score screen, the
+        # Units tab (U), then Ok (Enter) to the films.
+        "fixture:win": "flow=game map=T: Backwater Station result=Some(true) next=T: Desperate Alliance dialog=true",
+        "result:V": "dialog=false tab=0",
+        "result:U": "dialog=false tab=1",
         "result:Enter": "flow=intro clips=smk/preterran_1.webm+smk/terran1.webm pending=T: Desperate Alliance",
     }
     for step, expected in want.items():
@@ -340,7 +344,7 @@ def campaign_flow_check(args) -> None:
         fail(f"Start: {state.get('briefing-key:S')!r}")
     shutil.rmtree(saves, ignore_errors=True)
     shutil.rmtree(outdir, ignore_errors=True)
-    print("PASS campaign flow: Backwater Station won -> PreTerran_1 + Terran1 -> "
+    print("PASS campaign flow: Backwater Station won -> victory dialog -> score (Units tab) -> PreTerran_1 + Terran1 -> "
           "Desperate Alliance establishing shot -> ready room -> Start -> game")
     print(f"     ready room at 1 s: {room}")
 

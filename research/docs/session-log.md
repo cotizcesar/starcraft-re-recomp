@@ -4497,3 +4497,77 @@ clippy 0; fmt clean; `ui_visual_diff.py` 51/51, `menu_time_diff.py` 4/4,
 walkthrough PASS (146 steps, campaign win), `ultrawide_diff.py` 31/31,
 gate outputs byte-identical; `progress.py --check` OK.
 
+
+## 2026-11-05 (89) — Episode I against the retail recordings: forces, ready room, end of mission
+
+Goal (user): campaign 1 exactly like retail.  The user recorded the
+retail client (video only, no audio track): `Screencast_20261105_073713`
+(Wasteland briefing), `_074011` (first minutes, Raynor rescue) and
+`_074531` (victory, score screen, Backwater Station briefing).
+
+- **Client harness.**  `--menu-script` gains `result:<Key>`, `intro:end`,
+  `briefing-key:<Key>` and `ready-at:<ms>`, and walk steps record the
+  campaign flow.  The walkthrough now drives, in the client: Backwater
+  Station won -> `wmission` dialog -> score screen (Units tab) ->
+  PreTerran_1 + Terran1 -> Desperate Alliance establishing shot -> ready
+  room -> Start -> game.
+- **Force triggers (FACT, shipped maps).**  Most Episode I triggers are
+  enabled for Force 1 (index 18), which the VM never ran (it only checked
+  the player and All Players), so Boot Camp, Desperate Alliance, New
+  Gettysburg and The Hammer Falls had no objectives or script.  `FORC` is
+  parsed (`Scenario::forces`, `force_names`); force triggers run for the
+  force's players in the game (`OWNR` != 0) and groups 18-21 count the
+  force.  Triggers also run at tick 1: The Jacobs Installation sets its
+  objectives on "Elapsed Time at most 0".  All 11 missions now show
+  objectives at 0 s.
+- **Mission AI.**  The skirmish `SimpleAi` drove campaign computers that
+  have no `Run AI Script`; The Trump Card was lost at 233 s only with it.
+  Missions now run scripted AI only (INFERENCE: retail computers act only
+  through their scripts).  New Gettysburg still loses Kerrigan at 230 s
+  with an idle player, from its scripted attacks.
+- **Rescue range (measured).**  Raynor changes hands at 15.7 s with the
+  nearest Marine ~55 px away and not at ~65-75 px half a second earlier:
+  `RESCUE_RANGE_PX` 96 -> 64 (still INFERENCE on the exact rule).
+- **Ready room (FACT: `MBRF`, `glurdyt.ui.json`, `rez/flc.json`,
+  recording).**  `MBRF` uses the `TRIG` record with briefing actions (1
+  Wait, 2 Play WAV, 3 Text Message, 4 Objectives, 5/6 Show/Hide Portrait
+  with the slot in `group`, 8 Transmission).  Recording: establishing shot
+  2.80-8.00 s (`DISPLAYTIME` 5000, now parsed and honoured), room at
+  8.05 s, script time 0 at 9.10 s (first portrait), first line at 10.10 s
+  (1000 ms Wait), Duke at 36.70 s (model 27.469 s of script), Duke's text
+  cleared at 64.90 s (= his line's end) and Duke gone at 65.6 s (500 ms
+  Wait).  `ready_room::ReadyRoom` runs that model; the box empties at each
+  line's end.  Drawing: `palrt/backgnd`, RECT art at 4x HD / 0.75 with
+  `RC_ANCHOR_TOPRIGHT` anchoring (P1Terr 2308 px vs 1856), portraits over
+  the frames with `tframe<n>`/`tframeh<n>` (red border at 0.75 = 339x329
+  px, as measured) and scanlines (6 px period, odd UI rows at ~half),
+  `blizzard-regular` 35.1 px/em transmissions and 30.7 objectives,
+  Eurostile 46.7 heading (fitted by ink width; rows within 1 px), the
+  `proj`/`proloop` projector (opaque, at [42,-50] from FLCBTN 13) and the
+  `start.webm` planet hologram at [28,-50], `FLC_FADED` = half alpha (fit
+  17.7 -> 14.5).  Frame diff at 50 s: 9.9 -> 7.6.
+- **End of mission (FACT, recording + `wmission`/`lmission`/`gluscore`).**
+  The dialog shows at 3.5 s over the game (only the default button in
+  the campaign), the score screen after Victory.  Score screen rebuilt on
+  `gluscore.ui.json`: `pal<race><v|d>/backgnd` behind
+  `score<race><v|d>/pmain` (anchored right), `pinset` rows, `scorebox`,
+  `iscore.dds.grp` (frames 3/4/5 race icons; from 6, six bar pieces per
+  player colour), tabs Overview/Units/Structures/Resources with the
+  recording's columns, force names from `FORC`, computer names from
+  `network.json` `strNATION_<RACE>_<slot>` ("Garm Brood" = Zerg slot 4),
+  APM, Elapsed Time.  The sim now accumulates build/destroy scores,
+  produced/constructed/lost counts and spending (`Player::pay_*`), which
+  trigger Score conditions read too.  The retail values count up on
+  entry (not reproduced yet).
+
+**Not covered.**  The recordings have no audio: briefing WAV timing,
+transmission audio, rescue and victory sounds remain unverified.  Zerg and
+Protoss ready rooms (`glurdyz`/`glurdyp`) are not drawn (those missions
+keep the establishing shot only).
+
+**Verification.**  `cargo test` 467 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 4/4); clippy 0; fmt clean;
+`ui_visual_diff.py` 51/51; `menu_time_diff.py` 4/4; walkthrough PASS (146
+steps, campaign win + flow); `menu_hover_text.py` 10/10;
+`ultrawide_diff.py` 31/31; `glue_swish_check.py` PASS; `progress.py
+--check` OK (96 %).
