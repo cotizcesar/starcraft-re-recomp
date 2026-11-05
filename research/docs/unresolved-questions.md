@@ -29,6 +29,9 @@ where it is recorded; open items carry the experiment that settles them.
     diff, `profile-format.md` #9).  Consequence not yet mirrored by the
     client: the locked-campaign prompt (`0x006eaac0`) only appears while
     the campaign was never started (progress 0); see `PROGRESS.md`.
+11. Classic glue screen transitions — **FACT** from a 60 fps retail
+    recording (session log 84): plates slide in ×0.75 per 1/30 s step and
+    out by 2^n − 1 UI px; static RE had hit protected code (session log 83).
 
 ## Open
 
@@ -50,10 +53,6 @@ where it is recorded; open items carry the experiment that settles them.
    - Transmission duration modifiers (`trigger::transmission_ms`).
    - The per-sprite lighting mix and lighting scale uniforms
      (`hd-lighting.md` #10).
-   - Classic glue screen transitions (panels building in on Registry,
-     Saved Games, Replays): direction, duration and easing.  Static RE
-     reached the screen classes but not the animation (session log 83);
-     needs a screen recording of the retail client.
 5. "Matrix A–F": the original definition is not in the repository; it was
    read as the six columns of the tool × capability matrix
    (`rea-capabilities.md`).  Confirm with the project owner.

@@ -4255,3 +4255,47 @@ Conclusion: the animation is not recoverable statically from this dump
 with the current tooling; the open item in `PROGRESS.md` stays open and the
 evidence request goes to the user (screen recording of the retail client).
 No engine change in this entry.
+
+## 2026-11-04 (84) — Glue swish from a retail recording
+
+Evidence: the user's 60 fps recording of the retail client (3440x1440,
+21.8 s: Single Player → Original → Registry → Ok → Load Saved → Cancel →
+Load Replay → Cancel).  Measured on extracted frames by template matching
+against the settled frame (list plate: rows 330–900, x 1700–1850; Ok and
+Cancel bays) and visual sheets.
+
+- FACT (Registry in): the backdrop cuts in alone (2.650 s); the list plate
+  enters from the left, Ok from the right, Cancel from the bottom, each
+  from just outside the 16:9 box (1408 / 932 / 372 px at 1440p).  The
+  remaining distance is ×0.75 per step (list: 1056, 792, 594, 446, 336,
+  252, 188, 144, 108, 80, 62, 48, 36, 26, 20, ..., 8, 0 px; Ok 932·0.75² =
+  524 measured), ~30 steps/s, snapping in under ~2 UI px (step 19,
+  3.300 s); every label appears at once on the next frame (3.317 s).
+- FACT (Registry out): the text vanishes on the click (5.333 s); plates
+  move away by 2^n − 1 UI px (list −2, −8, −20, −44, −92, −188, −380 px vs
+  model −3, −9, −21, −45, −93, −189, −381); the backdrop shows alone, then
+  the next screen 10 steps after the click (5.667 s).
+- FACT (Load Saved, Load Replay): the same law; Replay's tree and lower
+  plates come from the left, the information plate and Ok from the right,
+  Cancel from the bottom.  The multiplayer Create screen was not recorded
+  and does not swish in the client.
+- Note: the template gives a false minimum near −594 px on the backdrop
+  when a plate is farther out (seen on retail frames f40–f46); offsets over
+  500 px are not compared.
+
+Client: `menu::swish_in_offset/steps`, `swish_out_offset/steps` (unit test
+against the values above), `GlueSwish` in `sc_view` (in on entering
+Registry / Saved Games / Load Replay, out when leaving them, input held
+while plates leave, disabled for pinned `--menu-at` captures so the
+visual gates stay deterministic).  `--menu-script` gains `shot:NAME`
+(timed frame + the swish step it was drawn with).  New gate
+`scripts/glue_swish_check.py`: list offsets at the reported steps within
+6 px of the retail curve (step 7 −188/−188, 12 −45/−45, 18 −8/−8, out 6
+−189/−189), text hidden while moving, next screen after the plates left;
+PASS 3/3 runs.
+
+Verification: `cargo test` 450 passed, 0 failed (with `SC_INSTALL`);
+clippy 0; fmt clean; `ui_visual_diff.py` 51/51, output identical to the
+committed gate; `menu_time_diff.py` 4/4; walkthrough PASS (145 steps);
+`menu_hover_text.py` 10/10; `ultrawide_diff.py` 31/31;
+`glue_swish_check.py` PASS; `progress.py --check` OK.

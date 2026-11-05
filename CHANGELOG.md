@@ -15,6 +15,11 @@ status is in [PROGRESS.md](PROGRESS.md).
   (`webui/dist/lib/images/loadingcircle.gif`, new `gif` decoder).
 - Gates: `scripts/ultrawide_diff.py` (31 screens) and
   `scripts/menu_hover_text.py`.
+- Registry, Load Saved Game and Load Replay build in and out like the
+  retail client: the plates slide from the box edges (×0.75 per 1/30 s
+  step), the text shows once they settle, and leaving slides them out
+  (2^n − 1 UI px) before the next screen, as measured on a 60 fps retail
+  recording (gate `scripts/glue_swish_check.py`).
 
 ### Fixed
 - Ultrawide: every screen is the 16:9 picture between black bars, as in the

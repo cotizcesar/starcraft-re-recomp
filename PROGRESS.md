@@ -23,11 +23,11 @@ percentages**; other documents link here instead of restating numbers.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 30 | 13 | 13 | 100 % |
 | [Data and file formats](#data-and-file-formats) | 15 | 10 | 10 | 100 % |
-| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 20 | 21 | 95 % |
+| [Playable client (`sc_view`)](#playable-client-sc_view) | 20 | 21 | 21 | 100 % |
 | [Persistence: saves, replays, profiles](#persistence-saves-replays-profiles) | 10 | 6 | 7 | 86 % |
 | [LAN multiplayer](#lan-multiplayer) | 15 | 8 | 9 | 89 % |
 | [Reverse engineering](#reverse-engineering) | 10 | 14 | 14 | 100 % |
-| **Overall (weighted)** | **100** | **71** | **74** | **96 %** |
+| **Overall (weighted)** | **100** | **72** | **74** | **97 %** |
 
 _Last updated: 2026-11-04_
 <!-- progress:summary:end -->
@@ -88,7 +88,7 @@ or campaign editor, and patches other than 1.23.10.13515.
 - [x] Resolutions from 16:9 up to 4K and ultrawide: every screen (front end, briefing, game, score) is the 16:9 picture between black bars, pixel-identical to 16:9 — `engine-rust/docs/gates/ultrawide-diff.txt` (31/31), `scripts/ultrawide_diff.py`, `research/docs/graphics-remastered.md`
 - [x] Main menu details: the panel's animated `loadingcircle.gif` spinner, the build footer in the shipped `blizzard-regular` face, no Battle.net tag offline, mouse-over clips that start on hover without decoder starvation (142 → 0 skipped frames), per-button clip order, footer labels that keep their glyphs on hover — `engine-rust/docs/gates/menu-time-diff.txt`, `engine-rust/docs/gates/menu-hover-text.txt`, session log 2026-11-04 (82)
 - [x] Registry and Load Saved Game drawn from the shipped `glulogin`/`gluload` dialogs and `pList` plates (retail mean 3.19 → 1.32 and 6.99 → 1.18), Load Replay information from the selected replay's metadata — `engine-rust/docs/gates/ui-visual-diff.txt`, `menu::LOGIN_DIALOG`/`LOAD_DIALOG` tests
-- [ ] Glue screen transitions: the retail panels build in when a classic dialog opens (Registry, Saved Games, Replays); timing and direction need a retail capture — session log 2026-11-04 (82)
+- [x] Glue screen transitions: the plates of Registry, Saved Games and Load Replay slide in (×0.75 per 1/30 s step) and out (2^n − 1 UI px), text only when settled, measured on a 60 fps retail recording — `engine-rust/docs/gates/glue-swish.txt`, `scripts/glue_swish_check.py`, `menu::swish_*` tests, session log 2026-11-04 (84)
 - [x] Full retail campaign playable in retail order (68 missions) — `engine-rust/README.md`
 - [x] Plays from the player's own install, with no retail files in the repository — `NOTICE.md`, `sc_assets`
 - [x] In-game frame parity with the retail captures: the eight (8)The Hunters references at raw mean 2.44–3.25, all under the gate; building/mineral lighting from the retail point-light table (`anim/main.lit`) checked against a live capture — `engine-rust/docs/gates/ui-visual-diff-raw.txt`, `research/docs/hd-lighting.md`, retail test `shipped_point_light_table_matches_the_live_client_lights`, session log 2026-11-04 (80)
