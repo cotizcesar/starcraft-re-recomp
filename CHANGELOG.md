@@ -4,6 +4,16 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — LAN flow branch merged onto the current engine
+
+### Changed
+- The retail multiplayer flow (connection, games, create, lobby with teams,
+  computers, colours and chat), alliances, OpenBW score bookkeeping and
+  mining (2026-11-04 work) rebased onto edition 2024 and the Episode I
+  campaign: one score system (`credit_scores`), one hostility rule
+  (`hostile` = enemies and no rescuable side), one `condition_owners` for
+  players, forces, foes and allies.
+
 ## 2026-11-05 — Desperate Alliance against its retail recording
 
 ### Fixed

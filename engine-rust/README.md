@@ -66,7 +66,9 @@ scripts).  Tables loaded: `units.dat` 228, `weapons.dat` 130, `flingy.dat`
 
 Client: Remastered menus, campaign flow (establishing shots, Terran ready
 room, victory dialog, score screen), HD sprites, terrain, creep and
-lighting, race consoles, portraits, music and voices, saves, replays and LAN.
+lighting, race consoles, portraits, music and voices, saves, replays and the
+retail LAN flow (connection, games, create, 8-slot lobby with teams,
+computers and chat; the in-game part lives in `src/bin/sc_view/mp.rs`).
 
 Retail install access (`src/retail.rs`, checked by `tests/retail.rs` and
 `sc_assets verify`): CASC 52,498 paths / 14,382 index / 43,091 encoding
@@ -98,7 +100,7 @@ load and simulate (`sc_campaign --install`).
 |---|---|
 | Rules | `sim`, `combat`, `projectile`, `economy`, `tech`, `path`, `vision`, `orders`, `handlers`, `iscript`, `trigger`, `aiscript`, `ai`, `ids` |
 | Data | `data`, `tables`, `map`, `retail`, `retail_replay`, `sfx`, `button_sets`, `hotkey_data` |
-| Persistence and network | `replay`, `profile`, `campaign_progress`, `net` |
+| Persistence and network | `replay`, `profile`, `campaign_progress`, `net`, `multiplayer` |
 | Graphics | `render`, `dds`, `hd_anim`, `hd_sprites`, `hd_lights`, `text`, `ui`, `ui_art`, `calibration`, `menu_masks`, `scene` |
 | Front end and campaign | `menu`, `campaign`, `ready_room`, `credits`, `buttons`, `transmission` |
 | Audio and video | `audio`, `voice`, `video`, `cinematic`, `portrait` |

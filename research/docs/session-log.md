@@ -5051,3 +5051,42 @@ fails with mining forced to 1 frame ("worker 0 mined in 1 frames").
 **Evidence.**  `cargo test --release` 474 passed / 0 failed; clippy
 `-D warnings` clean; fmt clean; `scripts/mp_flow_gate.py` PASS
 (`engine-rust/docs/gates/mp-flow.txt`); `scripts/progress.py --check` OK.
+
+## 2026-11-05 (100) — LAN flow branch rebased onto main
+
+The user asked to merge `ed7cd30` / `8bf58c4` (branch `multiplayer-lan-flow`,
+session log 2026-11-04 (86) and (87) above, written on a base 40 commits
+old).  Rebased onto `main` (after entry 99) as `mp-lan-flow-rebased`.
+Conflict decisions (one implementation per behaviour):
+
+- **Scores.**  Two systems met: `credit_completion` (main: on completion,
+  pre-placed units excluded by INFERENCE) and `credit_scores` (branch:
+  OpenBW `add_completed_unit`, starting units included, FACT from a retail
+  melee score screen).  Kept `credit_scores`; kept main's losses and
+  spending; `buildings_built` renamed `structures_built`; the destroy score
+  was credited twice in `kill_unit` (both versions) — one left, by
+  `group_flags`.  `score_tallies_follow_production_spending_and_kills` now
+  expects the placed Command Center to count.
+- **Hostility.**  `hostile` (main: rescuable players) now builds on the
+  branch's `is_enemy` / `same_side` (`Player.team`): allies never fight.
+  New `set_alliance_status_stops_two_players_fighting` (trigger action 57),
+  which would fail on main before the merge.
+- **Trigger owners.**  One `condition_owners(&self, world, …)`: players
+  0-11, current 13, foes 14/26, allies 15, all 17 (branch) and forces
+  18-21 (main).  Victory/Defeat: the branch's version (same rule, keeps
+  resources alive).
+- **Client.**  Result screens: the `wmission` dialog first, then the lobby
+  score screen for lobby games or `gluscore` otherwise.  Edition 2024
+  let-chains applied to the branch code.  The walkthrough's swish-out set
+  now matches `is_glue_list` (Connection, Games, Create, Lobby).
+- **Docs.**  PROGRESS.md: alliances, mining, multiplayer front end, lobby
+  protocol/games and lobby score screen ticked with their tests; new open
+  items: special rules of Greed / Slaughter / CTF / Sudden Death (types
+  selectable, rules not applied — `GameType` only names them) and in-game
+  chat (lobby chat only).  80 % overall.
+
+**Verification.**  `cargo test` 515 passed, 0 failed (with `SC_INSTALL`,
+`--no-fail-fast`; Episode I 12/12 unchanged by the 75-frame mining);
+clippy 0; fmt clean; `mp_flow_gate.py` PASS (worst step 3.58, score 5.71);
+`ui_visual_diff.py` 51/51; walkthrough PASS (159 steps); ultrawide 31/31;
+menu timing 4/4; hover 10/10; swish PASS; `progress.py --check` OK.

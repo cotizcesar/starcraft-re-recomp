@@ -511,7 +511,10 @@ def main() -> int:
     # Every screen change whooshes in (`ui_swish`) after the press; leaving
     # a classic list dialog also whooshes out (user report on the retail
     # client, 2026-11-04).
-    glue = {"Registry", "SavedGames", "Replays"}
+    # The classic glue list dialogs (`is_glue_list` in sc_view): the
+    # multiplayer Select Connection / Games / Create / Lobby are the same
+    # family as Registry.
+    glue = {"Registry", "SavedGames", "Replays", "Connection", "Games", "MpCreate", "MpLobby"}
     prev_screen = rows[0]["screen"]
     for row in rows:
         if row["screen"] == prev_screen:
