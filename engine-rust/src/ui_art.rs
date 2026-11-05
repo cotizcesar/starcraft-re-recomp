@@ -727,10 +727,13 @@ pub struct GlueArt {
     pub create_buttons: Option<DdsImage>,
     /// Chat plate under the Create/Replay list (`glue/chatroom/pchat.dds`).
     pub create_chat: Option<DdsImage>,
-    /// Toon Registry backdrop, profile list plate and popup.
+    /// Toon Registry backdrop and popup.
     pub registry_backdrop: Option<DdsImage>,
-    pub registry_list: Option<DdsImage>,
     pub registry_popup: Option<DdsImage>,
+    /// Classic list-dialog plates: Registry (`glue/login/plist.dds`) and
+    /// Load Saved Game (`glue/load/plist.dds`).
+    pub login_list: Option<DdsImage>,
+    pub load_list: Option<DdsImage>,
     /// Shared `palnl` Ok/Cancel plates.
     pub palnl_ok: Option<DdsImage>,
     pub palnl_cancel: Option<DdsImage>,
@@ -772,7 +775,8 @@ impl GlueArt {
             create_buttons: load_dds(root, "glue/create/twobtnholder.dds"),
             create_chat: load_dds(root, "glue/chatroom/pchat.dds"),
             registry_backdrop: load_dds(root, "glue/battlenet/toonregistry/backgnd.dds"),
-            registry_list: load_dds(root, "glue/battlenet/toonregistry/toonlistbg.dds"),
+            login_list: load_dds(root, "glue/login/plist.dds"),
+            load_list: load_dds(root, "glue/load/plist.dds"),
             registry_popup: load_dds(root, "glue/battlenet/toonregistry/popopup.dds"),
             palnl_ok: load_dds(root, "glue/palnl/pok.dds"),
             palnl_cancel: load_dds(root, "glue/palnl/pcancel.dds"),

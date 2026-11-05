@@ -4,6 +4,32 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-04 — Front-end fidelity and ultrawide
+
+### Added
+- Registry and Load Saved Game drawn from the shipped `glulogin`/`gluload`
+  dialogs: the `glue/login`/`glue/load` `pList` plates (bevelled New ID /
+  Delete bays) and `FLCBTN` labels in Eurostile Extended with the hotkey
+  letter highlighted; disabled buttons grey (cache marker v17).
+- The main-menu panel shows the retail animated spinner
+  (`webui/dist/lib/images/loadingcircle.gif`, new `gif` decoder).
+- Gates: `scripts/ultrawide_diff.py` (31 screens) and
+  `scripts/menu_hover_text.py`.
+
+### Fixed
+- Ultrawide: every screen is the 16:9 picture between black bars, as in the
+  retail client; the menu arms, the Episode console plates, the in-game
+  console, briefings and the score screen no longer leave the box or shift.
+- Main menu: mouse-over clips start when the pointer enters instead of
+  freezing and jumping (142 skipped frames per hover sequence -> 0); the
+  Single Player hologram sits under the fleet, Multiplayer/Exit overlays
+  over their clips; footer labels no longer re-space on hover; the build
+  footer uses the shipped face; the Battle.net tag is gone (offline client).
+- Load Replay: the information panel shows the selected replay's map, date,
+  length, file and players with natural text spacing; folder rows no longer
+  select a replay; the stray yellow scrollbar is gone.
+- Collections: four debug rectangles removed.
+
 ## 2026-11-04 — Retail point lights for sprites
 
 ### Added

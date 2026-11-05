@@ -35,6 +35,7 @@ pub mod combat;
 pub mod data;
 pub mod dds;
 pub mod economy;
+pub mod gif;
 #[rustfmt::skip]
 pub mod handlers;
 pub mod hd_anim;

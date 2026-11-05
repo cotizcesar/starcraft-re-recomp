@@ -1,0 +1,12 @@
+2560x1440 Options       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
+2560x1440 Collections   glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
+2560x1440 Hotkeys       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
+2560x1440 Show Credits  glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
+2560x1440 View Intro    glyph runs  9/ 9  largest shift   0.5 px  colour change  94  PASS
+3440x1387 Options       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
+3440x1387 Collections   glyph runs 12/12  largest shift   0.0 px  colour change  94  PASS
+3440x1387 Hotkeys       glyph runs  7/ 7  largest shift   0.5 px  colour change  94  PASS
+3440x1387 Show Credits  glyph runs 11/11  largest shift   0.5 px  colour change  94  PASS
+3440x1387 View Intro    glyph runs  9/ 9  largest shift   0.5 px  colour change  94  PASS
+
+hover text gate: 10/10 PASS
