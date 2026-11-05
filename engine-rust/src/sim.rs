@@ -899,10 +899,13 @@ impl World {
             world.mature_creep();
         }
         if !scenario.triggers.is_empty() {
+            // `MRGN` rectangles are already in pixels (Boot Camp's location
+            // 1 is 0..1280 x 0..2048 on a 64x64-tile = 2048 px map); the
+            // old x32 made every location cover the whole map.
             let locations: Vec<(i32, i32, i32, i32)> = scenario
                 .locations
                 .iter()
-                .map(|l| (l.left * 32, l.top * 32, l.right * 32, l.bottom * 32))
+                .map(|l| (l.left, l.top, l.right, l.bottom))
                 .collect();
             world.triggers = Some(crate::trigger::TriggerSystem::parse(
                 &scenario.triggers,

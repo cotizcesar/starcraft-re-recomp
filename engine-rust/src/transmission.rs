@@ -12,37 +12,40 @@
 
 use std::path::{Path, PathBuf};
 
-/// How long trigger text stays, by the lines it takes: a base plus a
-/// time per line.  Retail Wasteland recordings (2026-11-05): TIP (6 lines
-/// with its blank one) 10.1 s, the TERRAN SCV transmission (4 lines,
-/// 4920 ms) 7.2 s, "NEW MISSION OBJECTIVE" (2 lines) 4.0 s.  Falsified
-/// earlier model: one 10.4 s Display Text and a 7 s transmission floor
-/// (the NEW MISSION text left after 4.0 s).  Not explained: Raynor's
-/// 3-line, 3956 ms transmission during Pause Game left after 4.0 s (this
-/// gives 5.5 s).
-pub const TEXT_BASE_MS: u64 = 950;
-pub const TEXT_PER_LINE_MS: u64 = 1_525;
+/// How long trigger text stays: 62 ms per visible character (map padding
+/// not counted), at least 4.0 s, and a Transmission at least as long as it
+/// talks.  Fitted on nine retail samples (2026-11-05 recordings, Wasteland
+/// and Boot Camp; error <= 0.2 s each): Display Text TIP 165 chars 10.1 s,
+/// NEW MISSION OBJECTIVE 44 chars 4.0 s, "- Select the Command Center" 60
+/// chars 3.8 s; Transmissions T-280 (112 chars, 7447 ms) 7.5 s, TERRAN SCV
+/// (113, 4920 ms) 7.2 s, Roger that (14, 1005 ms) 4.0 s, In order (71,
+/// 4531 ms) 4.5 s, You can build (56, 3146 ms) 4.0 s, Raynor (61,
+/// 3956 ms) 4.0 s.  Falsified: the per-line model (1.0-1.5 s long on the
+/// 3-line Boot Camp lines) and the paused-transmission rule it needed.
+pub const TEXT_MS_PER_CHAR: u64 = 62;
+pub const TEXT_MIN_MS: u64 = 4_000;
 
-/// On-screen lifetime of a trigger text of `lines` lines: Display Text
-/// (`transmission_ms` 0) or a Transmission, which stays at least as long
-/// as it talks.
-pub fn text_life_ms(transmission_ms: u32, lines: usize, paused: bool) -> u64 {
-    // A Transmission under a trigger's Pause Game shows its text only
-    // while it talks: Raynor's 3956 ms line (Wasteland, between Pause and
-    // Unpause Game) left at 22.1 s, 4.0 s after it showed, where every
-    // length model gives 5-5.5 s.  INFERENCE from that one sample;
-    // falsifier: a paused transmission whose text outlives it.
-    if paused && transmission_ms > 0 {
-        return transmission_ms as u64;
-    }
-    let by_lines = TEXT_BASE_MS + TEXT_PER_LINE_MS * lines as u64;
-    by_lines.max(transmission_ms as u64)
+/// Characters a trigger text shows (each line trimmed of its padding).
+pub fn text_chars(raw: &str) -> usize {
+    text_lines(raw)
+        .iter()
+        .map(|l| l.trim().chars().count())
+        .sum()
 }
 
-/// Lines visible at once above the console (oldest scroll away first):
-/// the SCV transmission (4 lines) pushes the TIP's first 4 of 6 lines out
-/// (recording, 90 s).
-pub const MAX_LINES: usize = 6;
+/// On-screen lifetime of a trigger text of `chars` visible characters:
+/// Display Text (`transmission_ms` 0) or a Transmission.
+pub fn text_life_ms(transmission_ms: u32, chars: usize) -> u64 {
+    (TEXT_MS_PER_CHAR * chars as u64)
+        .max(TEXT_MIN_MS)
+        .max(transmission_ms as u64)
+}
+
+/// Lines visible at once above the console (oldest scroll away first).
+/// FACT: 10 at once on the Wasteland recording (90.5 s: the 6-line TIP
+/// with its blank line and the 4-line SCV transmission); 11 is INFERENCE
+/// (the 6 earlier assumed is falsified by that frame).
+pub const MAX_LINES: usize = 11;
 
 /// Display lines of a trigger string: as [`clean_lines`], but a blank line
 /// between text lines keeps its slot (the TIP's gap line).
@@ -182,28 +185,31 @@ mod tests {
 
     #[test]
     fn text_lifetimes_follow_the_retail_measurement() {
-        // 1 Wasteland recordings: TIP (6 lines) 10.1 s, SCV transmission
-        // (4 lines, 4 920 ms) 7.2 s, NEW MISSION OBJECTIVE (2 lines) 4.0 s.
-        let near = |got: u64, want: u64| got.abs_diff(want) <= 250;
-        assert!(near(text_life_ms(0, 6, false), 10_100));
-        assert!(near(text_life_ms(4_920, 4, false), 7_200));
-        assert!(near(text_life_ms(0, 2, false), 4_000));
+        // (visible chars, transmission ms, measured s) on the recordings.
+        let samples = [
+            (165, 0, 10.1),
+            (44, 0, 4.0),
+            (60, 0, 3.8),
+            (112, 7_447, 7.5),
+            (113, 4_920, 7.2),
+            (14, 1_005, 4.0),
+            (71, 4_531, 4.5),
+            (56, 3_146, 4.0),
+            (61, 3_956, 4.0),
+        ];
+        for (chars, ms, seen) in samples {
+            let got = text_life_ms(ms, chars) as f64 / 1000.0;
+            assert!(
+                (got - seen).abs() <= 0.21,
+                "{chars} chars, {ms} ms: {got} vs {seen}"
+            );
+        }
         assert_eq!(
-            text_life_ms(20_000, 3, false),
+            text_life_ms(20_000, 30),
             20_000,
             "long transmissions keep their length"
         );
-    }
-
-    #[test]
-    fn a_paused_transmission_shows_only_while_it_talks() {
-        // Raynor's paused 3-line, 3956 ms transmission: 4.0 s on screen.
-        assert_eq!(text_life_ms(3_956, 3, true), 3_956);
-        assert_eq!(
-            text_life_ms(0, 2, true),
-            text_life_ms(0, 2, false),
-            "Display Text unaffected"
-        );
+        assert_eq!(text_chars("  RAYNOR\r\n     Howdy.\r\n"), 12);
     }
 
     #[test]
@@ -213,12 +219,23 @@ mod tests {
             text_lines(tip),
             vec!["TIP", "  You can select", "", "Alternatively"]
         );
+        // Retail Wasteland at 90.5 s: the TIP (with its blank line) and the
+        // SCV transmission are on screen together.
         let mut log = TextLog::default();
         log.push(tip, 0, 1_000);
         log.push("TERRAN SCV\r\na\r\nb\r\nc", 10, 1_000);
         assert_eq!(
             log.visible(20),
-            vec!["", "Alternatively", "TERRAN SCV", "a", "b", "c"]
+            vec![
+                "TIP",
+                "  You can select",
+                "",
+                "Alternatively",
+                "TERRAN SCV",
+                "a",
+                "b",
+                "c"
+            ]
         );
     }
 

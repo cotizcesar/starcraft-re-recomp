@@ -4703,3 +4703,54 @@ missions, the evidence is what each shipped map asks for:
 `tests/campaign_episode1.rs` 7/7); clippy 0; fmt clean; `ui_visual_diff.py`
 51/51; walkthrough PASS (win, flow, skip tutorial); `progress.py --check`
 OK.
+
+## 2026-11-05 (94) — Boot Camp against its retail recording: locations, wait-blocking, text timing, briefing pages
+
+Sources: the user's Boot Camp ready-room screenshot
+(`Screenshot_20261105_111243`) and full Boot Camp recording
+(`Screencast_20261105_111714`, 397 s, video only), plus the Wasteland
+briefing recording (`_073713`).  The user confirms the green video pages
+need a click and the ready room runs by itself.
+
+- **Trigger locations (FACT, bug).**  `World::from_scenario` multiplied
+  the `MRGN` rectangles by 32, but they are pixels (Boot Camp location 1 =
+  (0,0)-(1280,2048) on a 2048 px map).  Every location condition, Create
+  Unit, Move Location and AI-at-location covered the whole map: Boot Camp
+  ran its "MARINE / I'm not sure you know what you're doing" lesson 18.7 s
+  in, which retail never shows in the first 100 s.
+- **Wait-blocking in the same cycle (FACT, recording).**  A trigger that
+  stopped on a Wait/Transmission returned, but the loop went on with the
+  player's later triggers in that cycle (Boot Camp: trigger 10 at tick 1
+  before trigger 1's opening).  Now the player's loop stops there.  With
+  both fixes the opening runs as recorded (gaps from the first line,
+  ours vs retail: 7.42/7.5, 8.42/8.7, 12.92/13.3, 16.04/16.5 s).  The
+  Hammer Falls now sets its objectives after its 20.6 s opening
+  conversation (the earlier "objectives at 0 s in every mission" claim
+  came from the wrong VM and is withdrawn).
+- **Trigger text lifetime (FACT, 9 samples).**  62 ms per visible
+  character, at least 4.0 s and at least the transmission, fits TIP 10.1,
+  NEW MISSION 4.0, Select CC 3.8, T-280 7.5, SCV 7.2, Roger 4.0, In order
+  4.5, You can build 4.0 and Raynor 4.0 s within 0.2 s.  Falsified: the
+  per-line model (1.0-1.5 s too long on Boot Camp's 3-line lines) and the
+  paused-transmission rule (`TriggerCue::Text::paused` removed).  The
+  in-game text is the same lavender (229,225,255) at the same place as in
+  Wasteland.  10 lines were on screen at once (Wasteland 90.5 s):
+  `MAX_LINES` 6 -> 11 (11 INFERENCE).
+- **Briefing pages (FACT).**  `estt0t.txt`: three video pages with
+  `DISPLAYTIME 0` (retail stayed 7.95 / 9.65 / 9.0 s, the user clicked),
+  `VIDEOAUTOPROCEED` TR1035 (0.67 s; retail 28.6 -> 29.3 s) and "BOOT CAMP"
+  `DISPLAYTIME 6000` (6.15 s).  The parser gave every page the file's last
+  `DISPLAYTIME`, and 0 meant "advance now", so the video pages flashed
+  past.  Now per page; 0 waits for the player; auto-proceed pages leave
+  when their video ends (`BriefingPage::due_ms`).
+- **Ready-room scroll (FACT, row-profile tracking at 10 fps).**  The text
+  holds 4.0 s (Adjutant 10.10 -> 14.12 s, Duke 37.07 -> 41.18 s), then
+  rises linearly to the text height minus ~176 px at the line's end
+  (18.23 px/s for 11 lines / 26 469 ms, 13.34 px/s for 9 / 27 794 ms).
+  First baseline +22.5 px.  Boot Camp screenshot 5.61 -> 5.12 (text rows
+  within 1 px); Wasteland 50 s frame 7.64 (text box 41 -> 27).
+
+**Verification.**  `cargo test` 484 passed, 0 failed (with `SC_INSTALL`;
+`tests/campaign_episode1.rs` 9/9); clippy 0; fmt clean; `ui_visual_diff.py`
+51/51; walkthrough PASS (win, flow, skip tutorial); `progress.py --check`
+OK.

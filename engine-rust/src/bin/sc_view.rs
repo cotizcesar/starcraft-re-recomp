@@ -1122,6 +1122,8 @@ struct App {
     briefing_page: usize,
     /// When the current briefing page appeared (`DISPLAYTIME` clock).
     briefing_page_epoch: Instant,
+    /// `(map, page, due ms)` of the page on screen (video length probed once).
+    briefing_due: Option<(usize, usize, Option<u64>)>,
     /// The mission's ready-room script (`MBRF`), pristine for Replay.
     ready_script: Option<galaxycraft::ready_room::ReadyRoom>,
     /// The running ready room, after the establishing shot.
@@ -3056,6 +3058,24 @@ const TRIGGER_TEXT_PITCH: f32 = 48.0;
 const TRIGGER_TEXT_PX: f32 = 31.1;
 const TRIGGER_TEXT_COLOUR: Rgb = Rgb::new(214, 210, 240);
 
+/// Ready-room transmission scroll (content px) `elapsed` ms into a line of
+/// `ms` ms whose wrapped text is `text_h` px tall.  FACT (Wasteland
+/// recording, row-profile tracking at 10 fps): the text holds still for
+/// 4.0 s (Adjutant 10.10 -> 14.12 s, Duke 37.07 -> 41.18 s), then rises
+/// linearly until the line ends: 18.23 px/s for 11 lines in 26 469 ms
+/// (410 px), 13.34 px/s for 9 lines in 27 794 ms (317 px); both totals
+/// are the text height minus ~176 px.  Short texts (Boot Camp's 4 lines)
+/// barely move; their rate is INFERENCE from the same rule.
+const READY_SCROLL_HOLD_MS: u64 = 4_000;
+const READY_SCROLL_KEEP: f32 = 176.0;
+
+fn ready_text_scroll(elapsed_ms: u64, line_ms: u32, text_h: f32) -> f32 {
+    let travel = (text_h - READY_SCROLL_KEEP).max(0.0);
+    let span = (line_ms as u64).saturating_sub(READY_SCROLL_HOLD_MS).max(1);
+    let t = elapsed_ms.saturating_sub(READY_SCROLL_HOLD_MS) as f32 / span as f32;
+    travel * t.clamp(0.0, 1.0)
+}
+
 /// Score-screen motion, fitted on the retail Wasteland recording
 /// (`Screencast_20261105_074531`, backdrop at 7.0 s): the panel's right
 /// edge (2187 content px at rest) is at 1653 / 1959 / 2088 at 7.8 / 7.9 /
@@ -3725,7 +3745,7 @@ const READY_PORTRAIT_FACE: (f32, f32, f32, f32) = (7.0, 3.5, 113.0, 110.0);
 /// Darkening of the scanline rows (alpha of black).
 const READY_SCANLINE_DIM: u8 = 120;
 const READY_TEXT_PX: f32 = 35.1;
-const READY_TEXT_BASE: f32 = 16.0;
+const READY_TEXT_BASE: f32 = 38.5;
 const READY_TEXT_PITCH: f32 = 54.0;
 const READY_OBJ_PX: f32 = 30.7;
 const READY_OBJ_BASE: f32 = 30.0;
@@ -5300,6 +5320,7 @@ fn main() {
         briefing_pages: Vec::new(),
         briefing_page: 0,
         briefing_page_epoch: Instant::now(),
+        briefing_due: None,
         ready_script: None,
         ready: None,
         ready_epoch: Instant::now(),
@@ -6522,11 +6543,7 @@ impl App {
         for cue in new {
             match cue {
                 TriggerCue::Text {
-                    string,
-                    always,
-                    ms,
-                    paused,
-                    ..
+                    string, always, ms, ..
                 } => {
                     if !(always || self.game_options.subtitles) {
                         continue;
@@ -6534,8 +6551,7 @@ impl App {
                     if let Some(raw) = self.scenario.string(string) {
                         let life = galaxycraft::transmission::text_life_ms(
                             ms,
-                            galaxycraft::transmission::text_lines(raw).len(),
-                            paused,
+                            galaxycraft::transmission::text_chars(raw),
                         );
                         self.trigger_text.push(raw, now, life);
                         done.0 += galaxycraft::transmission::clean_lines(raw).len();
@@ -9665,11 +9681,23 @@ impl App {
     fn update_briefing(&mut self) {
         if self.ready.is_none() {
             let shown = self.briefing_page_epoch.elapsed().as_millis() as u64;
+            let key = (self.map_index, self.briefing_page);
+            if self.briefing_due.map(|(m, p, _)| (m, p)) != Some(key) {
+                let page = self.briefing_pages.get(self.briefing_page).cloned();
+                let video_ms = page
+                    .as_ref()
+                    .and_then(|p| p.video.as_ref())
+                    .zip(self.video_store.as_ref())
+                    .and_then(|(v, store)| store.resolve(v))
+                    .and_then(|path| galaxycraft::video::probe_info(&path))
+                    .and_then(|info| info.duration_ms);
+                let due = page.and_then(|p| p.due_ms(video_ms));
+                self.briefing_due = Some((key.0, key.1, due));
+            }
             let due = self
-                .briefing_pages
-                .get(self.briefing_page)
-                .and_then(|p| p.display_ms)
-                .is_some_and(|ms| shown >= ms as u64);
+                .briefing_due
+                .and_then(|(_, _, d)| d)
+                .is_some_and(|ms| shown >= ms);
             if due && self.ready_at.is_none() && !self.headless {
                 if self.briefing_page + 1 < self.briefing_pages.len() {
                     self.briefing_page += 1;
@@ -10473,9 +10501,8 @@ impl App {
                 }
                 let box_h = r.h as f32 * 3.0;
                 let text_h = lines.len() as f32 * READY_TEXT_PITCH;
-                let progress = ((now.saturating_sub(line.start_ms)) as f32 / line.ms.max(1) as f32)
-                    .clamp(0.0, 1.0);
-                let scroll = progress * (text_h - box_h + READY_TEXT_PITCH).max(0.0);
+                let _ = box_h;
+                let scroll = ready_text_scroll(now.saturating_sub(line.start_ms), line.ms, text_h);
                 let mut clip = Framebuffer::new(fb.width as usize, fb.height as usize);
                 clip.pixels.copy_from_slice(&fb.pixels);
                 for (i, (t, _)) in lines.iter().enumerate() {
@@ -19265,6 +19292,36 @@ mod menu_frame_tests {
             data.strings.get(super::STAT_CANT_BUILD_THERE - 1),
             Some("You can't build there.")
         );
+    }
+
+    #[test]
+    fn ready_text_scroll_follows_the_retail_recording() {
+        use super::{ready_text_scroll, READY_TEXT_PITCH};
+        // Tracked offsets (px) on the Wasteland recording, 0.1 s after
+        // each line started: the Adjutant (11 lines, 26 469 ms) and Duke
+        // (9 lines, 27 794 ms).
+        let adj = 11.0 * READY_TEXT_PITCH;
+        let duke = 9.0 * READY_TEXT_PITCH;
+        for (t, want) in [
+            (2_500, 0.0),
+            (6_500, 45.0),
+            (12_500, 153.0),
+            (22_500, 336.0),
+        ] {
+            let got = ready_text_scroll(t, 26_469, adj);
+            assert!((got - want).abs() <= 12.0, "adjutant {t}: {got} vs {want}");
+        }
+        for (t, want) in [
+            (2_500, 0.0),
+            (6_500, 33.0),
+            (14_500, 138.0),
+            (26_500, 300.0),
+        ] {
+            let got = ready_text_scroll(t, 27_794, duke);
+            assert!((got - want).abs() <= 12.0, "duke {t}: {got} vs {want}");
+        }
+        // Boot Camp's 4-line welcome is still at 3 s (retail screenshot).
+        assert_eq!(ready_text_scroll(2_000, 8_449, 4.0 * READY_TEXT_PITCH), 0.0);
     }
 
     #[test]
