@@ -2083,3 +2083,32 @@ rectangles come from `rez/flc.json` (`Single -20,0,425,175`; `SingleOn
 Verification shots: `docs/menu.png`, `docs/intro.png` and
 `docs/ui-coverage.png` (headless 2560x1440, compared with the 32 references
 in `docs/original_screenshots/`).
+
+## Campaign 1 against retail recordings (2026-11-05)
+
+Sources: the shipped tables (`arr/mapdata.tbl`, `gluhist`, `MenuEntry`,
+`glurdyt`/`wmission`/`lmission`/`gluscore` layouts, `rez/flc.json`,
+`stat_txt.tbl`, `network.json`, `rc3.json`), the 11 Episode I CHKs and the
+user's retail recordings (video only): Wasteland briefing, rescue and
+victory (`Screencast_20261105_0737`-`0745`), Boot Camp in full (`_111714`)
+with a ready-room screenshot, Backwater Station in full (`_113518`).
+Every number below is in `research/docs/session-log.md` 2026-11-05
+(87-95), with the FACT/INFERENCE split.
+
+| Behaviour | Retail measurement | Test |
+|---|---|---|
+| Ready room script time 0 / Duke / text cleared | 9.10 / 36.70 / 64.90 s | `wasteland_ready_room_follows_the_retail_recording` |
+| Ready-room text: hold, then linear scroll | 4.0 s; 18.23 / 13.34 px/s | `ready_text_scroll_follows_the_retail_recording` |
+| Trigger text lifetime | 9 samples, rule within 0.2 s | `text_lifetimes_follow_the_retail_measurement` |
+| Boot Camp opening order and gaps | within 0.6 s | `boot_camp_opening_follows_the_retail_recording` |
+| Wasteland rescue -> objective text | 6.0 s | `wasteland_rescue_conversation_follows_the_retail_timing` |
+| Wasteland victory after the tenth Marine | 0.57 s | `wasteland_victory_fires_within_one_trigger_cycle` |
+| Backwater Station opening line | first game frame | `backwater_station_opens_with_raynor_on_the_first_frame` |
+| Backwater Station ending and victory | within 0.7 s | `backwater_station_ending_follows_the_retail_recording` |
+| Score panel slide and count-up | edge within 2 px | `score_count_up_follows_the_retail_curve` |
+
+Engine bugs these comparisons exposed: `MRGN` scaled x32, wait-blocking
+missing within a cycle, Victory/Defeat applied to player 0, force triggers
+never run, rescue polled after the first trigger pass.  Not verified:
+audio timing (no sound in any recording) and missions 4-11.
+

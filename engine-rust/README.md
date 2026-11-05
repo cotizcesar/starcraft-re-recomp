@@ -113,15 +113,26 @@ RTS client.  It is still not a byte-for-byte replacement for
   kill/remove counts, percentage HP/energy/shield edits, score categories,
   invincibility, doodad state, move/patrol/attack orders, alliances and the
   presentation/leaderboard records) and every condition 0..=23 with the CHK
-  `Exactly` comparison value 10.
+  `Exactly` comparison value 10.  Runtime semantics checked against retail
+  recordings: triggers owned by a force (`FORC`) run for its players, the
+  first pass runs on tick 1, `MRGN` locations are pixel rectangles, a Wait
+  or Transmission holds the player's later triggers (and resumes on the
+  tick it ends), Victory/Defeat apply to the player running the trigger.
 * **Campaign player slots**: `OWNR`/`SIDE` recover every live slot, including
   non-contiguous owners (Enslavers uses 0/3/4/6), so campaign enemy bases are
   loaded with their authored race.  Spare `OWNR` slots on melee maps do not
   create phantom players.
-* **Briefing/results and progression**: mission name, briefing and objectives
-  come from the map's `STR` section; victory resolves the trigger's
-  `Next Scenario` string (stored one past the STR index) to the next bundled
-  mission.  The results panel shows time, kills, losses, razing and income.
+* **Briefing/results and progression**: mission order, titles and films come
+  from `arr/mapdata.tbl`, `gluhist` and the `MenuEntry` table
+  (`campaign_progress`).  Each mission plays its establishing shot
+  (`DISPLAYTIME` per page: video pages wait for a click,
+  `VIDEOAUTOPROCEED` leaves when its video ends), then, for Terran, the
+  ready room (`ready_room`): the map's `MBRF` script with talking
+  portraits, the scrolling transmission box, objectives, Start / Replay /
+  Cancel and Boot Camp's Skip Tutorial.  Victory or defeat shows the
+  `wmission`/`lmission` dialog over the game, then the `gluscore` score
+  screen (Overview / Units / Structures / Resources, count-up, force and
+  nation names, APM) on the simulation's build/destroy score accounting.
 * **Full retail campaign**: all 68 non-empty story missions in
   `sd/campaign/<episode>/<mission>/staredit/scenario.chk` (Terran, Zerg,
   Protoss and all three Brood War episodes) are enumerated in retail order
@@ -133,7 +144,10 @@ RTS client.  It is still not a byte-for-byte replacement for
   corpus is simulated by `sc_campaign --install` (391/391 maps, 0 failed).
 * **Client rendering**: mission briefing, result overlay, retail creep tiles
   and edge frames over the gameplay creep grid, full-motion HUD portraits,
-  minimap units and camera.
+  minimap units and camera.  In-game messages as retail: trigger text in
+  `blizzard-regular` above the console (62 ms per character, at least 4 s,
+  up to 11 lines), the trigger leaderboard, and `stat_txt` error lines
+  ("Not enough minerals...mine more minerals.").
 * **Audio**: nine shipped CASC WAV effects (UI, acknowledgements, mission
   start, victory/defeat) decoded natively and mixed in software; output is
   ALSA (Linux), WinMM (Windows) or CoreAudio (macOS), loaded at run time,

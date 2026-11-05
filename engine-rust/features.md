@@ -1,6 +1,8 @@
 # GalaxyCraft — what is missing to complete the game
 
-Inventory verified on 2026-10-28 against the code (`src/`), the documented
+Inventory first written on 2026-10-28 and updated on 2026-11-05 (profiles,
+LAN and the Episode I campaign loop are done; live status and percentages:
+[`PROGRESS.md`](../PROGRESS.md)).  Originally verified against the code (`src/`), the documented
 coverage (`docs/COVERAGE.md`, `docs/EVIDENCE.md`) and the suite
 (`cargo test`: 141 lib + 15 integration, all green). Criterion: parity with
 commercial StarCraft 1.23.10.13515 played offline single-player, plus what is needed
@@ -16,6 +18,9 @@ for other players to use it as a complete game, not as an engine.
   campaign) simulated, tilesets, GRP, sound/music/voices with `--install`.
 - Playable `sc_view` client: menu, briefing, mission, pause, victory/defeat,
   restart, AI opponent, per-race HUD, minimap, hotkeys, options.
+- Campaign loop as retail for Episode I: establishing shots, Terran ready
+  room, trigger text and leaderboard, victory dialog, score screen, films
+  and the next briefing (`tests/campaign_episode1.rs`).
 
 ## P0 — Base gameplay functionality that is a stub today
 
@@ -43,22 +48,20 @@ for other players to use it as a complete game, not as an engine.
 - Acceptance covered: same log → same `state_hash`
   (`sc_replaytool verify`, `tests/replay.rs`).
 
-### 3. Profile persistence and campaign progress
-- Status: profiles (`Player`, `REA`, `LinKa`) live only in memory
-  (`sc_view.rs:600`); finishing a mission advances within the session but is not remembered.
-  Hotkeys already have their own file (`~/.cache/galaxycraft/hotkeys.bin`,
-  GCHK v1 with SHA-256) and all units/buildings/races are edited in the
-  Hotkeys panel; unlocked missions and options are missing.
-- Missing: on-disk profile file (unlocked missions per episode,
-  options), created/editable from the `Registry` menu.
-- Acceptance: close the game, open it and continue the campaign where it was left.
+### 3. Profile persistence and campaign progress — DONE
+- Registry IDs, settings, statistics and campaign progress persist in
+  `profiles.bin` (`GCPF`, [`research/docs/profile-format.md`](../research/docs/profile-format.md));
+  the retail `.spc`/`.mpc` format is importable.
+- Acceptance covered: the walkthrough's `campaign win` check wins a
+  mission, restarts the process and finds the next mission unlocked.
 
 ## P1 — Multiplayer (the big block)
 
-Today there is not a single line of networking in `src/` (no sockets): everything is 1 human vs AI.
-
-### 4. LAN / direct multiplayer
-- Missing: protocol (ideally deterministic lockstep over the current sim:
+### 4. LAN / direct multiplayer — DONE except the two-machine test
+- Done: command-only lockstep over TCP or UDP, discovery, lobby up to 8
+  players, resync and reconnect (`src/net.rs`, `sc_lan`, `tests/lan.rs`).
+  Open: the physical two-PC run (`scripts/lan_two_machines.sh`).
+- Originally missing: protocol (ideally deterministic lockstep over the current sim:
   exchange only commands per turn, periodic state checksum),
   LAN discovery, lobby with human slots, countdown, lag/drop handling,
   and pre-game chat.
@@ -135,7 +138,7 @@ Today there is not a single line of networking in `src/` (no sockets): everythin
 1. Save/load (§1) — unlocks real sessions and is a prerequisite for replays.
 2. Replays (§2) — reuses serialization and determinism; also serves to
    verify desyncs of the future multiplayer.
-3. Profile + progress (§3) — completes the campaign loop.
+3. Profile + progress (§3) — completes the campaign loop (done).
 4. Cinematics (§7) — closes out presentation.
 5. LAN (§4) — the only networking block worth doing.
 6. Packaging (§12) — once the game is polished.

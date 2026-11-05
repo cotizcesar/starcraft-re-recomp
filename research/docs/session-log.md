@@ -4780,3 +4780,18 @@ entry; its opening, rescue and victory were already fitted (89-92).
 **Verification.**  `cargo test` 486 passed, 0 failed (with `SC_INSTALL`;
 `tests/campaign_episode1.rs` 11/11); clippy 0; fmt clean;
 `ui_visual_diff.py` 51/51; walkthrough PASS; `progress.py --check` OK.
+
+## 2026-11-05 (96) — Documentation brought up to date with campaign 1
+
+The user approved the PR and asked for every document to be updated.
+Changes (no code): `README.md` highlight for campaign 1 against retail;
+`engine-rust/README.md` trigger runtime semantics, the campaign loop
+(establishing shots, ready room, end dialog, score screen) and in-game
+messages; `engine-rust/features.md` marks profiles (§3) and LAN (§4) done
+(both were stale since entries 77-78); `docs/COVERAGE.md` rows for the
+trigger semantics, the Episode I loop, in-game messages and unverified
+audio, and 36 UI layouts (was 17); `docs/EVIDENCE.md` a campaign-1 table of
+retail measurements and their tests; `research/docs/architecture.md` the
+trigger runtime semantics; `PROJECT-STATUS.md` item 29;
+`unresolved-questions.md` text lifetimes resolved, audio timing and the
+rescue/Skip Tutorial inferences open.

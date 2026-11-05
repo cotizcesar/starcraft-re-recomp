@@ -124,6 +124,16 @@ trace (out of scope: the client reimplements settings in `menu.rs` /
   Terran 8 holds the parsed map (`STR` text, objectives) and three
   runtime-built handler tables; re-verified on disk 2026-11-04.
 
+### Trigger runtime semantics (behaviour, 2026-11-05)
+
+Not read from the binary but measured on retail recordings and pinned by
+tests (`tests/campaign_episode1.rs`, session log 89-95): force-owned
+triggers run for the force's players; the first pass is on the first
+tick; `MRGN` rectangles are pixels; a Wait or Transmission stops the
+player's trigger loop until it ends (wait-blocking) and resumes on that
+tick; Victory/Defeat act on the player running the trigger; rescuable
+units are polled on the first tick, then every 15.
+
 ## 5. 32 vs 64 bits (H2 confirmed, high confidence)
 
 - Same manifest `1.23.10.13515` + hash `2e031d5be4`, exact RTTI mirror

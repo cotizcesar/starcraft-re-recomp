@@ -65,6 +65,7 @@ family fallback.  The dispatcher is `FUN_7a178340`
 | Transports, Bunkers (firing occupants), Nydus, Shield Battery | complete | transport/bunker/nydus tests |
 | Vision, fog, cloak, detectors, Scanner Sweep | complete | vision tests |
 | Triggers (classic conditions 0..23, actions 1..59, UPRP slots) | complete | trigger/UPRP tests |
+| Trigger runtime semantics (force triggers, tick-1 pass, pixel locations, wait-blocking, Victory/Defeat owner) | checked against retail recordings | `trigger::tests`, `tests/campaign_episode1.rs` |
 | Campaign AI (`aiscript`/`bwscript`) | complete opcode interpreter | `TMCu` test |
 | Deterministic skirmish AI | complete | AI tests |
 | iscript VM | complete 0x00..=0x44 | animation decode tests |
@@ -79,6 +80,9 @@ family fallback.  The dispatcher is `FUN_7a178340`
 | All 28 retail intros (Blizzard logo, title, Brood War, 25 campaign act movies) | complete | `video::tests::every_intro_table_movie_is_readable_and_decodable` (needs `SC_INSTALL`); `--shot-screen intro-blizzard|intro-title|intro-expansion`; `docs/intro.png`, live Xvfb run in `docs/intro-live.png` |
 | Title intro + mission/briefing screens | complete | `--shot-screen intro|briefing`; `retail_briefing.png` |
 | Campaign slots / briefing / results / progression | complete | `campaign_player_slots_keep_non_contiguous_owners`; `next_scenario_action_resolves_to_the_bundled_followup_mission` |
+| Episode I campaign loop (mapdata order, films, establishing shots, Terran ready room, victory dialog, score screen) | fitted to retail recordings of Boot Camp, Wasteland and Backwater Station | `tests/campaign_episode1.rs` (11 tests); walkthrough `campaign flow` / `campaign skip tutorial`; `--shot-screen ready|win-dialog|victory` |
+| In-game trigger text, trigger leaderboard, `stat_txt` error lines | retail face, place and lifetime | `transmission::tests`; `--shot-screen trigger-text|leaderboard-marines|game-error` |
+| Audio timing of briefings and transmissions | unverified (recordings had no sound) | — |
 | Full retail campaign (68 CASC missions) + briefings | complete | `retail_campaign_enumerates_every_shipped_mission`; `retail_briefings_parse_and_their_backdrops_decode` |
 | Retail WAV effects + software mixer | complete | `tests/audio.rs`; ALSA no-op fallback |
 | Game shell (map menu, pause, victory/defeat, restart, AI opponent) | complete | Xvfb/xdotool run; `docs/menu.png` |
@@ -95,7 +99,7 @@ family fallback.  The dispatcher is `FUN_7a178340`
 | Establishing-shot briefing scripts | 62 scripts, 17 retail backdrops |
 | Documented DAT/GRP/table SHA-256 checks | 7 / 7 |
 | Retail effects byte-identical | 9 / 9 |
-| Retail UI layouts (`*.ui.json`) | 17 |
+| Retail UI layouts (`*.ui.json`) | 36 (`materialised_assets_load_without_the_bundled_asset_directory`) |
 | Console/menu/score art surfaces | 37 console + 37 glue files |
 | Ogg music tracks | 23 |
 | Voice files (of 1,127 sfx names) | 1,122 |
