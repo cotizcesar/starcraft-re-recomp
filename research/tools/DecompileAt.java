@@ -12,7 +12,9 @@ import java.io.PrintWriter;
  * only; run with -readOnly so nothing is saved), then decompiles it.
  * Usage: ... -postScript DecompileAt.java <outDir> [noreturn=a,b,...] <start1> ...
  * `noreturn=` clears Ghidra's (mis-analysed) no-return flag on those functions
- * first, so callers decompile past them.
+ * first, so callers decompile past them.  `redo=N` then clears N bytes of
+ * listing at each start and re-disassembles it (fall-through after those
+ * calls was cut at the original disassembly).
  */
 public class DecompileAt extends GhidraScript {
     @Override
@@ -22,7 +24,19 @@ public class DecompileAt extends GhidraScript {
         d.openProgram(currentProgram);
         int first = 1;
         if (args.length > 1 && args[1].startsWith("noreturn=")) {
-            for (String n : args[1].substring(9).split(",")) {
+            if (args[1].equals("noreturn=all")) {
+                int n = 0;
+                for (Function nf : currentProgram.getFunctionManager().getFunctions(true)) {
+                    if (nf.hasNoReturn() && !nf.isExternal() && !nf.getName().contains("security")
+                            && !nf.getName().toLowerCase().contains("throw")
+                            && !nf.getName().toLowerCase().contains("abort")) {
+                        nf.setNoReturn(false);
+                        n++;
+                    }
+                }
+                println("CLEARED_ALL " + n);
+            }
+            else for (String n : args[1].substring(9).split(",")) {
                 Function nf = getFunctionAt(toAddr(n));
                 if (nf != null) {
                     nf.setNoReturn(false);
@@ -31,8 +45,21 @@ public class DecompileAt extends GhidraScript {
             }
             first = 2;
         }
+        long redo = 0;
+        if (args.length > first && args[first].startsWith("redo=")) {
+            redo = Long.decode(args[first].substring(5));
+            first++;
+        }
         for (int i = first; i < args.length; i++) {
             Address a = toAddr(args[i]);
+            if (redo > 0) {
+                Function old = getFunctionContaining(a);
+                if (old != null) {
+                    removeFunction(old);
+                }
+                clearListing(a, a.add(redo - 1));
+                disassemble(a);
+            }
             Function f = getFunctionContaining(a);
             if (f == null) {
                 disassemble(a);

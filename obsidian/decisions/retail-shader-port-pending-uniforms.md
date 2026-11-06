@@ -32,3 +32,4 @@ from the client.
 
 ## Evidence
 - Session log 2026-11-06 (115).
+- Session log 2026-11-06 (120): without the AO factor the retail shader beats the fitted model on the matched depot (RMS 24.5 / 24.1 / 23.9 vs 24.7 / 27.2 / 28.0) but raises the in-game reference means by 0.10-0.26; decide with a per-object comparison.
