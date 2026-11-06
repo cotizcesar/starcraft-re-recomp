@@ -37,6 +37,17 @@ pub struct Contours {
     pub lists: [Vec<Segment>; 4],
 }
 
+/// One `FUN_0075f290` step (see `Contours::node_step`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeStep {
+    /// (left, top, right, bottom) the rays reached.
+    pub reach: (i32, i32, i32, i32),
+    /// Up, right, down, left rays stopped by a wall.
+    pub hits: [bool; 4],
+    pub next: Vec<((i32, i32), u8)>,
+    pub quadrants: u8,
+}
+
 /// The search context's mover extents (`FUN_007601c0`, context `+0x20`):
 /// from the `units.dat` box (left, up, right, down) as
 /// `[up, -right, -down, left]`.  A segment's span ends are widened by the
@@ -325,6 +336,152 @@ impl Contours {
             .find(|s| m.overlaps(s, y0, y1))
     }
 
+    /// Terrain segments plus the edges of `units` (inclusive pixel boxes of
+    /// stationary units, `FUN_0075f8e0`), re-sorted: the walls one search
+    /// node sees.  Unit edges carry the client's flag bytes (`0x3d` for the
+    /// up / down lists, `0x32` for right / left).  INFERENCE: the client
+    /// also merges overlapping same-position segments (`FUN_0075ff00`) and
+    /// filters to the node's window; neither changes a ray's hit distance.
+    pub fn with_units(&self, units: &[(i32, i32, i32, i32)]) -> Self {
+        let mut c = self.clone();
+        for &(l, t, r, b) in units {
+            let (l, t, r, b) = (l as i16, t as i16, r as i16, b as i16);
+            // A unit's bottom edge stops upward movement, etc.
+            c.lists[0].push(Segment {
+                pos: b,
+                start: l,
+                end: r,
+                facing: 0,
+                flags: 0x3d,
+            });
+            c.lists[1].push(Segment {
+                pos: l,
+                start: t,
+                end: b,
+                facing: 1,
+                flags: 0x32,
+            });
+            c.lists[2].push(Segment {
+                pos: t,
+                start: l,
+                end: r,
+                facing: 2,
+                flags: 0x3d,
+            });
+            c.lists[3].push(Segment {
+                pos: r,
+                start: t,
+                end: b,
+                facing: 3,
+                flags: 0x32,
+            });
+        }
+        for l in &mut c.lists {
+            l.sort_by_key(|s| (s.pos, s.start));
+        }
+        c
+    }
+
+    /// `FUN_0075f290`, the per-node step: four rays from `node` along its
+    /// row and column, each at most 64 px (`limits` = the map's last pixel),
+    /// a side held at the node when `mask` lacks its bits (0x19 up, 0x23
+    /// right, 0x46 down, 0x8c left).  Returns the reach box, which rays hit
+    /// a wall, the successors (point, client mask) for the open directions
+    /// 0x10 / 0x20 / 0x40 / 0x80, and the quadrant bits (1 / 2 / 4 / 8) that
+    /// select the corner sweeps.
+    pub fn node_step(&self, m: &Mover, node: (i32, i32), mask: u8, limits: (i32, i32)) -> NodeStep {
+        let (x, y) = node;
+        let mut top = (y - 64).max(0);
+        let mut right = (x + 64).min(limits.0);
+        let mut bottom = (y + 64).min(limits.1);
+        let mut left = (x - 64).max(0);
+        if mask & 0x19 == 0 {
+            top = y;
+        }
+        if mask & 0x23 == 0 {
+            right = x;
+        }
+        if mask & 0x46 == 0 {
+            bottom = y;
+        }
+        if mask & 0x8c == 0 {
+            left = x;
+        }
+        let e = m.ext.map(i32::from);
+        let hit_up = self.up(m, y, x, x, top - 1).map(|s| s.pos as i32);
+        if let Some(p) = hit_up {
+            top = e[0] + 1 + p;
+        }
+        let hit_right = self.right(m, x, y, y, right + 1).map(|s| s.pos as i32);
+        if let Some(p) = hit_right {
+            right = e[1] - 1 + p;
+        }
+        let hit_down = self.down(m, y, x, x, bottom + 1).map(|s| s.pos as i32);
+        if let Some(p) = hit_down {
+            bottom = e[2] - 1 + p;
+        }
+        let hit_left = self.left(m, x, y, y, left - 1).map(|s| s.pos as i32);
+        if let Some(p) = hit_left {
+            left = e[3] + 1 + p;
+        }
+        // Bits of directions that went nowhere are dropped (the client's
+        // sequence of and-masks).
+        let mut b = mask;
+        if top == y && right == x {
+            b &= 0xfe;
+        }
+        // Quadrants: 1 up-right, 2 down-right, 4 down-left, 8 up-left.
+        if bottom == y && right == x {
+            b &= 0xfd;
+        }
+        if bottom == y && left == x {
+            b &= 0xfb;
+        }
+        if top == y && left == x {
+            b &= 0xf7;
+        }
+        if top == y {
+            b &= 0xef;
+        }
+        if right == x {
+            b &= 0xdf;
+        }
+        if bottom == y {
+            b &= 0xbf;
+        }
+        if left == x {
+            b &= 0x7f;
+        }
+        let mut next = Vec::new();
+        if b & 0x10 != 0 {
+            b |= 9;
+            next.push(((x, top), if hit_up.is_some() { 0xa6 } else { 0xbf }));
+        }
+        if b & 0x20 != 0 {
+            b |= 3;
+            next.push(((right, y), if hit_right.is_some() { 0x5c } else { 0x7f }));
+        }
+        if b & 0x40 != 0 {
+            b |= 6;
+            next.push(((x, bottom), if hit_down.is_some() { 0xa9 } else { 0xef }));
+        }
+        if b & 0x80 != 0 {
+            b |= 0xc;
+            next.push(((left, y), if hit_left.is_some() { 0x53 } else { 0xdf }));
+        }
+        NodeStep {
+            reach: (left, top, right, bottom),
+            hits: [
+                hit_up.is_some(),
+                hit_right.is_some(),
+                hit_down.is_some(),
+                hit_left.is_some(),
+            ],
+            next,
+            quadrants: b & 0x0f,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.lists.iter().map(Vec::len).sum()
     }
@@ -389,6 +546,36 @@ mod tests {
         // From above looking down, and from the right looking left.
         assert_eq!(c.down(&m, 100, 176, 176, 400).map(|s| s.pos), Some(160));
         assert_eq!(c.left(&m, 300, 176, 176, 0).map(|s| s.pos), Some(191));
+    }
+
+    #[test]
+    fn node_step_casts_four_rays_stopped_by_walls_and_standing_units() {
+        // Open 16 x 16-tile map with the 4 x 4-cell block at 160..=191 and a
+        // Marine-sized unit box at (300..=316, 290..=310).
+        let mut t = Terrain::open(16, 16);
+        block(&mut t, 20, 20, 24, 24);
+        let c = Contours::from_terrain(&t).with_units(&[(300, 290, 316, 310)]);
+        let m = Mover::from_box(11, 11, 11, 11);
+        // From (176, 260): up hits the block's bottom (191) widened by 11.
+        let s = c.node_step(&m, (176, 260), 0xff, (511, 511));
+        assert_eq!(s.reach.1, 191 + 11 + 1);
+        assert!(s.hits[0] && !s.hits[1] && !s.hits[3]);
+        assert_eq!(s.reach.2, 176 + 64);
+        assert_eq!(s.quadrants, 0x0f);
+        assert_eq!(s.next.len(), 4);
+        assert_eq!(s.next[0], ((176, 203), 0xa6));
+        assert_eq!(s.next[1], ((240, 260), 0x7f));
+        // From (250, 300) looking right: the unit's left edge (300) less 11.
+        let s = c.node_step(&m, (250, 300), 0xff, (511, 511));
+        assert!(s.hits[1]);
+        assert_eq!(s.reach.2, 300 - 11 - 1);
+        // Mask 0x19 (up, quadrants 1 and 8) shares bits with the right
+        // (0x23) and left (0x8c) sides; only the down side stays at the
+        // node, and with nothing below, the down quadrants close.
+        let s = c.node_step(&m, (250, 300), 0x19, (511, 511));
+        assert_eq!((s.reach.0, s.reach.2, s.reach.3), (250 - 64, 300 - 12, 300));
+        assert_eq!(s.quadrants & 0b0110, 0);
+        assert!(s.next.iter().all(|(p, _)| p.1 <= 300));
     }
 
     #[test]

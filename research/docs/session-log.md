@@ -6470,3 +6470,34 @@ clippy / fmt clean; `mission_gate.py` 0 failures at 1280x720.
 
 **Verification.**  `cargo test --no-fail-fast` 0 failed (3 contour tests);
 clippy / fmt clean; movement unchanged.
+
+## 2026-11-06 (143) — Per-node step ported; corner sweep read
+
+- **Port (`Contours::with_units`, `Contours::node_step`).**  `FUN_0075f290`
+  literally: 64 px limits clamped to the map, sides held at the node when
+  the mask lacks their bits (0x19 / 0x23 / 0x46 / 0x8c), four rays along
+  the node's row and column through the lookups (hit -> reach = wall
+  position + extent -+ 1), the and-mask sequence that closes quadrants
+  (1 up-right, 2 down-right, 4 down-left, 8 up-left; the decompile's
+  `CONCAT11` hides that quadrant 2 closes only when the down and right rays
+  both stay at the node), and successors for the open directions with the
+  client's masks (0xa6 / 0xbf up, 0x5c / 0x7f right, 0xa9 / 0xef down,
+  0x53 / 0xdf left; second value when the ray met no wall).  Stationary
+  units add their box edges (flags 0x3d / 0x32, `FUN_0075f8e0`).
+  INFERENCE: inclusive unit box pixels; the window filter and same-position
+  merge (`FUN_0075ff00`) are skipped (they do not change a ray's hit).
+  Test `node_step_casts_four_rays_stopped_by_walls_and_standing_units`.
+- **Corner sweep (FACT, read, not ported).**  `0x75e0e0` (quadrant 1) and
+  its mirrors `0x75e650` (4), `0x75eb90` (2) and the inline quadrant 8 in
+  `FUN_0075f0f0`: within the rectangle between the node and two ray hits
+  they walk the intruding wall segments as a staircase (lookup, step to
+  the previous segment, `FUN_0075db50` normalises it) and emit candidates
+  one pixel outside each corner (extents `+0x30` = `+0x20` + 1), with
+  masks such as 0x11 / 0x18 / 0x21 / 0xdd / 0xe7; `FUN_00760080` /
+  `FUN_007600f0` then record the swept rectangle.  About 1,100 decompiled
+  lines over four mirrored quadrants; next port, as one generic sweep
+  parameterised by quadrant.
+- Movement unchanged (no caller in `sim.rs`).
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (4 contour
+tests); clippy / fmt clean; `cargo build --release --bin sc_view` OK.
