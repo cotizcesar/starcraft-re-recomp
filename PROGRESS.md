@@ -123,7 +123,7 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Bunker cargo in the selection panel (`statdata` 27-30, as the recording at 272 s) and loading by right click on an own Bunker / transport — `scripts/game_input_gate.py`
 - [x] Unloading one unit by clicking its cargo slot (recorded, tag 11); units enter a Bunker / transport from any side (box gap) — `tests/reconstruction.rs::one_marine_leaves_the_bunker_and_the_act_is_logged`, `scripts/game_input_gate.py`
 - [x] Mission end as recorded: the world runs on after Victory / Defeat, the box shows ~1 s (24 frames) after the result, Elapsed Time stays at the result (Boot Camp 05:12) — `scripts/mission_gate.py`, session log 2026-11-06 (113)
-- [ ] Two- and four-space cargo slots (18-24)
+- [ ] Two- and four-space cargo slots (18-24) for Dropships / Shuttles / Overlords (none in Episode I: Bunkers take one-space infantry only)
 - [x] Cancel construction (Esc / card, 75 % refund, recorded tag 10), targeted spells through `Order::Cast` (Spider Mines: one mine per order from the Vulture's three, heroes without research), placement exactly where clicked with the retail preview (green / red box over a half-blended building) — `tests/reconstruction.rs`, `scripts/game_input_gate.py`, session log 2026-11-06 (111)
 - [ ] Land placement preview for lifted buildings (no lift-off in the four Episode I recordings)
 - [x] The four Episode I missions are won through input alone at 720p / 1080p / 3440x1440: Boot Camp (depots, Refinery, 100 gas; tick 6,542), Wasteland (Raynor, Barracks, 10 Marines; 7,320), Backwater Station (Infested CC destroyed; 9,728), Desperate Alliance (countdown survived, calm opening as recorded; 29,025) — `scripts/mission_gate.py`, `engine-rust/docs/gates/mission-gate.txt`
