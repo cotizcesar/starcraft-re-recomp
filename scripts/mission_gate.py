@@ -161,7 +161,10 @@ def zerg_near_base(install: str, size: str) -> list[tuple[float, int]]:
 # the player's base, game seconds (session log 2026-11-06 (123)).  Waves 1-2
 # and the waves that land while our passive player's base is already
 # swarmed are not compared.
-DA_WAVES = [246.5, 310.5, 395.5, 449.5, 527.0, 698.5, 978.5, 1068.5, 1143.0]
+DA_WAVES = [246.5, 310.5, 395.5, 449.5, 527.0, 698.5]
+# After ~950 s our passive player's base is swarmed and the count of nearby
+# Zerg oscillates, so these are compared more loosely (session log 133).
+DA_LATE_WAVES = [978.5, 1068.5, 1143.0]
 
 
 def main() -> int:
@@ -269,7 +272,9 @@ def main() -> int:
     rows = zerg_near_base(args.install, args.size)
     arrivals = [t for (t, n), (_, p) in zip(rows[1:], rows) if n > p]
     missed = [wv for wv in DA_WAVES if not any(abs(t - wv) <= 15 for t in arrivals)]
-    check(not missed, f"desperate alliance: Ter3 waves reach the base as recorded (missed {missed})")
+    check(not missed, f"desperate alliance: Ter3 waves reach the base as recorded, +-15 s (missed {missed})")
+    late = [wv for wv in DA_LATE_WAVES if not any(abs(t - wv) <= 20 for t in arrivals)]
+    check(not late, f"desperate alliance: late waves (swarmed base), +-20 s (missed {late})")
     print(f"  arrivals (s): {arrivals}")
     print(f"\nmission gate: {len(failures)} failure(s) at {args.size}")
     return 1 if failures else 0
