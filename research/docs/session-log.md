@@ -6083,3 +6083,27 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures (1920x1080).
+
+## 2026-11-06 (129) — Boot Camp two-SCV rhythm is not a lock; field 18's route is longer in retail
+
+- **Gap trend (FACT).**  Recorded field-14 -> field-18 delivery gaps 1.65,
+  1.50, 1.70, 1.30 s; cycle difference B - A = -2.7 frames per cycle on
+  average.  A field-18 SCV 12 frames faster per cycle would close the gap by
+  0.51 s per cycle; it does not.  Both recorded SCVs run ~251 frames on their
+  own: there is no interaction to model, and physical blocking at the
+  drop-off (the requested test) would not change their cycles.  Our workers
+  already collide (`resolve_collisions` pushes overlapping ground units
+  apart).
+- **Where the difference is (FACT, per phase).**  Retail field 18: field ->
+  drop-off ~79 frames, drop-off -> field ~77, at the field ~105; ours 67 /
+  67 / ~108.  Retail field 14: 65-69 / ~70 / ~111; ours 73 / 73 / ~108.  Same
+  mining spots and drop-off corners (session log 128), so retail's field-18
+  SCV takes a ~55 px longer path each way.
+- **INFERENCE.**  The recording's Marines stand in groups between the
+  mineral line and the Command Center (world ~(1608-1722, 183-363)); retail
+  units steer around them, ours only push overlapping units apart.
+  Falsifier: our run with the Marines moved to the recorded spots, or a
+  recording segment with the Marines elsewhere.
+
+**Verification.**  No code change; `mission_gate.py` 0 failures at 1920x1080
+(session log 128).
