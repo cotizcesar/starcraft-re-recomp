@@ -3216,6 +3216,9 @@ struct WeldPose {
     spark_frame: usize,
 }
 
+/// `cmdbtns` frame of the arrow under the unit in training.
+const QUEUE_ARROW_FRAME: usize = 11;
+
 /// `units.dat` flag of hero units (Jim Raynor: 0x40 over the plain unit).
 const UNIT_FLAG_HERO: u32 = 0x40;
 /// `cmdbtns` frames of the multi-selection boxes.
@@ -15770,6 +15773,36 @@ impl App {
                 let cur = control(self, 2);
                 frame(self, fb, cur, 2);
                 icon(self, fb, cur, unit_type);
+                // FACT (Desperate Alliance recording 158 s): a small "1" at
+                // the box's bottom right (right edge 15 px, bottom 15 px
+                // inside the visible box at 1440p) and the `cmdbtns` frame 11
+                // arrow centred under it, 7 px below the visible edge (the
+                // frame-2 image has ~4 px of transparent margin, so these are
+                // 21 / 0 px from its bounds).
+                let side = (144.0 * 0.75 * k).round() as i32;
+                let (bx1, by1) = (cur.x + (cur.w + side) / 2, cur.y + (cur.h + side) / 2);
+                let one_w = self.glue_measure("1", HUD_SMALL_PX, GlueFace::Hud);
+                self.glue_text_face(
+                    fb,
+                    (bx1 - cx0) as f32 / k - 15.0 - one_w,
+                    by1 as f32 / k - 21.0,
+                    "1",
+                    HUD_SMALL_PX,
+                    HUD_TEXT_COLOR,
+                    None,
+                    GlueFace::Hud,
+                );
+                if let Some(img) = self
+                    .console
+                    .as_ref()
+                    .and_then(|c| c.command_buttons_hd.as_ref())
+                    .and_then(|g| g.frame(QUEUE_ARROW_FRAME))
+                {
+                    let w = (img.width as f32 * 0.75 * k).round() as i32;
+                    let h = (img.height as f32 * 0.75 * k).round() as i32;
+                    let top = by1;
+                    img.draw_scaled(fb, cur.x + (cur.w - w) / 2, top, w, h);
+                }
                 bar(self, fb, control(self, 7), frac);
                 let queued: Vec<u16> = u
                     .production

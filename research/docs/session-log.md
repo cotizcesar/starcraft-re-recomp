@@ -5867,3 +5867,34 @@ clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 
 **Verification.**  Experiments reverted (`git diff src/` empty);
 `ui_visual_diff` 51/51, no screen moved by more than 0.05.
+
+## 2026-11-06 (121) — Lighting decided on the references; Desperate Alliance HUD; training-slot marks
+
+- **Lighting, per object (FACT).**  Fitted model vs the retail shader
+  without AO on the three in-game references (134905 / 135020 / 135051,
+  lossless captures), restricted to the pixels where the two renders differ
+  (the lit sprites: 139 k / 233 k / 191 k px): mean error 18.09 / 19.48 /
+  18.51 (fitted) vs 21.31 / 23.52 / 22.18 (shader); correlation 0.869 /
+  0.865 / 0.886 vs 0.851 / 0.855 / 0.863; with a free per-channel gain
+  18.1-19.0 vs 20.9-23.0, the shader's best gain cutting red to
+  0.80-0.85.  The largest losses are mineral-line tiles (15 vs 22-24).
+  Decision: keep the fitted model; the matched Boot Camp depot (one object,
+  webm) is outweighed.  Experiment reverted.
+- **Desperate Alliance HUD (FACT, digit reader).**  Supply 25/34 at start,
+  26 at 151.5 s (an SCV, -50 minerals); minerals 48 at 156.5 s -> 104 at
+  185.5 s, 1.93 / s, about two SCVs' worth in ours (0.118 / frame with
+  three, 0.153 with four): the recording's base view does not show how many
+  SCVs mined, so no income conclusion.  The selected Command Center at 158 s
+  shows "Building", the SCV in training with a small "1" and a green arrow
+  under it, then the queue digits 2-5 and "Not enough minerals...mine more
+  minerals.".
+- **Training-slot marks.**  Ours lacked the "1" and the arrow.  Now: the
+  small HUD "1" (`HUD_TEXT_COLOR`) at the active box's bottom right and
+  `cmdbtns` frame 11 (`QUEUE_ARROW_FRAME`, 28 x 12) centred under it.
+  Measured at 3440x1440: arrow rows 1314-1322 (recording 1314-1321), "1"
+  x 1569-1574 / y 1275-1292 (recording 1570-1573 / 1277-1292).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
+1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
+(no screen moved by more than 0.05); walkthrough PASS.
