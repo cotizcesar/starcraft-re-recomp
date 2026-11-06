@@ -59,6 +59,14 @@ fn main() {
         smallest,
         edges
     );
+    let contours = galaxycraft::contour::Contours::from_terrain(&terrain);
+    println!(
+        "contours: up {} right {} down {} left {} segments",
+        contours.lists[0].len(),
+        contours.lists[1].len(),
+        contours.lists[2].len(),
+        contours.lists[3].len()
+    );
     if list {
         let mut list: Vec<_> = regions.regions().iter().collect();
         list.sort_by_key(|r| std::cmp::Reverse(r.size));

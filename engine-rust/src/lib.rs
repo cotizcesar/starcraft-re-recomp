@@ -32,6 +32,7 @@ pub mod campaign;
 pub mod campaign_progress;
 pub mod cinematic;
 pub mod combat;
+pub mod contour;
 pub mod credits;
 pub mod data;
 pub mod dds;
