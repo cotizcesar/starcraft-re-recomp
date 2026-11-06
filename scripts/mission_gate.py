@@ -48,14 +48,15 @@ MISSIONS = {
         "click-unit:SCV", "rclick-unit:Mineral",
         "ticks:400",
         "ctrl-click-unit:SCV", "rclick-unit:Mineral",
-        "ticks:500",
+        "wait-minerals:100",
         "click-unit:SCV", "key:B", "key:S", "click-view:60:60",   # depot 2
-        "ticks:1500",
+        "ticks:700",
         "ctrl-click-unit:SCV", "rclick-unit:Mineral",             # builder back
+        "wait-minerals:100",
         "click-unit:SCV", "key:B", "key:S", "click-view:40:60",   # depot 3
-        "ticks:1800",
+        "ticks:700",
         "ctrl-click-unit:SCV", "rclick-unit:Mineral",
-        "ticks:600",
+        "wait-minerals:100",
         "look:1792:416",                                          # the geyser
         "click-unit:SCV", "key:B", "key:R", "click-world:1792:416",
         "ticks:1500",
@@ -170,7 +171,7 @@ def main() -> int:
     base = steps[:steps.index("ctrl-click-unit:SCV", len(steps) - 4)]
     gas_steps = base + ["ticks:600", "look:1800:330", "click-unit:Command Center", "key:S",
                         "ticks:330", "ctrl-click-unit:SCV", "rclick-unit:Refinery",
-                        "ticks:500"] + ["ticks:1"] * 900
+                        "ticks:500"] + ["ticks:1"] * 1800
     gs = run(args.install, args.size, 0, gas_steps)
     times, last = [], None
     for l in gs:
@@ -182,6 +183,16 @@ def main() -> int:
     mean = sum(gaps) / len(gaps) if gaps else 0.0
     check(gaps and abs(mean - 1.97) <= 0.2,
           f"boot camp: 3 SCVs deliver gas every {mean:.2f} s (recording 1.97 s)")
+
+    # Mineral income with Wasteland's five SCVs against the recording
+    # (170.5-222.5 s: 27 -> 234, 3.98 minerals/s = 0.1696 per 42.6 ms frame).
+    ws = MISSIONS["wasteland"][1]
+    inc_steps = ws[:ws.index("rclick-unit:Mineral") + 1] + ["ticks:300", "ticks:1200"]
+    wi = run(args.install, args.size, 1, inc_steps)
+    m0, m1 = int(field(wi[-2], "minerals")), int(field(wi[-1], "minerals"))
+    per_tick = (m1 - m0) / 1200
+    check(abs(per_tick / 0.1696 - 1) <= 0.10,
+          f"wasteland: 5 SCVs bring {per_tick:.4f} minerals/frame (recording 0.1696)")
 
     idx, steps = MISSIONS["backwater-station"]
     st = run(args.install, args.size, idx, steps)

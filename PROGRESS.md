@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 20 | 25 | 80 % |
+| [In-game client](#in-game-client) | 10 | 21 | 26 | 81 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **86** | **106** | **81 %** |
+| **Overall (weighted)** | **100** | **87** | **107** | **81 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -132,7 +132,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Campaign AI attacks are the script's waves: `attack_do` takes the requested count per type, no invented periodic all-in — `aiscript::tests::attack_do_sends_the_requested_count_and_no_periodic_attack`
 - [x] Trigger timelines of the four mission openings match the recordings within 0.5 s (10 transmissions / objectives, onsets measured after each recording's first game frame) — `scripts/timeline_gate.py`, `engine-rust/docs/gates/timeline.txt`
 - [x] Flingy movement as retail: SCVs, Vultures, Drones, Overlords and lifted buildings accelerate by flingy.dat `acceleration` and brake on their stopping distance; Boot Camp gas with 3 SCVs every 2.05 s against the recording's 1.97 s (was 1.80 s) — `flingy_units_accelerate_from_rest_and_walkers_do_not`, `scripts/mission_gate.py`
-- [ ] Player-driven event times (each recording's own build / attack order replayed) against the recordings; Boot Camp anchors so far: supply 18 -> 26 -> 34, depot 600 frames, gas rate
+- [x] Worker income against the recordings: mining starts on contact with the field (Wasteland, 5 SCVs: 0.180 minerals/frame vs recorded 0.1696, was +14 %); Boot Camp gas 2.07-2.15 s vs 1.97 s — `a_worker_starts_mining_only_when_it_touches_the_field`, `scripts/mission_gate.py`, HUD digit reader `research/tools/hud_read_number.py`
+- [ ] Player-driven event times (each recording's own build / attack order replayed) against the recordings; anchors so far: Boot Camp supply 18 -> 26 -> 34, depot 600 frames, gas and mineral rates
 - [ ] Single-player cheat codes (retail feature)
 - [ ] Save Replay from the score screen (button shown disabled; F6 saves during play)
 

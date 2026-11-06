@@ -5068,6 +5068,19 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 let name = parts.get(1).copied().unwrap_or("units");
                 let _ = std::fs::write(format!("{dir}/{name}.tsv"), out);
             }
+            "wait-minerals" => {
+                // Run frames until the local player has N minerals (at most
+                // 6000): a player waits for income before ordering.
+                let want = num(1);
+                for _ in 0..6000 {
+                    if app.world.players[app.local_player].minerals >= want {
+                        break;
+                    }
+                    app.step_once();
+                }
+                app.after_steps();
+                app.draw(fb);
+            }
             "camera" => {
                 // Test harness: put the camera's top-left at world x, y
                 // (matching a recording's framing; not a player input).

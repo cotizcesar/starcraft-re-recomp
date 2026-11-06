@@ -5690,3 +5690,40 @@ no screen moved by more than 0.05.
 clippy / fmt clean; `ui_visual_diff` 51/51, no screen moved by more than
 0.05 (shader reverted); `mission_gate.py` and `game_input_gate.py` 0
 failures at 3440x1440.
+
+## 2026-11-06 (116) — Shader uniform RE (partial); Wasteland income read from the HUD; contact mining
+
+- **RE (FACT, Ghidra headless on `build/ghidra-proj32/DumpProj`,
+  `GhidraXrefsToStrings` / `GhidraDecompileBatch`).**  Shader names are
+  referenced from `FUN_00aa96c0` (shader id -> file; `deferred_blit` id
+  0x0b, `bloom` 0x1d, the deferred sprite variants 0x11 / 0x21 / 0x23 /
+  0x25 / 0x27 built with `#define DEFERRED`) and `FUN_00aaced0` (vertex
+  shader table); uniform names are a pointer table around `0xf3e0a4`
+  (`multiplyColor`, `invResolution`, `data` at `0xf3e0c8`).  The decompiler
+  stops inside `FUN_00aa96c0` (non-returning calls); the draw call that
+  fills `data` (hallucinate, flipped, lighting, lightingScale) is not found
+  yet.  `bloom.glsl` composes `source + (1 - exp(-bloom * 1.1))`.
+- **HUD digit reader.**  `research/tools/hud_digits.py` segments the green
+  HUD number into glyphs, `hud_read_number.py` labels them with prototypes
+  (19 glyph classes from Wasteland, labelled by eye).  Wasteland minerals,
+  read every 0.5 s: 170.5 s 27 -> 222.5 s 234 with no spending (the counter
+  animates between values), 3.98 minerals/s with five SCVs (supply 10/18) =
+  0.1696 per 42.6 ms frame.
+- **Ours, and the fix.**  Same five SCVs, 1,200 frames: 0.193 per frame
+  (+14 %).  Workers started mining 80 px from a field's centre (53 px short
+  of contact for a field below them).  Mining now starts when the units.dat
+  boxes are within 8 px (`HARVEST_CONTACT_PX`, `box_gap_px`); walking on to
+  contact.  Result 0.180 per frame (+6 %).  The same contact rule for the
+  Refinery and the cargo hand-in made gas 14 % slow (2.24 s vs 1.97 s), so
+  those keep their 80 / 96 px ranges (INFERENCE: entering a Refinery and
+  handing in differ from touching a field); Boot Camp gas 2.07-2.15 s
+  depending on the SCVs' starting state.
+- **Harness.**  `--game-script` `wait-minerals:N`; the Boot Camp mission
+  script waits for 100 minerals before each building instead of fixed
+  ticks.  Mission gate: new Wasteland income check (+-10 %).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed
+(new `a_worker_starts_mining_only_when_it_touches_the_field`, fails on the
+old rule with "53 px away"); clippy / fmt clean; `game_input_gate.py`,
+`mission_gate.py` 0 failures at 1280x720 and 3440x1440; `timeline_gate.py`
+10/10.
