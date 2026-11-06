@@ -5068,6 +5068,13 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 let name = parts.get(1).copied().unwrap_or("units");
                 let _ = std::fs::write(format!("{dir}/{name}.tsv"), out);
             }
+            "camera" => {
+                // Test harness: put the camera's top-left at world x, y
+                // (matching a recording's framing; not a player input).
+                app.camera = (num(1), num(2));
+                app.clamp_camera();
+                app.draw(fb);
+            }
             "look" => {
                 // Minimap click on the world point (x, y) game px: centres
                 // the camera there through the real minimap input.

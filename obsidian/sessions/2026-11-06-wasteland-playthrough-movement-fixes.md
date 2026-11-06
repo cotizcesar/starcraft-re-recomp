@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)"]
 open: 2
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (115) Matched-camera depot comparison; retail GLSL shaders found (`shadersglsl/`), port tried and reverted pending the run-time uniforms.
 - (114) Gas rate vs Boot Camp; flingy acceleration; grpwire closed (Remastered uses the HD wireframes); scaffold brightness measured.
 - (113) Endings as recorded (world runs on, box ~1 s after the result, Elapsed Time frozen); single-unit unload.
 - (112) Trigger timelines within 0.4 s of the recordings; Bunker cargo slots and right-click loading.
@@ -25,7 +26,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - (108) All four missions won through input; mined-out fields; campaign AI waves as scripted.
 
 ## Pending
-- [ ] Scaffold / building brightness against a capture at a matched camera (session log 114).
+- [ ] Building lighting: matched-camera comparison done (session log 115); recover the client's `lighting` uniform / exposure with REA to port `shadersglsl/util_lighting.glsl` exactly.
 - [x] Compare each mission's opening timeline with the recordings. Closed 2026-11-06: `timeline_gate.py` 10/10 (session log 112).
 - [ ] Player-driven event times (replay each recording's own build order).
 - [x] Boot Camp playthrough in `mission_gate.py`. Closed 2026-11-06: `mission-gate.txt` (tick 6,542).

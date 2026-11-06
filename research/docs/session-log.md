@@ -5648,3 +5648,45 @@ shows the dialog at once); hover text 14/14.
 clean; `game_input_gate.py`, `mission_gate.py` 0 failures at 1280x720 /
 1920x1080 / 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51,
 no screen moved by more than 0.05.
+
+## 2026-11-06 (115) — Building lighting against a matched retail frame; the retail shader source
+
+- **Matched framing (FACT).**  The Boot Camp depot at 201 s was located on
+  screen by template matching our render (correlation 0.83, centre
+  (2183, 192)); a new `--game-script` harness step `camera:x:y` puts our
+  camera so our depot lands on the same pixel (camera (1131, 192)).  Same
+  screen position, so the view-dependent lighting is comparable.  Result:
+  luminance p50/75/90 retail 103 / 136 / 186, ours 97 / 119 / 140;
+  per-channel linear fit retail = 1.00 x ours (no global gain or tint
+  error); RMS 24.7 / 27.2 / 28.0; the difference is in how the shading is
+  distributed (retail: darker left faces, brighter metal highlights).
+- **Retail shader source (FACT).**  The install ships plain GLSL under
+  `shadersglsl/` (`sc_dump --include shaders`): `util_lighting.glsl`
+  `DirectionalLighting` = light at (200, 50, 500) from the origin,
+  `(lambert * colour + pow(clamp(dot(half, n)), 16) * specular) * ao`, eye
+  (w/2, h/4, 500 S); `normal_scale` z = sqrt(max(1 - x^2 - y^2, 0.1));
+  `deferred_blit.glsl` mixes the lit colour with the unlit one by the
+  sprite's `lighting` uniform (`deferred_sprite.glsl` data.z), adds point
+  lights (already ported in `hd_lights`) and emissive, and feeds bloom
+  above luminance 1.8.  No ambient term.
+- **Port tried, reverted.**  The shader's directional term with the mix
+  amount swept 0 / 0.5 / 0.75 / 0.9 / 1.0: pattern correlation on the
+  matched depot rises from 0.849 (fitted model) to 0.893 (m = 1), but
+  levels are ~20 % low (best per-channel gain 1.15-1.24) and RMS is
+  28.8 / 30.1 / 26.6 (25.9 with the gain); the in-game references of
+  `ui_visual_diff` get worse (frame means +0.2 to +0.45).  The missing
+  pieces are values the client sets at run time (the `lighting` uniform,
+  any exposure / bloom compositing); REA on the client's uniform setup is
+  the way to recover them.  The fitted model stays.
+- **Cargo slots.**  The two- and four-space slots (statdata 18-24) never
+  appear in Episode I: there is no Dropship, and Bunkers take one-space
+  infantry only.  Kept open for later episodes.
+- **Wasteland income.**  The mineral counter trace (127 changes,
+  100-300 s) mixes deliveries, spending and screen effects with a changing
+  SCV count; it does not support a clean rate comparison without reading
+  the digits (open).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `ui_visual_diff` 51/51, no screen moved by more than
+0.05 (shader reverted); `mission_gate.py` and `game_input_gate.py` 0
+failures at 3440x1440.
