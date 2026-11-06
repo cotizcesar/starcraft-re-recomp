@@ -6,7 +6,7 @@ type: session
 source: opencode
 area: front-end
 log: ["2026-11-05 (102)"]
-open: 1
+open: 0
 ---
 
 ## Goal
@@ -14,7 +14,7 @@ open: 1
 Fix six main-menu issues the user reported against the retail client.
 
 ## Outcome
-- SingleOn grid starts small and restarts per hover. Tests: `main_menu_hover_tests`.
+- ~~SingleOn grid restarts per hover~~: reverted in [[2026-11-05-singleon-hover-continuous-clock]] (retail screencast).
 - Single Player / Multiplayer keep their layout on hover. Gate: `menu-hover-text.txt` 14/14.
 - View Intro → Select Game Type → that game's movie. Check: `view_intro_check` in `scripts/menu_walkthrough.py`.
 - No whoosh when leaving Main through an entry. Code and test: `menu::screen_change_swish`; gate: `menu-walkthrough.txt`.
@@ -26,7 +26,7 @@ Fix six main-menu issues the user reported against the retail client.
 - [[singleon-hover-restarts-at-grow-in]]
 
 ## Pending
-- [ ] Retail recording of two consecutive Single Player hovers to confirm the clip restarts (falsifier of [[singleon-hover-restarts-at-grow-in]]).
+- [x] Retail recording of two consecutive Single Player hovers to confirm the clip restarts (falsifier of [[singleon-hover-restarts-at-grow-in]]). Closed 2026-11-05: `Screencast_20261105_204138` falsified it, session log 2026-11-05 (103).
 
 ## FACT vs INFERENCE
 - FACT: `singleon.webm` 76-frame cycle, grow-in at frame 31; label shadow offset (3,3) px on 130637.

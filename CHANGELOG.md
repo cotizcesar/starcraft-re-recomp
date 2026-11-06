@@ -7,8 +7,9 @@ status is in [PROGRESS.md](PROGRESS.md).
 ## 2026-11-05 — Main menu hover, View Intro and modal fixes
 
 ### Fixed
-- The Single Player hover grid always starts small and restarts on every
-  hover instead of resuming mid-loop.
+- The Single Player hover grid keeps the retail behaviour: it runs on the
+  same clock as the fleet and is only hidden when the pointer leaves (a
+  restart tried earlier the same day was reverted after a retail recording).
 - Single Player and Multiplayer no longer shift on hover; they only change
   colour, like the other entries.
 - Leaving the main menu through Single Player, Multiplayer, Options,

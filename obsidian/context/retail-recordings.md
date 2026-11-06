@@ -25,6 +25,7 @@ which is why every audio-timing item is still open.
 | `Screencast_20261105_074531` | Wasteland victory → score panel slide and count-up | 2026-11-05 (90), (91) | `wasteland_victory_fires_within_one_trigger_cycle` |
 | `Screencast_20261105_111714` (397 s) + `Screenshot_20261105_111243` | Boot Camp: ready room and full mission | 2026-11-05 (94) | `tests/campaign_episode1.rs` |
 | `Screencast_20261105_113518` (765 s) | Backwater Station: ready room → victory → score | 2026-11-05 (95) | `tests/campaign_episode1.rs` |
+| `Screencast_20261105_204138.webm` (60 fps, 45.9 s) | Main menu, six Single Player hovers | 2026-11-05 (103) | `hidden_mouse_over_clips_keep_running_and_only_show_on_hover` |
 | `Desperate Alliance.webm` (1362 s) | Ready room, 30-minute countdown, ending, score 20:20 | 2026-11-05 (99) | `desperate_alliance_follows_the_retail_recording` |
 
 ## Still missing (asked in open session items)
