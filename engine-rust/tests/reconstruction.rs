@@ -361,12 +361,12 @@ fn iscript_walking_speeds_are_recovered_per_unit() {
 }
 
 #[test]
-fn time_units_match_the_recovered_scaling() {
-    // units.dat build time is 1/15 s; upgrades.dat is 1/60 s.
-    assert_eq!(build_ticks(360), 576);
-    assert_eq!(research_ticks(1200), 1920);
-    assert_eq!(upgrade_ticks(4000), 1600);
-    assert_eq!(upgrade_ticks(4480), 1792);
+fn time_units_are_game_frames() {
+    // Backwater Station recording: SCV 300 frames = 12.6 s at 42 ms/tick.
+    assert_eq!(build_ticks(300), 300);
+    assert_eq!(build_ticks(360), 360);
+    assert_eq!(research_ticks(1200), 1200);
+    assert_eq!(upgrade_ticks(4000), 4000);
 }
 
 #[test]
@@ -934,6 +934,11 @@ fn zerg_building_morphs_keep_the_structure_and_consume_drones() {
         world.morph_building(hatch_id, uid::HIVE),
         Err(SimError::MissingRequirements)
     );
+    // Let the creep spread (it grows over time; the Lair morph now takes
+    // its retail frame count, which is shorter than the old scaling).
+    for _ in 0..600 {
+        world.step();
+    }
     // A Drone that starts a structure is consumed by it.
     let drone = world.spawn_px(0, uid::DRONE, 17 * 32, 17 * 32).unwrap();
     let drone_id = world.units[drone].id;

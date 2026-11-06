@@ -62,6 +62,33 @@ pub const PLAYER_COLORS: [Rgb; 12] = [
     Rgb::new(180, 180, 120),
 ];
 
+/// Run `f(first_row, rows)` over horizontal bands of `pixels` (`stride`
+/// pixels per row) on up to 8 threads.  Each band is a disjoint run of
+/// whole rows, so per-row passes (fog, column stretch, terrain) need no
+/// synchronisation; small images run on the calling thread.
+pub fn par_bands<F>(pixels: &mut [u32], stride: usize, f: F)
+where
+    F: Fn(usize, &mut [u32]) + Sync,
+{
+    let rows = pixels.len() / stride.max(1);
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .clamp(1, 8)
+        .min(rows / 64)
+        .max(1);
+    if threads == 1 {
+        f(0, pixels);
+        return;
+    }
+    let per = rows.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (k, band) in pixels.chunks_mut(per * stride).enumerate() {
+            let f = &f;
+            scope.spawn(move || f(k * per, band));
+        }
+    });
+}
+
 pub struct Framebuffer {
     pub width: i32,
     pub height: i32,
@@ -662,6 +689,11 @@ impl HdTerrain {
         let first_y = (cam.1 / TILE_PX).max(0);
         let last_x = ((cam.0 + view_w) / TILE_PX + 1).min(scenario.width as i32);
         let last_y = ((cam.1 + view_h) / TILE_PX + 1).min(scenario.height as i32);
+        // Tile list first (the megatile cache is single-threaded), then the
+        // blits in parallel horizontal bands (`par_bands`), then the creep
+        // edges.  Draw order inside a band is unchanged.
+        let mut tiles: Vec<(i32, i32, TilePixels)> = Vec::new();
+        let mut edges: Vec<(i32, i32, i32, i32)> = Vec::new();
         for ty in first_y..last_y {
             for tx in first_x..last_x {
                 let Some(&mtxm) = scenario
@@ -681,9 +713,30 @@ impl HdTerrain {
                 let layers: &[usize] = if mega == bg { &[bg] } else { &[bg, mega] };
                 for &m in layers {
                     if let Some(px) = self.tile(m, size) {
-                        blit_tile(fb, &px, size, sx, sy, (dx, dy, dx + dw, dy + dh));
+                        tiles.push((sx, sy, px));
                     }
                 }
+                edges.push((tx, ty, sx, sy));
+            }
+        }
+        let clip = (dx, dy, dx + dw, dy + dh);
+        let draws: Vec<(i32, i32, &[u32])> =
+            tiles.iter().map(|(x, y, p)| (*x, *y, &p[..])).collect();
+        let (fw, fh) = (fb.width, fb.height);
+        let stride = fw as usize;
+        par_bands(&mut fb.pixels, stride, |first, band| {
+            let rows = (band.len() / stride) as i32;
+            let (b0, b1) = (first as i32, first as i32 + rows);
+            for &(sx, sy, px) in &draws {
+                if sy + size as i32 <= b0 || sy >= b1 {
+                    continue;
+                }
+                let band_clip = (clip.0, clip.1.max(b0), clip.2, clip.3.min(b1));
+                blit_tile_rows(band, stride, fw, fh, b0, px, size, sx, sy, band_clip);
+            }
+        });
+        for (tx, ty, sx, sy) in edges {
+            {
                 if let Some(frame) = creep_edge_frame(creep, tx, ty)
                     && let Some((img, ox, oy)) = self.creep_edges.get(frame)
                 {
@@ -855,21 +908,38 @@ pub fn stretch_columns(fb: &mut Framebuffer, rect: (i32, i32, i32, i32), src_w: 
             (i, (i + 1).min(src_w - 1), f - i as f32)
         })
         .collect();
-    let mut row = vec![Rgb(0); src_w as usize];
-    for y in y0..y0 + h {
-        for (i, p) in row.iter_mut().enumerate() {
-            *p = fb.get(x0 + i as i32, y);
-        }
-        for (x, &(a, b, t)) in taps.iter().enumerate() {
-            let (pa, pb) = (row[a as usize].0, row[b as usize].0);
-            let mix = |sh: u32| {
-                let ca = ((pa >> sh) & 0xff) as f32;
-                let cb = ((pb >> sh) & 0xff) as f32;
-                (ca + (cb - ca) * t).round() as u8
-            };
-            fb.put(x0 + x as i32, y, Rgb::new(mix(16), mix(8), mix(0)));
-        }
+    // Row slices and integer taps (weight / 256); the per-pixel
+    // `get`/`put` + float version cost 14 ms of a 1080p frame.
+    let taps: Vec<(usize, usize, u32)> = taps
+        .iter()
+        .map(|&(a, b, t)| (a as usize, b as usize, (t * 256.0).round() as u32))
+        .collect();
+    let (fw, fh) = (fb.width, fb.height);
+    if x0 < 0 || x0 + w > fw {
+        return;
     }
+    let (ya, yb) = (y0.max(0) as usize, (y0 + h).min(fh).max(0) as usize);
+    if ya >= yb {
+        return;
+    }
+    let stride = fw as usize;
+    let rows = &mut fb.pixels[ya * stride..yb * stride];
+    par_bands(rows, stride, |_, band| {
+        let mut row = vec![0u32; src_w as usize];
+        for line in band.chunks_mut(stride) {
+            let seg = &mut line[x0 as usize..(x0 + w) as usize];
+            row.copy_from_slice(&seg[..src_w as usize]);
+            for (o, &(a, b, t)) in seg.iter_mut().zip(taps.iter()) {
+                let (pa, pb) = (row[a], row[b]);
+                let mix = |sh: u32| {
+                    let ca = (pa >> sh) & 0xff;
+                    let cb = (pb >> sh) & 0xff;
+                    (ca * (256 - t) + cb * t + 128) >> 8
+                };
+                *o = mix(16) << 16 | mix(8) << 8 | mix(0);
+            }
+        }
+    });
 }
 
 /// Retail HD fog at screen resolution: one darkness value per tile (0 in
@@ -918,27 +988,55 @@ pub fn draw_fog_smooth(
         }
     }
     box_blur(&mut fine, gw as usize, gh as usize, FOG_BOX_RADIUS);
-    let at = |i: i32, j: i32| fine[(j.clamp(0, gh - 1) * gw + i.clamp(0, gw - 1)) as usize];
     let step = TILE_PX as f32 / sub as f32;
-    for y in dy.max(0)..(dy + dh).min(fb.height) {
-        let gy = cam.1 as f32 + (y - dy) as f32 / s;
-        let fy = (gy - (ty0 * TILE_PX) as f32) / step - 0.5;
-        let j = fy.floor() as i32;
-        let wy = fy - j as f32;
-        for x in dx.max(0)..(dx + dw).min(fb.width) {
+    // Column taps are the same on every row: computed once (the per-pixel
+    // float + clamp version was 10 ms of a 1080p frame).
+    let (x_lo, x_hi) = (dx.max(0), (dx + dw).min(fb.width));
+    let cols: Vec<(usize, usize, f32)> = (x_lo..x_hi)
+        .map(|x| {
             let gx = cam.0 as f32 + (x - dx) as f32 / s;
             let fx = (gx + FOG_SAMPLE_DX - (tx0 * TILE_PX) as f32) / step - 0.5;
             let i = fx.floor() as i32;
-            let wx = fx - i as f32;
-            let top = at(i, j) + (at(i + 1, j) - at(i, j)) * wx;
-            let bottom = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * wx;
-            let a = top + (bottom - top) * wy;
-            if a > 0.5 {
-                let c = fb.get(x, y);
-                fb.put(x, y, c.blend(Rgb::new(0, 0, 0), a.round().min(255.0) as u8));
+            (
+                i.clamp(0, gw - 1) as usize,
+                (i + 1).clamp(0, gw - 1) as usize,
+                fx - i as f32,
+            )
+        })
+        .collect();
+    let fbw = fb.width as usize;
+    let (ya, yb) = (dy.max(0) as usize, (dy + dh).min(fb.height).max(0) as usize);
+    if ya >= yb {
+        return;
+    }
+    let fine = &fine;
+    let cols = &cols;
+    par_bands(&mut fb.pixels[ya * fbw..yb * fbw], fbw, |first, band| {
+        for (r, row) in band.chunks_mut(fbw).enumerate() {
+            let y = (ya + first + r) as i32;
+            let gy = cam.1 as f32 + (y - dy) as f32 / s;
+            let fy = (gy - (ty0 * TILE_PX) as f32) / step - 0.5;
+            let j = fy.floor() as i32;
+            let wy = fy - j as f32;
+            let ra = &fine[(j.clamp(0, gh - 1) * gw) as usize..][..gw as usize];
+            let rb = &fine[((j + 1).clamp(0, gh - 1) * gw) as usize..][..gw as usize];
+            for (x, &(i0, i1, wx)) in (x_lo..x_hi).zip(cols.iter()) {
+                let (a00, a10, a01, a11) = (ra[i0], ra[i1], rb[i0], rb[i1]);
+                if a00 + a10 + a01 + a11 <= 0.0 {
+                    continue;
+                }
+                let top = a00 + (a10 - a00) * wx;
+                let bottom = a01 + (a11 - a01) * wx;
+                let a = top + (bottom - top) * wy;
+                if a > 0.5 {
+                    let p = &mut row[x as usize];
+                    *p = Rgb(*p)
+                        .blend(Rgb::new(0, 0, 0), a.round().min(255.0) as u8)
+                        .0;
+                }
             }
         }
-    }
+    });
 }
 
 /// Client-side creep tile picker: which of the 13 creep megatiles (cv5
@@ -1051,36 +1149,42 @@ pub fn creep_edge_frame(
 }
 
 /// Alpha-blend a square ARGB tile clipped to `clip` (`x0, y0, x1, y1`).
-fn blit_tile(
-    fb: &mut Framebuffer,
+/// [`blit_tile`] into a band of rows starting at frame row `band_y0`.
+#[allow(clippy::too_many_arguments)]
+fn blit_tile_rows(
+    band: &mut [u32],
+    stride: usize,
+    fw: i32,
+    fh: i32,
+    band_y0: i32,
     px: &[u32],
     size: usize,
     sx: i32,
     sy: i32,
     clip: (i32, i32, i32, i32),
 ) {
-    for y in 0..size as i32 {
-        let py = sy + y;
-        if py < clip.1 || py >= clip.3 {
-            continue;
-        }
-        for x in 0..size as i32 {
-            let qx = sx + x;
-            if qx < clip.0 || qx >= clip.2 {
-                continue;
-            }
-            let p = px[y as usize * size + x as usize];
+    let x_lo = clip.0.max(sx).max(0);
+    let x_hi = clip.2.min(sx + size as i32).min(fw);
+    if x_lo >= x_hi {
+        return;
+    }
+    for y in clip.1.max(sy).max(0)..clip.3.min(sy + size as i32).min(fh) {
+        let src = &px[(y - sy) as usize * size..][..size];
+        let r = (y - band_y0) as usize;
+        let dst = &mut band[r * stride..(r + 1) * stride];
+        for x in x_lo..x_hi {
+            let p = src[(x - sx) as usize];
             let a = (p >> 24) as u8;
             if a == 0 {
                 continue;
             }
             let fg = Rgb(p & 0x00ff_ffff);
-            if a == 255 {
-                fb.put(qx, py, fg);
+            let d = &mut dst[x as usize];
+            *d = if a == 255 {
+                fg.0
             } else {
-                let bgc = fb.get(qx, py);
-                fb.put(qx, py, bgc.blend(fg, a));
-            }
+                Rgb(*d).blend(fg, a).0
+            };
         }
     }
 }
@@ -2164,5 +2268,26 @@ mod hd_terrain_tests {
         // Solid red, scaled by the measured terrain gain (255 * 0.91).
         assert_eq!(px[0] & 0x00ff_ffff, 0x00e8_0000, "red after resample");
         assert!(HdTerrain::parse(vec![0u8; 8]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod par_bands_tests {
+    use super::par_bands;
+
+    #[test]
+    fn every_row_is_visited_once_with_its_frame_index() {
+        let (w, h) = (7usize, 1000usize);
+        let mut px = vec![0u32; w * h];
+        par_bands(&mut px, w, |first, band| {
+            for (r, row) in band.chunks_mut(w).enumerate() {
+                for p in row {
+                    *p += (first + r) as u32 + 1;
+                }
+            }
+        });
+        for (y, row) in px.chunks(w).enumerate() {
+            assert!(row.iter().all(|&p| p == y as u32 + 1), "row {y}");
+        }
     }
 }

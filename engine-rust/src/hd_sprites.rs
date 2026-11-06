@@ -402,116 +402,351 @@ fn draw_frame_mode(
     let sy0 = cy + top * k;
     let sx1 = sx0 + f.w as f32 * k;
     let sy1 = sy0 + f.h as f32 * k;
-    let (tx0, ty0) = (f.tex_x as i32, f.tex_y as i32);
-    let (tx1, ty1) = (tx0 + f.w as i32, ty0 + f.h as i32);
-    let team_rgb = team.map(|t| {
-        [
-            ((t.0 >> 16) & 0xff) as f32 / 255.0,
-            ((t.0 >> 8) & 0xff) as f32 / 255.0,
-            (t.0 & 0xff) as f32 / 255.0,
-        ]
+    // Point lights only reach fragments inside their radius; every other
+    // sprite draws from the baked cache (`BAKED`), which is the same
+    // per-pixel result computed once per frame / team / scale / sub-pixel
+    // phase instead of ~110 texel fetches per screen pixel every frame.
+    let lit = env.filter(|e| {
+        e.lights.iter().any(|l| {
+            let nx = l.x.clamp(sx0, sx1);
+            let ny = l.y.clamp(sy0, sy1);
+            (nx - l.x).powi(2) + (ny - l.y).powi(2) < l.radius * l.radius
+        })
     });
-    for y in (sy0.floor() as i32).max(clip.1)..(sy1.ceil() as i32).min(clip.3) {
-        let v = ty0 as f32 + (y as f32 + 0.5 - sy0) / k;
-        for x in (sx0.floor() as i32).max(clip.0)..(sx1.ceil() as i32).min(clip.2) {
-            let mut u = (x as f32 + 0.5 - sx0) / k;
-            if flip {
-                u = f.w as f32 - u;
-            }
-            let u = tx0 as f32 + u;
-            let c = sample(&img.diffuse, u, v, tx0, ty0, tx1, ty1);
-            if c[3] <= 0.004 {
-                continue;
-            }
-            let (mut r, mut g, mut b) = (c[0], c[1], c[2]);
-            if let Some((alpha, col)) = flat {
-                // Shadows (black) and selection circles draw one flat colour
-                // weighted by the image alpha; the texel colour is unused.
-                let a = (c[3] * alpha).min(1.0);
-                let dst = fb.get(x, y).0;
-                let mix = |d: u32, c: u32| (d as f32 * (1.0 - a) + c as f32 * a).round() as u8;
-                fb.put(
-                    x,
-                    y,
-                    Rgb::new(
-                        mix((dst >> 16) & 0xff, (col.0 >> 16) & 0xff),
-                        mix((dst >> 8) & 0xff, (col.0 >> 8) & 0xff),
-                        mix(dst & 0xff, col.0 & 0xff),
-                    ),
-                );
-                continue;
-            }
-            if let (Some(tc), Some(mask)) = (team_rgb, img.team.as_ref()) {
-                let m = sample(mask, u, v, tx0, ty0, tx1, ty1);
-                // Team mask is grey: its premultiplied red is the weight.
-                let w = if m[3] > 0.0 {
-                    (m[0] / 255.0 / m[3]).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                r *= 1.0 - w + w * tc[0];
-                g *= 1.0 - w + w * tc[1];
-                b *= 1.0 - w + w * tc[2];
-            }
-            if let Some(lit) = img.lighting.as_ref() {
-                let n = sample_raw(&lit.normal, u, v);
-                let ao = sample_raw(&lit.ao_depth, u, v)[1];
-                let sp = sample_raw(&lit.specular, u, v);
-                let alpha = c[3].min(1.0);
-                // Unlit (team-tinted) colour, for the point lights below.
-                let base = [r, g, b].map(|v| (v / (alpha * 255.0).max(1e-6)).clamp(0.0, 1.0));
-                [r, g, b] = shade(
-                    [r, g, b],
-                    (n[0], n[3]),
-                    ao,
-                    [sp[0], sp[1], sp[2]],
-                    alpha,
-                    flip,
-                );
-                // Point lights (`main.lit`), as the retail deferred blit.
-                if let Some(env) = env.filter(|e| !e.lights.is_empty()) {
-                    let ad = sample_raw(&lit.ao_depth, u, v);
-                    let mut nx = n[0] * 2.0 - 1.0;
-                    if flip {
-                        nx = -nx;
-                    }
-                    let ny = n[3] * 2.0 - 1.0;
-                    let nz = (1.0 - nx * nx - ny * ny).max(0.1).sqrt();
-                    let len = (nx * nx + ny * ny + nz * nz).sqrt();
-                    let add = env.shade(&crate::hd_lights::Fragment {
-                        x: x as f32 + 0.5,
-                        y: y as f32 + 0.5,
-                        colour: base,
-                        normal: [nx / len, ny / len, nz / len],
-                        depth: ad[3],
-                        ao: ad[1],
-                        specular: [sp[0], sp[1], sp[2]],
-                    });
-                    r += add[0] * 255.0 * alpha;
-                    g += add[1] * 255.0 * alpha;
-                    b += add[2] * 255.0 * alpha;
-                }
-                // Emissive glow is added unlit, per channel (`EMISSIVE_K`).
-                if let Some(em) = lit.emissive.as_ref() {
-                    let e = sample_raw(em, u, v);
-                    r += e[0] * 255.0 * alpha * EMISSIVE_K[0];
-                    g += e[1] * 255.0 * alpha * EMISSIVE_K[1];
-                    b += e[2] * 255.0 * alpha * EMISSIVE_K[2];
-                }
-            }
-            let a = c[3].min(1.0);
-            let dst = fb.get(x, y).0;
-            let blend =
-                |src: f32, d: u32| (src + d as f32 * (1.0 - a)).round().clamp(0.0, 255.0) as u8;
-            fb.put(
-                x,
-                y,
-                Rgb::new(
-                    blend(r, (dst >> 16) & 0xff),
-                    blend(g, (dst >> 8) & 0xff),
-                    blend(b, dst & 0xff),
-                ),
+    // Lit sprites bake too: the lights that reach the frame, relative to
+    // its corner, and the eye (in 32 px buckets; it only moves the
+    // specular highlight) join the cache key, so a static building next to
+    // a light, or a scrolling view, reuses the shaded pixels.
+    let local = lit.map(|e| {
+        let (bx, by) = (sx0.floor(), sy0.floor());
+        let lights: Vec<crate::hd_lights::ScreenLight> = e
+            .lights
+            .iter()
+            .filter(|l| {
+                let nx = l.x.clamp(sx0, sx1);
+                let ny = l.y.clamp(sy0, sy1);
+                (nx - l.x).powi(2) + (ny - l.y).powi(2) < l.radius * l.radius
+            })
+            .map(|l| crate::hd_lights::ScreenLight {
+                x: (l.x - bx).round(),
+                y: (l.y - by).round(),
+                ..*l
+            })
+            .collect();
+        let eye = (
+            ((e.eye.0 - bx) / 32.0).round() * 32.0,
+            ((e.eye.1 - by) / 32.0).round() * 32.0,
+        );
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        for l in &lights {
+            (
+                l.x.to_bits(),
+                l.y.to_bits(),
+                l.radius.to_bits(),
+                l.intensity.to_bits(),
+            )
+                .hash(&mut h);
+            l.color.map(f32::to_bits).hash(&mut h);
+        }
+        (eye.0.to_bits(), eye.1.to_bits(), e.scale.to_bits()).hash(&mut h);
+        let env = crate::hd_lights::LightEnv {
+            lights,
+            eye,
+            scale: e.scale,
+        };
+        (h.finish() | 1, env)
+    });
+    if local.is_some() {
+        DRAW_STATS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        DRAW_STATS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    draw_baked(
+        fb,
+        img,
+        frame,
+        (sx0, sy0, sx1, sy1),
+        k,
+        flip,
+        team,
+        flat,
+        clip,
+        local.as_ref().map(|(sig, env)| (*sig, env)),
+    );
+}
+
+/// `[unlit draws, lit draws]` since the last [`take_draw_stats`]
+/// (`GC_PROFILE` frame report).
+static DRAW_STATS: [std::sync::atomic::AtomicUsize; 2] = [
+    std::sync::atomic::AtomicUsize::new(0),
+    std::sync::atomic::AtomicUsize::new(0),
+];
+
+/// Read and reset the sprite draw counters.
+pub fn take_draw_stats() -> (usize, usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        DRAW_STATS[0].swap(0, Relaxed),
+        DRAW_STATS[1].swap(0, Relaxed),
+    )
+}
+
+/// Per-fragment shading of one frame (diffuse, team colour, retail HD
+/// lighting, emissive), shared by the live and the baked path.
+struct FrameShader<'a> {
+    img: &'a HdImage,
+    f: HdFrame,
+    k: f32,
+    flip: bool,
+    team: Option<[f32; 3]>,
+    flat: Option<(f32, Rgb)>,
+}
+
+impl<'a> FrameShader<'a> {
+    fn new(
+        img: &'a HdImage,
+        f: HdFrame,
+        k: f32,
+        flip: bool,
+        team: Option<Rgb>,
+        flat: Option<(f32, Rgb)>,
+    ) -> Self {
+        let team = team.map(|t| {
+            [
+                ((t.0 >> 16) & 0xff) as f32 / 255.0,
+                ((t.0 >> 8) & 0xff) as f32 / 255.0,
+                (t.0 & 0xff) as f32 / 255.0,
+            ]
+        });
+        Self {
+            img,
+            f,
+            k,
+            flip,
+            team,
+            flat,
+        }
+    }
+
+    /// Premultiplied colour at offset `(dx, dy)` screen px from the frame's
+    /// top-left (pixel centre included); `at` is the screen pixel for point
+    /// lights.
+    fn texel(
+        &self,
+        dx: f32,
+        dy: f32,
+        at: (i32, i32),
+        env: Option<&crate::hd_lights::LightEnv>,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let (f, img, k) = (self.f, self.img, self.k);
+        let (tx0, ty0) = (f.tex_x as i32, f.tex_y as i32);
+        let (tx1, ty1) = (tx0 + f.w as i32, ty0 + f.h as i32);
+        let v = ty0 as f32 + dy / k;
+        let mut u = dx / k;
+        if self.flip {
+            u = f.w as f32 - u;
+        }
+        let u = tx0 as f32 + u;
+        let c = sample(&img.diffuse, u, v, tx0, ty0, tx1, ty1);
+        if c[3] <= 0.004 {
+            return None;
+        }
+        if let Some((alpha, col)) = self.flat {
+            // Shadows (black) and selection circles draw one flat colour
+            // weighted by the image alpha; the texel colour is unused.
+            let a = (c[3] * alpha).min(1.0);
+            return Some((
+                ((col.0 >> 16) & 0xff) as f32 * a,
+                ((col.0 >> 8) & 0xff) as f32 * a,
+                (col.0 & 0xff) as f32 * a,
+                a,
+            ));
+        }
+        let (mut r, mut g, mut b) = (c[0], c[1], c[2]);
+        if let (Some(tc), Some(mask)) = (self.team, img.team.as_ref()) {
+            let m = sample(mask, u, v, tx0, ty0, tx1, ty1);
+            // Team mask is grey: its premultiplied red is the weight.
+            let w = if m[3] > 0.0 {
+                (m[0] / 255.0 / m[3]).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            r *= 1.0 - w + w * tc[0];
+            g *= 1.0 - w + w * tc[1];
+            b *= 1.0 - w + w * tc[2];
+        }
+        if let Some(lit) = img.lighting.as_ref() {
+            let n = sample_raw(&lit.normal, u, v);
+            let ad = sample_raw(&lit.ao_depth, u, v);
+            let ao = ad[1];
+            let sp = sample_raw(&lit.specular, u, v);
+            let alpha = c[3].min(1.0);
+            // Unlit (team-tinted) colour, for the point lights below.
+            let base = [r, g, b].map(|v| (v / (alpha * 255.0).max(1e-6)).clamp(0.0, 1.0));
+            [r, g, b] = shade(
+                [r, g, b],
+                (n[0], n[3]),
+                ao,
+                [sp[0], sp[1], sp[2]],
+                alpha,
+                self.flip,
             );
+            // Point lights (`main.lit`), as the retail deferred blit.
+            if let Some(env) = env.filter(|e| !e.lights.is_empty()) {
+                let mut nx = n[0] * 2.0 - 1.0;
+                if self.flip {
+                    nx = -nx;
+                }
+                let ny = n[3] * 2.0 - 1.0;
+                let nz = (1.0 - nx * nx - ny * ny).max(0.1).sqrt();
+                let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                let add = env.shade(&crate::hd_lights::Fragment {
+                    x: at.0 as f32 + 0.5,
+                    y: at.1 as f32 + 0.5,
+                    colour: base,
+                    normal: [nx / len, ny / len, nz / len],
+                    depth: ad[3],
+                    ao: ad[1],
+                    specular: [sp[0], sp[1], sp[2]],
+                });
+                r += add[0] * 255.0 * alpha;
+                g += add[1] * 255.0 * alpha;
+                b += add[2] * 255.0 * alpha;
+            }
+            // Emissive glow is added unlit, per channel (`EMISSIVE_K`).
+            if let Some(em) = lit.emissive.as_ref() {
+                let e = sample_raw(em, u, v);
+                r += e[0] * 255.0 * alpha * EMISSIVE_K[0];
+                g += e[1] * 255.0 * alpha * EMISSIVE_K[1];
+                b += e[2] * 255.0 * alpha * EMISSIVE_K[2];
+            }
+        }
+        Some((r, g, b, c[3].min(1.0)))
+    }
+}
+
+/// Sub-pixel phases kept per axis by the baked cache (1/4 px).
+const BAKE_PHASES: f32 = 4.0;
+/// Baked pixels kept before the cache is flushed (~256 MB).
+const BAKE_BUDGET_PX: usize = 64 << 20;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct BakeKey {
+    img: usize,
+    frame: usize,
+    flip: bool,
+    team: u32,
+    flat: Option<(u32, u32)>,
+    k_bits: u32,
+    phase: (u8, u8),
+    /// Signature of the lights reaching the frame (0 = unlit).
+    lights: u64,
+}
+
+/// One frame shaded once: premultiplied `(r, g, b, a)` bytes, `w` x `h`
+/// pixels starting at the frame's floor-aligned screen corner.
+struct Baked {
+    w: i32,
+    h: i32,
+    px: Vec<[u8; 4]>,
+}
+
+thread_local! {
+    static BAKED: std::cell::RefCell<(std::collections::HashMap<BakeKey, std::rc::Rc<Baked>>, usize)> =
+        std::cell::RefCell::new((std::collections::HashMap::new(), 0));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_baked(
+    fb: &mut Framebuffer,
+    img: &HdImage,
+    frame: usize,
+    rect: (f32, f32, f32, f32),
+    k: f32,
+    flip: bool,
+    team: Option<Rgb>,
+    flat: Option<(f32, Rgb)>,
+    clip: (i32, i32, i32, i32),
+    lights: Option<(u64, &crate::hd_lights::LightEnv)>,
+) {
+    let Some(f) = img.header.frames.get(frame).copied() else {
+        return;
+    };
+    let (sx0, sy0, sx1, sy1) = rect;
+    let (bx, by) = (sx0.floor(), sy0.floor());
+    let phase = (
+        (((sx0 - bx) * BAKE_PHASES).round() as u8).min(BAKE_PHASES as u8 - 1),
+        (((sy0 - by) * BAKE_PHASES).round() as u8).min(BAKE_PHASES as u8 - 1),
+    );
+    let key = BakeKey {
+        img: img as *const HdImage as usize,
+        frame,
+        flip,
+        team: team.map_or(0, |t| t.0 | 0xff00_0000),
+        flat: flat.map(|(a, c)| (a.to_bits(), c.0)),
+        k_bits: k.to_bits(),
+        phase,
+        lights: lights.map_or(0, |l| l.0),
+    };
+    let baked = BAKED.with(|cache| cache.borrow().0.get(&key).cloned());
+    let baked = match baked {
+        Some(b) => b,
+        None => {
+            let (fx, fy) = (phase.0 as f32 / BAKE_PHASES, phase.1 as f32 / BAKE_PHASES);
+            let w = ((fx + (sx1 - sx0)).ceil() as i32).max(1);
+            let h = ((fy + (sy1 - sy0)).ceil() as i32).max(1);
+            let shader = FrameShader::new(img, f, k, flip, team, flat);
+            let mut px = vec![[0u8; 4]; (w * h) as usize];
+            for j in 0..h {
+                for i in 0..w {
+                    if let Some((r, g, b, a)) = shader.texel(
+                        i as f32 + 0.5 - fx,
+                        j as f32 + 0.5 - fy,
+                        (i, j),
+                        lights.map(|l| l.1),
+                    ) {
+                        let q = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+                        px[(j * w + i) as usize] = [q(r), q(g), q(b), q(a * 255.0)];
+                    }
+                }
+            }
+            let b = std::rc::Rc::new(Baked { w, h, px });
+            BAKED.with(|cache| {
+                let mut c = cache.borrow_mut();
+                if c.1 + (w * h) as usize > BAKE_BUDGET_PX {
+                    c.0.clear();
+                    c.1 = 0;
+                }
+                c.1 += (w * h) as usize;
+                c.0.insert(key, b.clone());
+            });
+            b
+        }
+    };
+    let (ox, oy) = (bx as i32, by as i32);
+    let x_lo = clip.0.max(ox).max(0);
+    let x_hi = clip.2.min(ox + baked.w).min(fb.width);
+    let y_lo = clip.1.max(oy).max(0);
+    let y_hi = clip.3.min(oy + baked.h).min(fb.height);
+    let fw = fb.width as usize;
+    for y in y_lo..y_hi {
+        let row = &baked.px[((y - oy) * baked.w) as usize..((y - oy + 1) * baked.w) as usize];
+        let dst = &mut fb.pixels[y as usize * fw..(y as usize + 1) * fw];
+        for x in x_lo..x_hi {
+            let [r, g, b, a] = row[(x - ox) as usize];
+            if a == 0 {
+                continue;
+            }
+            let d = &mut dst[x as usize];
+            if a == 255 {
+                *d = (r as u32) << 16 | (g as u32) << 8 | b as u32;
+                continue;
+            }
+            let inv = 255 - a as u32;
+            let mix = |src: u8, dc: u32| (src as u32 + (dc * inv + 127) / 255).min(255);
+            *d =
+                mix(r, (*d >> 16) & 0xff) << 16 | mix(g, (*d >> 8) & 0xff) << 8 | mix(b, *d & 0xff);
         }
     }
 }
@@ -612,5 +847,73 @@ mod tests {
         draw_frame(&mut fb2, &img, 0, 8.0, 8.0, 4.0, true, None, (0, 0, 16, 16));
         assert_eq!(fb2.get(6, 7), Rgb::new(255, 0, 0));
         assert_eq!(fb2.get(10, 7), Rgb::new(0, 0, 0));
+    }
+
+    #[test]
+    fn baked_frames_match_the_per_pixel_shader() {
+        // The cache must reproduce the live per-fragment result (up to one
+        // grey level of rounding) for the plain, team-tinted, flipped and
+        // flat (shadow) modes.  Frame corners sit on the cache's 1/4 px
+        // phases; other positions snap to the nearest phase (<= 1/8 px).
+        let img = HdImage::parse(&container()).expect("image");
+        let f = img.header.frames[0];
+        for (corner_x, corner_y, s, flip, team, flat) in [
+            (5.25, 6.5, 3.0, false, None, None),
+            (4.75, 7.0, 2.25, true, Some(Rgb::new(30, 200, 40)), None),
+            (6.0, 6.0, 1.5, false, None, Some((0.6, Rgb::new(0, 0, 0)))),
+        ] {
+            let mut live = Framebuffer::new(16, 16);
+            live.clear(Rgb::new(40, 80, 120));
+            let mut baked = Framebuffer::new(16, 16);
+            baked.clear(Rgb::new(40, 80, 120));
+            let k = s / img.header.scale.max(1) as f32;
+            let left = if flip {
+                img.header.frame_w as f32 / 2.0 - (f.x as f32 + f.w as f32)
+            } else {
+                f.x as f32 - img.header.frame_w as f32 / 2.0
+            };
+            let top = (f.y as f32 - img.header.frame_h as f32 / 2.0) * k;
+            let (cx, cy) = (corner_x - left * k, corner_y - top);
+            let (sx0, sy0) = (cx + left * k, cy + top);
+            let shader = FrameShader::new(&img, f, k, flip, team, flat);
+            for y in 0..16 {
+                for x in 0..16 {
+                    if let Some((r, g, b, a)) =
+                        shader.texel(x as f32 + 0.5 - sx0, y as f32 + 0.5 - sy0, (x, y), None)
+                    {
+                        let d = live.get(x, y).0;
+                        let m = |src: f32, c: u32| (src + c as f32 * (1.0 - a)).round() as u8;
+                        live.put(
+                            x,
+                            y,
+                            Rgb::new(
+                                m(r, (d >> 16) & 0xff),
+                                m(g, (d >> 8) & 0xff),
+                                m(b, d & 0xff),
+                            ),
+                        );
+                    }
+                }
+            }
+            draw_frame_mode(
+                &mut baked,
+                &img,
+                0,
+                cx,
+                cy,
+                s,
+                flip,
+                team,
+                flat,
+                (0, 0, 16, 16),
+                None,
+            );
+            for (a, b) in live.pixels.iter().zip(&baked.pixels) {
+                for sh in [16, 8, 0] {
+                    let (ca, cb) = ((a >> sh) & 0xff, (b >> sh) & 0xff);
+                    assert!(ca.abs_diff(cb) <= 1, "{cx},{cy} s={s}: {a:06x} vs {b:06x}");
+                }
+            }
+        }
     }
 }

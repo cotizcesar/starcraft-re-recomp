@@ -1088,6 +1088,22 @@ struct CreditMask {
     shadow: Vec<u8>,
 }
 
+/// One frame of in-game input in surface pixels (`App::handle_game_input`).
+#[derive(Clone, Debug, Default)]
+struct GameInput {
+    pressed: Vec<Key>,
+    ctrl: bool,
+    shift: bool,
+    left: bool,
+    right: bool,
+    up: bool,
+    down: bool,
+    wheel: f32,
+    mouse: Option<(i32, i32)>,
+    lmb: bool,
+    rmb: bool,
+}
+
 struct MenuInput {
     keys: Vec<Key>,
     mouse: Option<(i32, i32)>,
@@ -1162,6 +1178,10 @@ struct App {
     /// The same layer without the panel introduction, for the modals and
     /// sub-screens drawn over the menu.
     menu_static_bare: Option<(usize, usize, Vec<u32>)>,
+    /// Composed console plates for (fb w, fb h, box x, box w, box h).
+    plates_layer: Option<(PlatesKey, LayerCache)>,
+    /// Minimap terrain + fog layer: (w, h, tick, fog on, pixels).
+    minimap_cache: Option<(i32, i32, u64, bool, Framebuffer)>,
     /// Offset of the drawing surface inside the window (`letterbox`): the
     /// pointer is read in window pixels and moved into surface pixels.
     present_offset: (i32, i32),
@@ -1400,6 +1420,13 @@ struct App {
     build_mode: Option<u16>,
     build_list: Vec<u16>,
     command_list: Vec<u16>,
+    /// Card a [`galaxycraft::buttons::Act::Card`] button switched to (build
+    /// menus); `None` = the selected unit's own card.
+    card_set: Option<u16>,
+    /// Card button waiting for a world click (Move, Attack, Gather, Rally...).
+    target_act: Option<(galaxycraft::buttons::Act, u16)>,
+    /// First selected unit the card belongs to (a new selection resets it).
+    card_owner: Option<u32>,
     status: String,
     status_until: Instant,
     speed: f32,
@@ -3149,6 +3176,18 @@ const GAME_ERROR_BASE: f32 = 916.0;
 const GAME_ERROR_COLOUR: Rgb = Rgb::new(252, 248, 244);
 const GAME_ERROR_LIFE: Duration = Duration::from_secs(4);
 const STAT_CANT_BUILD_THERE: u16 = 856;
+/// (frame w, frame h, box x, box w, box h) the console plates were composed for.
+type PlatesKey = (i32, i32, i32, i32, i32);
+/// The nine slots of a command card.
+type Card = [Option<(
+    galaxycraft::button_sets::Button,
+    galaxycraft::buttons::ButtonState,
+)>; 9];
+
+/// Ticks between minimap terrain/fog recompositions.
+const MINIMAP_REFRESH_TICKS: u64 = 8;
+/// Retail Esc-only card shown while a target or a building spot is pending.
+const TARGET_CARD: u16 = 229;
 
 /// Town-hall supply rows from `stat_txt.tbl`: Used (821), Provided (815),
 /// Total (818), Max (824), each Zerg / Terran / Protoss in turn.
@@ -4442,33 +4481,77 @@ const WORLD_KEY: Rgb = Rgb(0x0001_0203);
 /// pixel blends the non-key neighbours by their bilinear weight, so sprite
 /// edges stay as soft as the opaque blit.
 fn blit_scaled_keyed(src: &Framebuffer, dst: &mut Framebuffer, scale: f32, x0: i32) {
+    // Bilinear upscale of the 1x world layer that skips `WORLD_KEY` texels.
+    // In the HD path that layer is almost all key (the HD terrain and units
+    // are drawn at screen resolution), so source rows without a visible
+    // texel are skipped outright and the horizontal taps are computed once
+    // per column (it was 20 ms of the 1080p frame).
     let s = scale.max(0.5);
     let dw = ((src.width as f32 * s).round() as i32).min(dst.width - x0);
     let dh = ((src.height as f32 * s).round() as i32).min(dst.height);
+    if dw <= 0 || dh <= 0 {
+        return;
+    }
+    let (sw, sh) = (src.width as usize, src.height as usize);
+    let row_visible: Vec<bool> = (0..sh)
+        .map(|y| {
+            src.pixels[y * sw..(y + 1) * sw]
+                .iter()
+                .any(|&p| p != WORLD_KEY.0)
+        })
+        .collect();
+    if !row_visible.iter().any(|&v| v) {
+        return;
+    }
     let max_sx = src.width - 1;
     let max_sy = src.height - 1;
+    let taps_x: Vec<(usize, usize, f32)> = (0..dw)
+        .map(|x| {
+            let fx = ((x as f32 + 0.5) / s) - 0.5;
+            let xs = fx.floor() as i32;
+            let wx = fx - xs as f32;
+            (
+                xs.clamp(0, max_sx) as usize,
+                (xs + 1).clamp(0, max_sx) as usize,
+                wx,
+            )
+        })
+        .collect();
+    let dst_w = dst.width as usize;
     for y in 0..dh {
         let fy = ((y as f32 + 0.5) / s) - 0.5;
         let y0 = fy.floor() as i32;
         let wy = fy - y0 as f32;
-        for x in 0..dw {
-            let fx = ((x as f32 + 0.5) / s) - 0.5;
-            let xs = fx.floor() as i32;
-            let wx = fx - xs as f32;
+        let (ya, yb) = (
+            y0.clamp(0, max_sy) as usize,
+            (y0 + 1).clamp(0, max_sy) as usize,
+        );
+        if !row_visible[ya] && !row_visible[yb] {
+            continue;
+        }
+        let (ra, rb) = (
+            &src.pixels[ya * sw..(ya + 1) * sw],
+            &src.pixels[yb * sw..(yb + 1) * sw],
+        );
+        let out_row = &mut dst.pixels[y as usize * dst_w..(y as usize + 1) * dst_w];
+        for (x, &(xa, xb, wx)) in taps_x.iter().enumerate() {
+            let taps = [
+                (ra[xa], (1.0 - wx) * (1.0 - wy)),
+                (ra[xb], wx * (1.0 - wy)),
+                (rb[xa], (1.0 - wx) * wy),
+                (rb[xb], wx * wy),
+            ];
+            if taps.iter().all(|(p, _)| *p == WORLD_KEY.0) {
+                continue;
+            }
             let (mut r, mut g, mut b, mut wsum) = (0f32, 0f32, 0f32, 0f32);
-            for (sx, sy, w) in [
-                (xs, y0, (1.0 - wx) * (1.0 - wy)),
-                (xs + 1, y0, wx * (1.0 - wy)),
-                (xs, y0 + 1, (1.0 - wx) * wy),
-                (xs + 1, y0 + 1, wx * wy),
-            ] {
-                let p = src.get(sx.clamp(0, max_sx), sy.clamp(0, max_sy));
-                if p == WORLD_KEY || w <= 0.0 {
+            for (p, w) in taps {
+                if p == WORLD_KEY.0 || w <= 0.0 {
                     continue;
                 }
-                r += ((p.0 >> 16) & 0xff) as f32 * w;
-                g += ((p.0 >> 8) & 0xff) as f32 * w;
-                b += (p.0 & 0xff) as f32 * w;
+                r += ((p >> 16) & 0xff) as f32 * w;
+                g += ((p >> 8) & 0xff) as f32 * w;
+                b += (p & 0xff) as f32 * w;
                 wsum += w;
             }
             if wsum <= 0.0 {
@@ -4479,14 +4562,16 @@ fn blit_scaled_keyed(src: &Framebuffer, dst: &mut Framebuffer, scale: f32, x0: i
                 (g / wsum).round() as u8,
                 (b / wsum).round() as u8,
             );
-            let (px, py) = (x0 + x, y);
+            let px = (x0 + x as i32) as usize;
+            if px >= dst_w {
+                continue;
+            }
             let a = (wsum * 255.0).round().min(255.0) as u8;
-            let out = if a == 255 {
-                c
+            out_row[px] = if a == 255 {
+                c.0
             } else {
-                dst.get(px, py).blend(c, a)
+                Rgb(out_row[px]).blend(c, a).0
             };
-            dst.put(px, py, out);
         }
     }
 }
@@ -4624,7 +4709,203 @@ fn script_key(name: &str) -> Key {
         "U" => Key::U,
         "T" => Key::T,
         "O" => Key::O,
+        "F10" => Key::F10,
+        "Home" => Key::Home,
+        name if name.len() == 1 => {
+            const LETTERS: [Key; 26] = [
+                Key::A,
+                Key::B,
+                Key::C,
+                Key::D,
+                Key::E,
+                Key::F,
+                Key::G,
+                Key::H,
+                Key::I,
+                Key::J,
+                Key::K,
+                Key::L,
+                Key::M,
+                Key::N,
+                Key::O,
+                Key::P,
+                Key::Q,
+                Key::R,
+                Key::S,
+                Key::T,
+                Key::U,
+                Key::V,
+                Key::W,
+                Key::X,
+                Key::Y,
+                Key::Z,
+            ];
+            const DIGITS: [Key; 10] = [
+                Key::Key0,
+                Key::Key1,
+                Key::Key2,
+                Key::Key3,
+                Key::Key4,
+                Key::Key5,
+                Key::Key6,
+                Key::Key7,
+                Key::Key8,
+                Key::Key9,
+            ];
+            let c = name.as_bytes()[0];
+            match c {
+                b'A'..=b'Z' => LETTERS[(c - b'A') as usize],
+                b'0'..=b'9' => DIGITS[(c - b'0') as usize],
+                _ => Key::Unknown,
+            }
+        }
         _ => Key::Unknown,
+    }
+}
+
+/// Scripted in-game session (`--game-script`, map from `--shot-map`):
+/// synthetic [`GameInput`] frames through the real in-game handler, so
+/// selection, orders, the command card and building are testable without
+/// a window.  Steps (comma separated; points are window pixels):
+/// `move:x:y`, `click:x:y`, `shift-click:x:y`, `rclick:x:y`,
+/// `drag:x0:y0:x1:y1`, `key:K`, `ctrl-key:K`, `ticks:N` (simulation ticks),
+/// `click-unit:NAME` / `rclick-unit:NAME` (the nearest on-screen unit whose
+/// name contains NAME), `click-cmd:N` (command-card slot N, 1..9),
+/// `click-world:x:y` (world game px), `click-view:px:py` / `rclick-view`
+/// (percent of the visible playfield), `shot:NAME`.  Writes `game.tsv` (one
+/// state line per step) to `GC_WALK_DIR`.
+fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
+    let dir = std::env::var("GC_WALK_DIR").unwrap_or_else(|_| "/tmp/opencode/game".into());
+    let _ = std::fs::create_dir_all(&dir);
+    app.load_map(app.map_index);
+    app.briefing = false;
+    app.intro = false;
+    app.menu = false;
+    app.update_view(fb);
+    app.draw(fb);
+    let mut log = String::from(
+        "step	action	state
+",
+    );
+    let mut mouse: Option<(i32, i32)> = None;
+    let frame = |app: &mut App, fb: &mut Framebuffer, input: GameInput| {
+        app.handle_game_input(&input);
+        app.draw(fb);
+    };
+    for (i, step) in script.split(',').map(str::trim).enumerate() {
+        let parts: Vec<&str> = step.split(':').collect();
+        let num = |k: usize| {
+            parts
+                .get(k)
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0)
+        };
+        let base = |mouse: Option<(i32, i32)>| GameInput {
+            mouse,
+            ..GameInput::default()
+        };
+        let click =
+            |app: &mut App, fb: &mut Framebuffer, at: (i32, i32), right: bool, shift: bool| {
+                let p = Some(surface_point(app.present_offset, at.0, at.1));
+                let held = GameInput {
+                    lmb: !right,
+                    rmb: right,
+                    shift,
+                    ..base(p)
+                };
+                frame(app, fb, held);
+                frame(app, fb, GameInput { shift, ..base(p) });
+                p
+            };
+        match parts[0] {
+            "move" => {
+                mouse = Some(surface_point(app.present_offset, num(1), num(2)));
+                frame(app, fb, base(mouse));
+            }
+            "click" | "shift-click" | "rclick" => {
+                mouse = click(
+                    app,
+                    fb,
+                    (num(1), num(2)),
+                    parts[0] == "rclick",
+                    parts[0] == "shift-click",
+                );
+            }
+            "drag" => {
+                let a = Some(surface_point(app.present_offset, num(1), num(2)));
+                let b = Some(surface_point(app.present_offset, num(3), num(4)));
+                frame(
+                    app,
+                    fb,
+                    GameInput {
+                        lmb: true,
+                        ..base(a)
+                    },
+                );
+                frame(
+                    app,
+                    fb,
+                    GameInput {
+                        lmb: true,
+                        ..base(b)
+                    },
+                );
+                frame(app, fb, base(b));
+                mouse = b;
+            }
+            "key" | "ctrl-key" => {
+                let input = GameInput {
+                    pressed: vec![script_key(parts.get(1).copied().unwrap_or(""))],
+                    ctrl: parts[0] == "ctrl-key",
+                    ..base(mouse)
+                };
+                frame(app, fb, input);
+            }
+            "ticks" => {
+                for _ in 0..num(1).max(0) {
+                    app.step_once();
+                }
+                app.after_steps();
+                app.draw(fb);
+            }
+            "click-unit" | "rclick-unit" => {
+                let name = parts.get(1).copied().unwrap_or("");
+                if let Some(at) = app.screen_point_of_unit(name) {
+                    mouse = click(app, fb, at, parts[0] == "rclick-unit", false);
+                } else {
+                    eprintln!("game script: no on-screen unit named {name:?}");
+                }
+            }
+            "click-view" | "rclick-view" => {
+                // Percent of the visible playfield (0..100).
+                let (cx, _, cw, _) = app.content_box;
+                let at = (
+                    cx + cw * num(1) / 100,
+                    app.playfield_bottom() * num(2) / 100,
+                );
+                mouse = click(app, fb, at, parts[0] == "rclick-view", false);
+            }
+            "click-world" => {
+                let at = app.screen_point_of_world(num(1), num(2));
+                mouse = click(app, fb, at, false, false);
+            }
+            "click-cmd" => {
+                let slots = app.command_slots();
+                if let Some(r) = slots.get((num(1) - 1).max(0) as usize) {
+                    mouse = click(app, fb, (r.x + r.w / 2, r.y + r.h / 2), false, false);
+                }
+            }
+            "shot" => {
+                app.draw(fb);
+                let name = parts.get(1).copied().unwrap_or("frame");
+                let _ = fb.write_bmp(std::path::Path::new(&format!("{dir}/shot-{name}.bmp")));
+            }
+            other => eprintln!("game script: unknown step {other:?}"),
+        }
+        log.push_str(&format!("{i}\t{step}\t{}\n", app.game_state_line()));
+    }
+    if let Err(e) = std::fs::write(format!("{dir}/game.tsv"), &log) {
+        eprintln!("game.tsv write failed: {e}");
     }
 }
 
@@ -4976,6 +5257,7 @@ fn main() {
     let mut shot: Option<PathBuf> = None;
     let mut shot_screen = String::from("menu");
     let mut menu_script: Option<String> = None;
+    let mut game_script: Option<String> = None;
     let mut start_screen: Option<String> = None;
     let mut freeze = false;
     let mut fullscreen = false;
@@ -5077,6 +5359,10 @@ fn main() {
             }
             "--import-characters" => {
                 import_characters = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--game-script" => {
+                game_script = Some(args[i + 1].clone());
                 i += 2;
             }
             "--shot-map" => {
@@ -5381,6 +5667,8 @@ fn main() {
         intro_started: Instant::now(),
         menu_static: None,
         menu_static_bare: None,
+        minimap_cache: None,
+        plates_layer: None,
         present_offset: (0, 0),
         intro_fit: None,
         backdrop_fit: None,
@@ -5516,6 +5804,9 @@ fn main() {
         build_mode: None,
         build_list: Vec::new(),
         command_list: Vec::new(),
+        card_set: None,
+        target_act: None,
+        card_owner: None,
         status: String::new(),
         status_until: Instant::now(),
         speed: 1.0,
@@ -5632,6 +5923,13 @@ fn main() {
     // runs, but into a BMP instead of a window.  This lets the campaign
     // menu, retail briefing and mission screens be checked without an X
     // server or a window manager.
+    if let Some(script) = game_script {
+        if let Some(index) = shot_map {
+            app.map_index = index.min(app.maps.len().saturating_sub(1));
+        }
+        run_game_script(&mut app, &mut fb, &script);
+        return;
+    }
     if let Some(script) = menu_script {
         app.intro = false;
         app.menu = true;
@@ -6215,6 +6513,33 @@ fn main() {
             "gamemenu" => 3,
             _ => 0,
         };
+        // `GC_BENCH=N`: run N frames of the live loop (update + draw) on the
+        // captured screen and report the frame cost (in-game performance).
+        if let Some(n) = std::env::var("GC_BENCH")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+        {
+            let (mut upd, mut drw, mut worst) = (0.0f64, 0.0f64, 0.0f64);
+            for _ in 0..n {
+                let t0 = Instant::now();
+                app.update();
+                let t1 = Instant::now();
+                app.draw(&mut fb);
+                let t2 = Instant::now();
+                upd += (t1 - t0).as_secs_f64() * 1000.0;
+                drw += (t2 - t1).as_secs_f64() * 1000.0;
+                worst = worst.max((t2 - t0).as_secs_f64() * 1000.0);
+            }
+            eprintln!(
+                "bench {shot_screen} {}x{}: {n} frames, update {:.2} ms, draw {:.2} ms, worst {:.2} ms, tick {}",
+                fb.width,
+                fb.height,
+                upd / n.max(1) as f64,
+                drw / n.max(1) as f64,
+                worst,
+                app.world.tick
+            );
+        }
         apply_capture_correction(&mut fb);
         if let Some(path) = &shot {
             let composed = presented(&fb, width, height, app.present_offset);
@@ -6492,6 +6817,14 @@ impl LayerCache {
             for (i, (&b, &k)) in base.iter().zip(keep).enumerate() {
                 let x = self.x0 + i as i32;
                 if x < 0 || x >= fb.width {
+                    continue;
+                }
+                // Opaque and fully transparent texels need no arithmetic.
+                if k == 0 {
+                    row[x as usize] = b;
+                    continue;
+                }
+                if k == 0xff_ffff && b == 0 {
                     continue;
                 }
                 let d = row[x as usize];
@@ -6917,6 +7250,8 @@ impl App {
         // retail references); the world viewport is the rest, in logical units.
         let hud_h = ch as f32 * 0.2813;
         let div = scale.max(0.5);
+        // An integer number of game px, stretched to the box width like
+        // retail (`render::stretch_columns`).
         let view_w = ((cw as f32) / div).round().max(320.0) as i32;
         let view_h = (((ch as f32 - hud_h) / div).round()).max(180.0) as i32;
         self.view = (view_w, view_h);
@@ -6925,6 +7260,130 @@ impl App {
     /// Screen pixels -> world-view pixels.  Must use the same divisor as
     /// `update_view`, otherwise clicks land off by (scale/3) at any
     /// resolution where the UI scale differs from 3.
+    /// Surface point of the on-screen unit (own units first) whose name
+    /// contains `name`, nearest the view centre.
+    fn screen_point_of_unit(&self, name: &str) -> Option<(i32, i32)> {
+        let (vw, vh) = self.view;
+        let centre = (vw / 2, vh / 2);
+        self.world
+            .units
+            .iter()
+            .filter(|u| u.alive && self.data.unit_name(u.type_id).contains(name))
+            .map(|u| (u, self.screen_of(u)))
+            .filter(|(_, (x, y))| *x >= 0 && *y >= 0 && *x < vw && *y < vh)
+            .min_by_key(|(u, (x, y))| {
+                (
+                    u.owner as usize != self.local_player,
+                    (x - centre.0).abs() + (y - centre.1).abs(),
+                )
+            })
+            .map(|(_, (x, y))| self.logical_to_surface(x, y))
+    }
+
+    /// Surface point of a world position (game px).
+    fn screen_point_of_world(&self, wx: i32, wy: i32) -> (i32, i32) {
+        self.logical_to_surface(wx - self.camera.0, wy - self.camera.1)
+    }
+
+    /// Inverse of [`Self::to_logical`] (pixel centre).
+    fn logical_to_surface(&self, lx: i32, ly: i32) -> (i32, i32) {
+        let s = self.ui_scale.max(0.5);
+        let sx_scale = if self.content_box.2 > 0 && self.view.0 > 0 {
+            self.content_box.2 as f32 / self.view.0 as f32
+        } else {
+            s
+        };
+        (
+            self.content_x0 + ((lx as f32 + 0.5) * sx_scale) as i32,
+            ((ly as f32 + 0.5) * s) as i32,
+        )
+    }
+
+    /// `--game-script` state line: tick, resources, supply, selection,
+    /// command card, build mode, own unit counts by type and the status.
+    fn game_state_line(&self) -> String {
+        let me = self.local_player as u8;
+        let p = &self.world.players[self.local_player];
+        let names = |ids: &[u16]| {
+            ids.iter()
+                .map(|&t| self.data.unit_name(t).to_string())
+                .collect::<Vec<_>>()
+                .join("+")
+        };
+        let selected: Vec<String> = self
+            .selected
+            .iter()
+            .filter_map(|id| self.world.unit(*id))
+            .map(|u| self.data.unit_name(u.type_id).to_string())
+            .collect();
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for u in self.world.units.iter().filter(|u| u.alive && u.owner == me) {
+            *counts
+                .entry(self.data.unit_name(u.type_id).to_string())
+                .or_default() += 1;
+        }
+        let counts: Vec<String> = counts.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let first = self
+            .first_selected()
+            .map(|u| {
+                format!(
+                    "{}@({},{}) order={:?} carry={} prod={:?} done={} remaining={} winner={:?}",
+                    self.data.unit_name(u.type_id),
+                    u.x / 256,
+                    u.y / 256,
+                    u.order,
+                    u.carry,
+                    u.production,
+                    u.completed,
+                    u.build_remaining,
+                    self.world.winner
+                )
+            })
+            .unwrap_or_default();
+        let target = self
+            .first_selected()
+            .and_then(|u| match u.order {
+                Order::Gather { resource } | Order::AttackUnit { target: resource } => {
+                    self.world.unit(resource).map(|t| {
+                        format!(
+                            " target={}@({},{}) dist={}",
+                            self.data.unit_name(t.type_id),
+                            t.x / 256,
+                            t.y / 256,
+                            ((t.x - u.x).abs() + (t.y - u.y).abs()) / 256
+                        )
+                    })
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        format!(
+            "camera={:?} card={:?} target={:?} first=[{first}{target}] ",
+            self.camera, self.card_set, self.target_act
+        ) + &format!(
+            "tick={} minerals={} gas={} supply={}/{} selected=[{}] commands=[{}] build={} units=[{}] status={:?} result={:?}",
+            self.world.tick,
+            p.minerals,
+            p.gas,
+            self.world.supply_used(me),
+            self.world.supply_cap(me),
+            selected.join("+"),
+            names(&self.command_list),
+            self.build_mode
+                .map(|t| self.data.unit_name(t).to_string())
+                .unwrap_or_default(),
+            counts.join(" "),
+            self.status,
+            self.game_result
+        )
+    }
+
+    /// Bottom of the playfield in surface pixels: the view's logical height
+    /// at the UI scale (the console band below is the HUD).
+    fn playfield_bottom(&self) -> i32 {
+        self.content_box.1 + (self.view.1 as f32 * self.ui_scale.max(0.5)).round() as i32
+    }
+
     fn to_logical(&self, sx: i32, sy: i32) -> (i32, i32) {
         let s = self.ui_scale.max(0.5);
         // Horizontally the view's `self.view.0` game px fill the content
@@ -7288,6 +7747,7 @@ impl App {
         self.attack_mode = false;
         self.patrol_mode = false;
         self.camera = (0, 0);
+        self.minimap_cache = None;
         self.speed = 1.0;
         self.accumulator = 0.0;
         self.last_step = Instant::now();
@@ -7529,6 +7989,7 @@ impl App {
         self.attack_mode = false;
         self.patrol_mode = false;
         self.camera = (0, 0);
+        self.minimap_cache = None;
         self.speed = 1.0;
         self.accumulator = 0.0;
         self.last_step = Instant::now();
@@ -11906,7 +12367,10 @@ impl App {
         (sx + self.camera.0, sy + self.camera.1)
     }
 
-    fn unit_at(&self, sx: i32, sy: i32) -> Option<u32> {
+    /// Unit under a surface-pixel point (converted to logical game px,
+    /// the space of [`Self::screen_of`]).
+    fn unit_at(&self, px: i32, py: i32) -> Option<u32> {
+        let (sx, sy) = self.to_logical(px, py);
         let mut best: Option<(i32, u32)> = None;
         for (i, u) in self.world.units.iter().enumerate() {
             if !u.alive {
@@ -11969,6 +12433,13 @@ impl App {
     }
 
     fn refresh_commands(&mut self) {
+        let owner = self.first_selected().map(|u| u.id);
+        if owner != self.card_owner {
+            self.card_owner = owner;
+            self.card_set = None;
+            self.target_act = None;
+            self.build_mode = None;
+        }
         self.command_list.clear();
         self.build_list.clear();
         let Some(u) = self.first_selected() else {
@@ -12014,99 +12485,316 @@ impl App {
 
     /// Activate command-card slot `index` (0..8).  This is shared by the
     /// number keys and mouse clicks on the retail button rectangles.
+    /// Card on screen: the retail button set of the first selected own unit
+    /// (or the build / target card a button switched to).
+    fn current_card(&self) -> Option<(SimUnit, Card)> {
+        let u = self.first_selected()?.clone();
+        if u.owner as usize != self.local_player {
+            return None;
+        }
+        // While a target or a building spot is pending, retail shows the
+        // Esc-only card (229).
+        let set = if self.target_act.is_some() || self.build_mode.is_some() {
+            Some(TARGET_CARD)
+        } else {
+            self.card_set
+        };
+        let card = galaxycraft::buttons::card_of_set(&self.world, &u, set);
+        Some((u, card))
+    }
+
+    /// Hotkey of a button: the first character of its `stat_txt` tooltip
+    /// (retail stores "m<ctrl>Move", "bBuild Barracks", ...).
+    fn button_hotkey(&self, b: &galaxycraft::button_sets::Button) -> Option<char> {
+        let text = self.data.strings.get(b.enabled_string.checked_sub(1)?)?;
+        let c = text.chars().next()?;
+        c.is_ascii_alphanumeric().then(|| c.to_ascii_uppercase())
+    }
+
+    /// Selected own units that take movement orders (not grounded
+    /// buildings: an order overwrote a Command Center's training).
+    fn selected_mobile(&self) -> Vec<u32> {
+        self.selected
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.world.unit(*id).is_some_and(|u| {
+                    u.owner as usize == self.local_player
+                        && (!self.data.unit(u.type_id).is_building() || u.lifted)
+                })
+            })
+            .collect()
+    }
+
+    fn selected_own_buildings(&self) -> Vec<u32> {
+        self.selected
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.world.unit(*id).is_some_and(|u| {
+                    u.owner as usize == self.local_player && self.data.unit(u.type_id).is_building()
+                })
+            })
+            .collect()
+    }
+
+    /// Run command-card slot `index` (0..8): mouse clicks and hotkeys.
     fn activate_command(&mut self, index: usize) {
-        self.actions = self.actions.saturating_add(1);
-        if let Some(&unit_type) = self.command_list.get(index) {
-            if self
-                .first_selected()
-                .is_some_and(|u| self.data.unit(u.type_id).is_worker())
-            {
-                self.build_mode = Some(unit_type);
-                self.status(format!(
-                    "Place {}: left click",
-                    self.data.unit_name(unit_type)
-                ));
-            } else {
-                self.train(unit_type);
-            }
+        use galaxycraft::buttons::{Act, ButtonState};
+        let Some((u, card)) = self.current_card() else {
+            return;
+        };
+        let Some((b, state)) = card.get(index).copied().flatten() else {
+            return;
+        };
+        if state == ButtonState::Disabled {
+            // Requirements unmet: retail shows the disabled tooltip only.
             return;
         }
-        match index {
-            1 => {
-                self.attack_mode = true;
-                self.patrol_mode = false;
-                self.status("Attack: right click a target");
+        self.actions = self.actions.saturating_add(1);
+        let var = b.act_var;
+        match Act::of(b.act) {
+            act @ (Act::Move
+            | Act::Attack
+            | Act::Patrol
+            | Act::Repair
+            | Act::Gather
+            | Act::Rally
+            | Act::Land) => {
+                self.target_act = Some((act, var));
             }
-            2 => {
-                self.patrol_mode = true;
-                self.attack_mode = false;
-                self.status("Patrol: right click a destination");
-            }
-            3 => {
-                self.issue_selected(Order::HoldPosition);
-                self.status("Holding position");
-            }
-            4 => {
-                for id in self.selected.clone() {
-                    self.world.stop(id);
+            Act::Stop => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::Stop);
                 }
-                self.status("Stopped");
+                self.play_ack();
+            }
+            Act::Hold => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::HoldPosition);
+                }
+                self.play_ack();
+            }
+            Act::ReturnCargo => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::ReturnCargo { depot: 0 });
+                }
+                self.play_ack();
+            }
+            Act::Card => {
+                self.card_set = (var != 228).then_some(var);
+            }
+            Act::Build | Act::DroneBuild => {
+                self.build_mode = Some(var);
+            }
+            Act::Train | Act::MorphUnit => self.train(var),
+            Act::Addon => {
+                if let Err(e) = self.world.build_addon(u.id, var) {
+                    self.show_sim_error(e);
+                }
+            }
+            Act::StimPacks => {
+                for id in self.selected_mobile() {
+                    let _ = self.world.cast(
+                        id,
+                        galaxycraft::sim::Spell::StimPacks,
+                        galaxycraft::sim::SpellTarget::None,
+                    );
+                }
+            }
+            Act::Research => {
+                if let Err(e) = self.world.research(u.id, var as u8) {
+                    self.show_sim_error(e);
+                }
+            }
+            Act::Upgrade => {
+                if let Err(e) = self.world.upgrade(u.id, var as u8) {
+                    self.show_sim_error(e);
+                }
+            }
+            Act::LiftOff => {
+                for id in self.selected_own_buildings() {
+                    self.send_order(id, Order::Lift);
+                }
+            }
+            Act::CancelLast | Act::CancelAddon | Act::CancelMorph => {
+                if let Err(e) = self.world.cancel_production(u.id) {
+                    self.show_sim_error(e);
+                }
+            }
+            Act::CancelTarget => {
+                self.target_act = None;
+                self.build_mode = None;
+            }
+            Act::Siege => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::Siege);
+                }
+            }
+            Act::Unsiege => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::Unsiege);
+                }
+            }
+            Act::Burrow => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::Burrow);
+                }
+            }
+            Act::Unburrow => {
+                for id in self.selected_mobile() {
+                    self.send_order(id, Order::Unburrow);
+                }
+            }
+            other => {
+                self.status(format!("{other:?}: not implemented yet"));
+            }
+        }
+        self.refresh_commands();
+    }
+
+    /// Left click in the world while a card button waits for a target.
+    fn execute_target(&mut self, px: i32, py: i32) {
+        use galaxycraft::buttons::Act;
+        let Some((act, _var)) = self.target_act.take() else {
+            return;
+        };
+        let (lx, ly) = self.to_logical(px, py);
+        let pos = self.world_of(lx, ly);
+        let target = self.unit_at(px, py);
+        let mobile = self.selected_mobile();
+        match act {
+            Act::Move => match target {
+                Some(t) => {
+                    let p = self
+                        .world
+                        .unit(t)
+                        .map(|u| (u.x / 256, u.y / 256))
+                        .unwrap_or(pos);
+                    self.world.command_move(&mobile, p);
+                }
+                None => self.world.command_move(&mobile, pos),
+            },
+            Act::Attack => match target {
+                Some(t) => {
+                    for id in mobile {
+                        self.send_order(id, Order::AttackUnit { target: t });
+                    }
+                }
+                None => self.world.command_attack_move(&mobile, pos),
+            },
+            Act::Patrol => {
+                for id in mobile {
+                    if let Some(u) = self.world.unit(id) {
+                        let a = (u.x / 256, u.y / 256);
+                        self.send_order(
+                            id,
+                            Order::Patrol {
+                                a,
+                                b: pos,
+                                forward: true,
+                            },
+                        );
+                    }
+                }
+            }
+            Act::Gather => {
+                if let Some(t) = target {
+                    for id in mobile {
+                        self.send_order(id, Order::Gather { resource: t });
+                    }
+                }
+            }
+            Act::Repair => {
+                if let Some(t) = target {
+                    for id in mobile {
+                        self.send_order(id, Order::Repair { target: t });
+                    }
+                }
+            }
+            Act::Rally => {
+                for id in self.selected_own_buildings() {
+                    let _ = self.world.set_rally(id, pos);
+                }
+            }
+            Act::Land => {
+                for id in self.selected_own_buildings() {
+                    self.send_order(id, Order::Land { pos });
+                }
             }
             _ => {}
         }
-    }
-
-    fn issue_selected(&mut self, order: Order) {
-        for id in self.selected.clone() {
-            self.send_order(id, order.clone());
-        }
-        self.actions = self.actions.saturating_add(1);
-        self.refresh_commands();
         self.play_ack();
+        self.refresh_commands();
     }
 
+    /// Right click in the world (retail smart command): enemies are
+    /// attacked, workers gather from minerals and refineries, other targets
+    /// and empty ground are moved to.  Grounded buildings take no orders;
+    /// producing buildings set their rally point instead.
     fn command_at(&mut self, sx: i32, sy: i32, attack_move: bool, patrol: bool) {
         if self.selected.is_empty() {
             return;
         }
         self.actions = self.actions.saturating_add(1);
+        let me = self.local_player as u8;
+        let (lx, ly) = self.to_logical(sx, sy);
+        let (wx, wy) = self.world_of(lx, ly);
+        let mobile = self.selected_mobile();
+        for id in self.selected_own_buildings() {
+            if self.world.unit(id).is_some_and(|u| !u.lifted) {
+                let _ = self.world.set_rally(id, (wx, wy));
+            }
+        }
+        if mobile.is_empty() {
+            return;
+        }
         let target = self
             .unit_at(sx, sy)
             .and_then(|id| self.world.unit(id))
-            .map(|t| (t.id, t.owner, t.is_resource()));
-        if let Some((tid, towner, is_resource)) = target {
-            if towner as usize != self.local_player {
-                let ids = self.selected.clone();
-                for id in ids {
+            .map(|t| {
+                (
+                    t.id,
+                    t.owner,
+                    t.is_resource() || galaxycraft::sim::is_gas_building(t.type_id),
+                    (t.x / 256, t.y / 256),
+                )
+            });
+        if let Some((tid, towner, resource, tpos)) = target {
+            if towner != me && self.world.hostile(me, towner) && !resource {
+                for id in mobile {
                     self.send_order(id, Order::AttackUnit { target: tid });
                 }
                 self.status("Attacking");
-                self.refresh_commands();
+                self.play_ack();
                 return;
             }
-            if is_resource {
-                let ids = self.selected.clone();
-                for id in ids {
-                    if self
-                        .world
-                        .unit(id)
+            if resource {
+                let (workers, others): (Vec<u32>, Vec<u32>) = mobile.iter().partition(|id| {
+                    self.world
+                        .unit(**id)
                         .is_some_and(|u| self.data.unit(u.type_id).is_worker())
-                    {
-                        self.send_order(id, Order::Gather { resource: tid });
-                    }
+                });
+                for id in workers {
+                    self.send_order(id, Order::Gather { resource: tid });
+                }
+                if !others.is_empty() {
+                    self.world.command_move(&others, tpos);
                 }
                 self.status("Gathering");
+                self.play_ack();
                 return;
             }
+            self.world.command_move(&mobile, tpos);
+            self.status("Moving");
+            self.play_ack();
+            return;
         }
-        // Mouse is in window pixels; the world view is logical (scaled).
-        let (lx, ly) = self.to_logical(sx, sy);
-        let (wx, wy) = self.world_of(lx, ly);
         if patrol {
-            for id in self.selected.clone() {
+            for id in mobile {
                 if let Some(u) = self.world.unit(id) {
                     let a = (u.x / 256, u.y / 256);
-                    let _ = self.world.issue(
+                    self.send_order(
                         id,
                         Order::Patrol {
                             a,
@@ -12118,11 +12806,10 @@ impl App {
             }
             self.status("Patrolling");
         } else if attack_move {
-            self.world
-                .command_attack_move(&self.selected.clone(), (wx, wy));
+            self.world.command_attack_move(&mobile, (wx, wy));
             self.status("Attack-move");
         } else {
-            self.world.command_move(&self.selected.clone(), (wx, wy));
+            self.world.command_move(&mobile, (wx, wy));
             self.status("Moving");
         }
         self.refresh_commands();
@@ -12315,37 +13002,48 @@ impl App {
             self.handle_replay(window);
             return;
         }
-        let (mx, my) = self.surface_mouse(window).unwrap_or((0, 0));
-        self.drag_now = (mx, my);
-        let in_view = my < self.view.1;
+        let input = GameInput {
+            pressed: window.get_keys_pressed(KeyRepeat::No),
+            ctrl: window.is_key_down(Key::LeftCtrl) || window.is_key_down(Key::RightCtrl),
+            shift: window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift),
+            left: window.is_key_down(Key::Left),
+            right: window.is_key_down(Key::Right),
+            up: window.is_key_down(Key::Up),
+            down: window.is_key_down(Key::Down),
+            wheel: window.get_scroll_wheel().map_or(0.0, |(_, y)| y),
+            mouse: self.surface_mouse(window),
+            lmb: window.get_mouse_down(MouseButton::Left),
+            rmb: window.get_mouse_down(MouseButton::Right),
+        };
+        self.handle_game_input(&input);
+    }
 
-        for key in window.get_keys_pressed(KeyRepeat::No) {
+    /// In-game input (keys, camera, selection, orders, command card,
+    /// minimap) from one frame's [`GameInput`]: the window and
+    /// `--game-script` drive the same code.  The pointer is in surface
+    /// pixels; the world is hit-tested in logical game pixels
+    /// (`to_logical`), which the selection, box selection and right-click
+    /// targets did not do (they compared screen pixels with unit positions,
+    /// so nothing could be selected away from 1x scale).
+    fn handle_game_input(&mut self, input: &GameInput) {
+        let (mx, my) = input.mouse.unwrap_or((0, 0));
+        self.drag_now = (mx, my);
+        let in_view = input.mouse.is_some() && my < self.playfield_bottom();
+
+        for key in input.pressed.iter().copied() {
+            // Retail card hotkeys first (the tooltip's leading letter): M
+            // Move, S Stop, A Attack, B Build, ... on the card on screen.
+            if !input.ctrl
+                && let Some(letter) = key_letter(key)
+                && let Some((_, card)) = self.current_card()
+                && let Some(slot) = card
+                    .iter()
+                    .position(|e| e.is_some_and(|(b, _)| self.button_hotkey(&b) == Some(letter)))
+            {
+                self.activate_command(slot);
+                continue;
+            }
             match key {
-                Key::A => {
-                    self.attack_mode = true;
-                    self.patrol_mode = false;
-                    self.status("Attack-move: right click a destination");
-                }
-                Key::P => {
-                    self.patrol_mode = true;
-                    self.attack_mode = false;
-                    self.status("Patrol: right click a destination");
-                }
-                Key::S => {
-                    for id in self.selected.clone() {
-                        self.world.stop(id);
-                    }
-                    self.status("Stopped");
-                }
-                Key::H => {
-                    self.issue_selected(Order::HoldPosition);
-                    self.status("Holding position");
-                }
-                Key::B => {
-                    if !self.build_list.is_empty() {
-                        self.status("Build menu: press 1..8");
-                    }
-                }
                 Key::F => {
                     self.fog = !self.fog;
                     self.status(if self.fog { "Fog on" } else { "Fog off" });
@@ -12388,8 +13086,11 @@ impl App {
                     }
                 }
                 Key::Escape => {
-                    if self.build_mode.is_some() {
+                    if self.build_mode.is_some() || self.target_act.is_some() {
                         self.build_mode = None;
+                        self.target_act = None;
+                    } else if self.card_set.is_some() {
+                        self.card_set = None;
                     } else {
                         self.paused = true;
                         self.play("ui_click");
@@ -12423,11 +13124,17 @@ impl App {
                         Key::Key8 => 8,
                         _ => 9,
                     };
-                    if window.is_key_down(Key::LeftCtrl) || window.is_key_down(Key::RightCtrl) {
+                    // Retail control groups: Ctrl+N assigns, Shift+N adds,
+                    // N recalls (the card has letter hotkeys only).
+                    if input.ctrl {
                         self.groups[n] = self.selected.clone();
                         self.status(format!("Group {n} set"));
-                    } else if !self.command_list.is_empty() {
-                        self.activate_command(n - 1);
+                    } else if input.shift {
+                        for id in self.selected.clone() {
+                            if !self.groups[n].contains(&id) && self.groups[n].len() < 12 {
+                                self.groups[n].push(id);
+                            }
+                        }
                     } else {
                         let group = self.groups[n].clone();
                         if !group.is_empty() {
@@ -12442,41 +13149,33 @@ impl App {
 
         // Camera scrolling.  Arrow keys only: A/S/H/P are unit commands.
         let scroll = 14;
-        if window.is_key_down(Key::Left) {
+        if input.left {
             self.camera.0 -= scroll;
         }
-        if window.is_key_down(Key::Right) {
+        if input.right {
             self.camera.0 += scroll;
         }
-        if window.is_key_down(Key::Up) {
+        if input.up {
             self.camera.1 -= scroll;
         }
-        if window.is_key_down(Key::Down) {
+        if input.down {
             self.camera.1 += scroll;
         }
-        if let Some((_, y)) = window.get_scroll_wheel() {
-            self.camera.1 -= (y * 48.0) as i32;
+        if input.wheel != 0.0 {
+            self.camera.1 -= (input.wheel * 48.0) as i32;
         }
         self.clamp_camera();
 
         // Mouse.
         if std::env::var("SC_VIEW_DEBUG").is_ok() {
             eprintln!(
-                "mouse {} {} disc={:?} unscaled={:?} size={:?} downL={} downR={} in_view={} start={:?}",
-                mx,
-                my,
-                window.get_mouse_pos(MouseMode::Discard),
-                window.get_unscaled_mouse_pos(MouseMode::Discard),
-                window.get_size(),
-                window.get_mouse_down(MouseButton::Left),
-                window.get_mouse_down(MouseButton::Right),
-                in_view,
-                self.drag_start
+                "mouse {} {} downL={} downR={} in_view={} start={:?}",
+                mx, my, input.lmb, input.rmb, in_view, self.drag_start
             );
         }
         // HUD command-card clicks (the reusable `statbtndefault` slots).
-        let lmb = window.get_mouse_down(MouseButton::Left);
-        if lmb && !self.lmb_down && my >= self.view.1 {
+        let lmb = input.lmb;
+        if lmb && !self.lmb_down && !in_view {
             let slots = self.command_slots();
             if let Some(index) = slots.iter().position(|r| r.contains(mx, my)) {
                 self.activate_command(index);
@@ -12491,15 +13190,20 @@ impl App {
                 self.show_stats = !self.show_stats;
             }
         }
+        // Edge of the left button (the minimap terrain toggle fires once
+        // per press, not every held frame).
+        let lmb_pressed = lmb && !self.lmb_down;
         self.lmb_down = lmb;
 
-        if window.get_mouse_down(MouseButton::Left) && in_view {
+        if input.lmb && in_view {
             if self.drag_start.is_none() {
                 self.drag_start = Some((mx, my));
             }
         } else if let Some(start) = self.drag_start.take() {
             let dist = (mx - start.0).abs() + (my - start.1).abs();
-            if self.build_mode.is_some() && dist < 6 {
+            if self.target_act.is_some() && dist < 6 {
+                self.execute_target(mx, my);
+            } else if self.build_mode.is_some() && dist < 6 {
                 self.place_building(mx, my);
             } else if dist < 6 {
                 let id = self.unit_at(mx, my).filter(|id| {
@@ -12510,7 +13214,7 @@ impl App {
                 if std::env::var("SC_VIEW_DEBUG").is_ok() {
                     eprintln!("select click at {} {} -> {:?}", mx, my, id);
                 }
-                if window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift) {
+                if input.shift {
                     if let Some(id) = id {
                         if let Some(pos) = self.selected.iter().position(|&x| x == id) {
                             self.selected.remove(pos);
@@ -12524,26 +13228,47 @@ impl App {
                 self.refresh_commands();
                 self.play_selected();
             } else {
-                let (x0, y0) = (start.0.min(mx), start.1.min(my));
-                let (x1, y1) = (start.0.max(mx), start.1.max(my));
-                self.selected.clear();
-                for u in self
+                // Box corners in logical game px, like `screen_of`.
+                let (ax, ay) = self.to_logical(start.0, start.1);
+                let (bx, by) = self.to_logical(mx, my);
+                let (x0, y0) = (ax.min(bx), ay.min(by));
+                let (x1, y1) = (ax.max(bx), ay.max(by));
+                // Retail box selection: own units only, at most 12, and
+                // buildings only when the box holds no other unit.
+                let inside: Vec<(u32, bool)> = self
                     .world
                     .units
                     .iter()
                     .filter(|u| u.alive && u.owner as usize == self.local_player)
-                {
-                    let (ux, uy) = self.screen_of(u);
-                    if ux >= x0 && ux <= x1 && uy >= y0 && uy <= y1 {
-                        self.selected.push(u.id);
-                    }
+                    .filter(|u| {
+                        let (ux, uy) = self.screen_of(u);
+                        ux >= x0 && ux <= x1 && uy >= y0 && uy <= y1
+                    })
+                    .map(|u| (u.id, self.data.unit(u.type_id).is_building()))
+                    .collect();
+                let any_unit = inside.iter().any(|(_, b)| !b);
+                let picked: Vec<u32> = inside
+                    .iter()
+                    .filter(|(_, b)| !any_unit || !b)
+                    .map(|(id, _)| *id)
+                    .take(12)
+                    .collect();
+                if !picked.is_empty() {
+                    self.selected = picked;
                 }
                 self.refresh_commands();
                 self.play_selected();
             }
         }
 
-        let rmb = window.get_mouse_down(MouseButton::Right) && in_view;
+        let rmb = input.rmb && in_view;
+        if rmb && !self.rmb_down && (self.target_act.is_some() || self.build_mode.is_some()) {
+            // Right click cancels a pending target or placement.
+            self.target_act = None;
+            self.build_mode = None;
+            self.rmb_down = rmb;
+            return;
+        }
         if rmb && !self.rmb_down {
             let attack = self.attack_mode;
             let patrol = self.patrol_mode;
@@ -12558,7 +13283,8 @@ impl App {
         // the camera.
         let (rx, ry, rw, rh) = self.minimap_rect();
         let toggle_h = (rw as f32 * 0.09).round() as i32;
-        if window.get_mouse_down(MouseButton::Left)
+        if input.lmb
+            && lmb_pressed
             && mx >= rx
             && mx < rx + (rw as f32 * 0.45) as i32
             && my >= ry - toggle_h
@@ -12572,12 +13298,7 @@ impl App {
             });
             self.play("ui_click");
             self.drag_start = None;
-        } else if window.get_mouse_down(MouseButton::Left)
-            && mx >= rx
-            && mx < rx + rw
-            && my >= ry
-            && my < ry + rh
-        {
+        } else if input.lmb && mx >= rx && mx < rx + rw && my >= ry && my < ry + rh {
             self.drag_start = None;
             let (rx, ry, rw, rh) = self.minimap_rect();
             let (mw, mh) = self.tileset.minimap_size;
@@ -12653,6 +13374,17 @@ impl App {
         self.accumulator += dt * TICKS_PER_REAL_SECOND * self.speed;
         let mut steps = 0;
         while self.accumulator >= 1.0 && steps < 12 {
+            self.step_once();
+            self.accumulator -= 1.0;
+            steps += 1;
+        }
+        self.after_steps();
+    }
+
+    /// One simulation tick with the AIs, as the frame loop runs it (shared
+    /// with `--game-script` `ticks:N`).
+    fn step_once(&mut self) {
+        {
             // Each AI attacks an enemy of its own (never a teammate).
             let local = self.local_player as u8;
             // Trigger actions 15/16 queue campaign AI scripts.
@@ -12686,9 +13418,11 @@ impl App {
                 ai.update(&mut self.world, enemy_base);
             }
             self.world.step();
-            self.accumulator -= 1.0;
-            steps += 1;
         }
+    }
+
+    /// Client follow-ups after the ticks of a frame.
+    fn after_steps(&mut self) {
         self.follow_trigger_portraits();
         let _ = self.follow_trigger_cues();
         self.follow_rescues();
@@ -12853,6 +13587,8 @@ impl App {
 
         // Blit the logical frame scaled to the window, then draw the HUD in
         // screen space on top.
+        let prof = std::env::var_os("GC_PROFILE").is_some();
+        let mut marks: Vec<(&str, Instant)> = vec![("world1x", Instant::now())];
         if hd {
             let (cx, cy, cw, ch) = Self::content_rect(fb_full);
             let creep = self.creep_lookup();
@@ -12867,10 +13603,26 @@ impl App {
                     &creep,
                 );
             }
+            marks.push(("terrain", Instant::now()));
             blit_scaled_keyed(&world_fb, fb_full, scale, self.content_x0);
+            marks.push(("blit", Instant::now()));
             let env = self.hd_light_env(&hd_units, (cx, cy, cw, ch), scale);
+            marks.push(("lights", Instant::now()));
             for &i in &hd_units {
                 self.draw_unit_hd(fb_full, i, (cx, cy, cw, ch), scale, &env);
+            }
+            marks.push(("units", Instant::now()));
+            if prof {
+                let t = Instant::now();
+                let n = hd_units
+                    .iter()
+                    .filter(|&&i| self.hd_unit_parts(i, (cx, cy, cw, ch), scale).is_some())
+                    .count();
+                eprintln!(
+                    "hd units {} (with parts {n}), parts cost {:.1} ms",
+                    hd_units.len(),
+                    t.elapsed().as_secs_f64() * 1000.0
+                );
             }
             if self.fog {
                 galaxycraft::render::draw_fog_smooth(
@@ -12889,10 +13641,25 @@ impl App {
         // The view is `vw` game px wide; retail scales it to fill the box.
         let content = Self::content_rect(fb_full);
         let drawn = (vw as f32 * scale).round() as i32;
+        marks.push(("fog", Instant::now()));
         galaxycraft::render::stretch_columns(fb_full, content, drawn);
+        marks.push(("stretch", Instant::now()));
         let fb = fb_full;
         self.draw_hud(fb);
+        marks.push(("hud", Instant::now()));
         self.draw_overlay(fb);
+        marks.push(("overlay", Instant::now()));
+        if prof {
+            let parts: Vec<String> = marks
+                .windows(2)
+                .map(|w| format!("{} {:.1}", w[1].0, (w[1].1 - w[0].1).as_secs_f64() * 1000.0))
+                .collect();
+            let (baked, lit_px) = galaxycraft::hd_sprites::take_draw_stats();
+            eprintln!(
+                "game draw: {} | sprites unlit {baked}, lit {lit_px}",
+                parts.join(" | ")
+            );
+        }
     }
 
     /// MTXM entry each creep tile draws with (recorded capture variants,
@@ -13255,18 +14022,48 @@ impl App {
     fn draw_hud(&mut self, fb: &mut Framebuffer) {
         let (scale, ox, oy) = self.ui_metrics(fb);
         let (cx, cy, cw, ch) = Self::content_rect(fb);
-        if let Some(console) = &self.console {
-            console.draw_plates_in(fb, cy, ch, cx, cw);
+        let prof = std::env::var_os("GC_PROFILE").is_some();
+        let mut marks = vec![("start", Instant::now())];
+        // The console plates are static art: composed once per window size
+        // (`LayerCache`) instead of resampled every frame (9.9 ms at 1440p).
+        let key = (fb.width, fb.height, cx, cw, ch);
+        if self.console.is_some() && self.plates_layer.as_ref().map(|p| p.0) != Some(key) {
+            let (w, h) = (fb.width as usize, fb.height as usize);
+            let mut over_black = Framebuffer::new(w, h);
+            let mut over_white = Framebuffer::new(w, h);
+            over_white.clear(Rgb::new(255, 255, 255));
+            if let Some(console) = &self.console {
+                console.draw_plates_in(&mut over_black, cy, ch, cx, cw);
+                console.draw_plates_in(&mut over_white, cy, ch, cx, cw);
+            }
+            self.plates_layer = Some((key, LayerCache::new(&over_black, &over_white)));
         }
+        if let Some((_, layer)) = &self.plates_layer {
+            layer.apply(fb);
+        }
+        marks.push(("plates", Instant::now()));
         self.draw_hud_resources(fb);
+        marks.push(("resources", Instant::now()));
         self.draw_hud_minimap(fb);
+        marks.push(("minimap", Instant::now()));
         self.draw_hud_selection(fb);
+        marks.push(("selection", Instant::now()));
         self.draw_hud_minimap_buttons(fb);
         self.draw_hud_upgrade(fb);
+        marks.push(("buttons", Instant::now()));
         self.draw_hud_portrait(fb);
+        marks.push(("portrait", Instant::now()));
         self.draw_hud_menu_label(fb);
         self.draw_hud_card(fb);
+        marks.push(("card", Instant::now()));
         self.draw_hud_tooltip(fb);
+        if prof {
+            let parts: Vec<String> = marks
+                .windows(2)
+                .map(|w| format!("{} {:.1}", w[1].0, (w[1].1 - w[0].1).as_secs_f64() * 1000.0))
+                .collect();
+            eprintln!("hud: {}", parts.join(" | "));
+        }
         // Trigger text (Transmission / Display Text) above the console,
         // newest at the bottom.
         let now_ms = self.trigger_text_epoch.elapsed().as_millis() as u64;
@@ -13431,33 +14228,49 @@ impl App {
             (false, _) => galaxycraft::render::MinimapTerrain::Hidden,
             (true, None) => galaxycraft::render::MinimapTerrain::Tiles,
             (true, Some(t)) => {
-                let (mw, mh) = self.tileset.minimap_size;
-                let s = rw as f32 / (mw.max(1) as f32 * 32.0);
-                let mut tmp = Framebuffer::new(rw.max(1) as usize, rh.max(1) as usize);
-                t.draw(
-                    &mut tmp,
-                    &self.tileset,
-                    &self.scenario,
-                    (0, 0),
-                    (0, 0, rw, rh),
-                    s,
-                    &creep,
-                );
-                if self.fog {
-                    galaxycraft::render::draw_fog_smooth(
+                // The terrain + fog layer is recomposed every
+                // `MINIMAP_REFRESH_TICKS` (it was 11.6 ms of every 1080p
+                // frame); vision and creep change slowly.
+                let tick = self.world.tick;
+                let fresh = self
+                    .minimap_cache
+                    .as_ref()
+                    .is_some_and(|(w, h, at, fog, _)| {
+                        (*w, *h, *fog) == (rw, rh, self.fog)
+                            && tick >= *at
+                            && tick - *at < MINIMAP_REFRESH_TICKS
+                    });
+                if !fresh {
+                    let (mw, _mh) = self.tileset.minimap_size;
+                    let s = rw as f32 / (mw.max(1) as f32 * 32.0);
+                    let mut tmp = Framebuffer::new(rw.max(1) as usize, rh.max(1) as usize);
+                    t.draw(
                         &mut tmp,
+                        &self.tileset,
                         &self.scenario,
-                        &self.world,
-                        self.local_player as u8,
                         (0, 0),
                         (0, 0, rw, rh),
                         s,
+                        &creep,
                     );
+                    if self.fog {
+                        galaxycraft::render::draw_fog_smooth(
+                            &mut tmp,
+                            &self.scenario,
+                            &self.world,
+                            self.local_player as u8,
+                            (0, 0),
+                            (0, 0, rw, rh),
+                            s,
+                        );
+                    }
+                    self.minimap_cache = Some((rw, rh, tick, self.fog, tmp));
                 }
-                let _ = mh;
-                for yy in 0..rh {
-                    for xx in 0..rw {
-                        fb.put(rx + xx, ry + yy, tmp.get(xx, yy));
+                if let Some((_, _, _, _, tmp)) = &self.minimap_cache {
+                    for yy in 0..rh {
+                        for xx in 0..rw {
+                            fb.put(rx + xx, ry + yy, tmp.get(xx, yy));
+                        }
                     }
                 }
                 galaxycraft::render::MinimapTerrain::Prepainted
@@ -13679,10 +14492,9 @@ impl App {
         // (anchor point in content px, true = box bottom-left, false = top-left)
         let anchor: ((f32, f32), bool) = match hover {
             HudHover::Card(i) => {
-                let Some(u) = self.first_selected().cloned() else {
+                let Some((_, card)) = self.current_card() else {
                     return;
                 };
-                let card = galaxycraft::buttons::card(&self.world, &u);
                 let Some((b, st)) = card[i] else {
                     return;
                 };
@@ -14033,13 +14845,9 @@ impl App {
     /// (`galaxycraft::buttons`), each glyph from the 4x `cmdicons` at the
     /// race dialog's button rect; disabled buttons are grey.
     fn draw_hud_card(&mut self, fb: &mut Framebuffer) {
-        let Some(u) = self.first_selected().cloned() else {
+        let Some((_u, card)) = self.current_card() else {
             return;
         };
-        if u.owner as usize != self.local_player {
-            return;
-        }
-        let card = galaxycraft::buttons::card(&self.world, &u);
         let slots = self.command_slots();
         let Some(console) = &self.console else {
             return;

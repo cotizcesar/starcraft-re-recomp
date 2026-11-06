@@ -18,9 +18,10 @@ pub const GAS_PER_TRIP: u32 = 8;
 pub const MINERAL_PATCH_CAPACITY: u32 = 1_500;
 pub const GAS_GEYSER_CAPACITY: u32 = 5_000;
 
-/// Convert a `units.dat` build time into simulation ticks.
+/// Convert a `units.dat` build time into simulation ticks: the table is in
+/// game frames (`sim::build_ticks`).
 pub fn build_ticks(build_time: u16) -> u32 {
-    (build_time as u32 * TICKS_PER_SECOND).div_ceil(TABLE_TIME_UNITS_PER_SECOND)
+    build_time as u32
 }
 
 /// Convert a `units.dat` build time into seconds.
@@ -255,7 +256,7 @@ mod tests {
         };
         let ticks = eco.train(&g, unit_ids::MARINE).unwrap();
         assert_eq!(eco.minerals, 50);
-        assert_eq!(ticks, 576); // 360 * 24 / 15
+        assert_eq!(ticks, 360); // units.dat frames (`sim::build_ticks`)
         assert_eq!(eco.supply_used, 2);
     }
 

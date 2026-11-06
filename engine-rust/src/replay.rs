@@ -21,7 +21,9 @@ use crate::projectile::BulletState;
 use crate::sim::{CarryKind, Order, Race, SimUnit, Spell, SpellTarget, World};
 
 pub const MAGIC: u32 = 0x4743_5331; // "GCS1"
-pub const VERSION: u16 = 2; // v2: commands carry Issue or economy acts.
+pub const VERSION: u16 = 3; // v2: commands carry Issue or economy acts;
+// v3 adds research, upgrade, cancel, rally, add-on and spell acts (tags 4-9).
+// A v2 file only has tags 0-3 and decodes unchanged.
 
 /// One recorded action: a player/AI order or a direct economy call
 /// (`World::train` / `morph` / `morph_building`, used by the AI and the
@@ -35,10 +37,47 @@ pub struct RecCmd {
 /// What to re-apply on load. Order of variants is the encoding tag.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecAct {
-    Issue { unit: u32, order: Order },
-    Train { building: u32, unit: u16 },
-    Morph { larva: u32, unit: u16 },
-    MorphBuilding { source: u32, unit: u16 },
+    Issue {
+        unit: u32,
+        order: Order,
+    },
+    Train {
+        building: u32,
+        unit: u16,
+    },
+    Morph {
+        larva: u32,
+        unit: u16,
+    },
+    MorphBuilding {
+        source: u32,
+        unit: u16,
+    },
+    // v3: the remaining command-card mutators (they bypassed the log).
+    Research {
+        building: u32,
+        tech: u8,
+    },
+    Upgrade {
+        building: u32,
+        upgrade: u8,
+    },
+    Cancel {
+        building: u32,
+    },
+    Rally {
+        building: u32,
+        pos: (i32, i32),
+    },
+    Addon {
+        parent: u32,
+        unit: u16,
+    },
+    Cast {
+        caster: u32,
+        spell: Spell,
+        target: SpellTarget,
+    },
 }
 
 /// A save game / replay: setup plus the command log.
@@ -450,7 +489,7 @@ fn decode_recording(bytes: &[u8]) -> Option<Recording> {
     if u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != MAGIC {
         return None;
     }
-    if u16::from_le_bytes([bytes[4], bytes[5]]) != VERSION {
+    if !(2..=VERSION).contains(&u16::from_le_bytes([bytes[4], bytes[5]])) {
         return None;
     }
     decode_recording_inner(bytes)
@@ -503,7 +542,7 @@ pub struct SaveFile {
 }
 
 const SAVE_MAGIC: u32 = 0x4743_5356; // "GCSF"
-const SAVE_VERSION: u16 = 2;
+const SAVE_VERSION: u16 = 3; // v3: the recording carries v3 acts.
 /// Largest encoded [`crate::multiplayer::GameSetup`] (12 slots x 5 + 2).
 const MAX_SETUP_BYTES: usize = 64;
 
@@ -579,7 +618,7 @@ impl SaveFile {
             return None;
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != 1 && version != SAVE_VERSION {
+        if !(1..=SAVE_VERSION).contains(&version) {
             return None;
         }
         let payload = &bytes[6..bytes.len() - 32];
@@ -880,6 +919,28 @@ pub fn apply_act(world: &mut World, act: &RecAct) {
         RecAct::MorphBuilding { source, unit } => {
             let _ = world.morph_building(*source, *unit);
         }
+        RecAct::Research { building, tech } => {
+            let _ = world.research(*building, *tech);
+        }
+        RecAct::Upgrade { building, upgrade } => {
+            let _ = world.upgrade(*building, *upgrade);
+        }
+        RecAct::Cancel { building } => {
+            let _ = world.cancel_production(*building);
+        }
+        RecAct::Rally { building, pos } => {
+            let _ = world.set_rally(*building, *pos);
+        }
+        RecAct::Addon { parent, unit } => {
+            let _ = world.build_addon(*parent, *unit);
+        }
+        RecAct::Cast {
+            caster,
+            spell,
+            target,
+        } => {
+            let _ = world.cast(*caster, *spell, *target);
+        }
     }
 }
 
@@ -905,6 +966,47 @@ pub fn encode_act(out: &mut Vec<u8>, act: &RecAct) {
             w_u32(out, *source);
             w_u16(out, *unit);
         }
+        RecAct::Research { building, tech } => {
+            w_u8(out, 4);
+            w_u32(out, *building);
+            w_u8(out, *tech);
+        }
+        RecAct::Upgrade { building, upgrade } => {
+            w_u8(out, 5);
+            w_u32(out, *building);
+            w_u8(out, *upgrade);
+        }
+        RecAct::Cancel { building } => {
+            w_u8(out, 6);
+            w_u32(out, *building);
+        }
+        RecAct::Rally { building, pos } => {
+            w_u8(out, 7);
+            w_u32(out, *building);
+            w_u32(out, pos.0 as u32);
+            w_u32(out, pos.1 as u32);
+        }
+        RecAct::Addon { parent, unit } => {
+            w_u8(out, 8);
+            w_u32(out, *parent);
+            w_u16(out, *unit);
+        }
+        RecAct::Cast {
+            caster,
+            spell,
+            target,
+        } => {
+            w_u8(out, 9);
+            w_u32(out, *caster);
+            // Reuse the order codec for the spell and its target.
+            encode_order(
+                out,
+                &Order::Cast {
+                    spell: *spell,
+                    target: *target,
+                },
+            );
+        }
     }
 }
 
@@ -926,6 +1028,34 @@ pub fn decode_act(c: &mut Cursor<'_>) -> Option<RecAct> {
             source: c.u32()?,
             unit: c.u16()?,
         },
+        4 => RecAct::Research {
+            building: c.u32()?,
+            tech: c.u8()?,
+        },
+        5 => RecAct::Upgrade {
+            building: c.u32()?,
+            upgrade: c.u8()?,
+        },
+        6 => RecAct::Cancel { building: c.u32()? },
+        7 => RecAct::Rally {
+            building: c.u32()?,
+            pos: (c.u32()? as i32, c.u32()? as i32),
+        },
+        8 => RecAct::Addon {
+            parent: c.u32()?,
+            unit: c.u16()?,
+        },
+        9 => {
+            let caster = c.u32()?;
+            match decode_order(c)? {
+                Order::Cast { spell, target } => RecAct::Cast {
+                    caster,
+                    spell,
+                    target,
+                },
+                _ => return None,
+            }
+        }
         _ => return None,
     })
 }
@@ -933,6 +1063,82 @@ pub fn decode_act(c: &mut Cursor<'_>) -> Option<RecAct> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_act_roundtrips_including_the_v3_card_acts() {
+        let acts = vec![
+            RecAct::Issue {
+                unit: 1,
+                order: Order::Stop,
+            },
+            RecAct::Train {
+                building: 2,
+                unit: 7,
+            },
+            RecAct::Morph { larva: 3, unit: 37 },
+            RecAct::MorphBuilding {
+                source: 4,
+                unit: 131,
+            },
+            RecAct::Research {
+                building: 5,
+                tech: 0,
+            },
+            RecAct::Upgrade {
+                building: 6,
+                upgrade: 7,
+            },
+            RecAct::Cancel { building: 8 },
+            RecAct::Rally {
+                building: 9,
+                pos: (-10, 2000),
+            },
+            RecAct::Addon {
+                parent: 10,
+                unit: 107,
+            },
+            RecAct::Cast {
+                caster: 11,
+                spell: Spell::StimPacks,
+                target: SpellTarget::None,
+            },
+        ];
+        for act in acts {
+            let mut out = Vec::new();
+            encode_act(&mut out, &act);
+            let mut c = Cursor::new(&out);
+            assert_eq!(decode_act(&mut c), Some(act));
+        }
+    }
+
+    #[test]
+    fn rally_points_enter_the_log_and_replay() {
+        // A command-card mutator that bypassed the log broke saves and
+        // replays (the rally point was lost on load).
+        let data = std::sync::Arc::new(crate::data::GameData::bundled().expect("tables"));
+        let mut w = World::new(data.clone(), crate::map::Terrain::open(64, 64), 2);
+        w.recorder = Some(Recorder::new());
+        let cc = w
+            .spawn_px(0, crate::ids::unit::COMMAND_CENTER, 512, 512)
+            .expect("cc");
+        w.units[cc].completed = true;
+        let id = w.units[cc].id;
+        w.set_rally(id, (900, 700)).expect("rally");
+        let log = w.recorder.as_ref().expect("recorder").cmds.clone();
+        assert!(matches!(
+            log.last().map(|c| &c.act),
+            Some(RecAct::Rally { .. })
+        ));
+        let mut fresh = World::new(data, crate::map::Terrain::open(64, 64), 2);
+        let cc2 = fresh
+            .spawn_px(0, crate::ids::unit::COMMAND_CENTER, 512, 512)
+            .expect("cc");
+        fresh.units[cc2].completed = true;
+        for cmd in &log {
+            apply_act(&mut fresh, &cmd.act);
+        }
+        assert_eq!(fresh.units[cc2].rally, Some((900, 700)));
+    }
 
     #[test]
     fn order_roundtrip_all_tags() {

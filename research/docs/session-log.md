@@ -5255,3 +5255,69 @@ window and asked for 16:9 from 720p upwards plus ultrawide.
 
 **Verification.**  `cargo test` 35 result lines, 0 failed; clippy and
 `fmt --check` clean; unit tests `letterbox_tests` (4), `lan_rows_are_clickable_inside_the_panel`.
+
+## 2026-11-05 (105) — In game: input that works at every scale, the retail command card, retail build times, 20x faster frames
+
+The user played Boot Camp: the frame rate was "atrocious", units could not
+be selected and nothing could be built.  They provided the four Episode I
+recordings and asked for full mission parity.  This entry covers the
+foundation; mission-by-mission parity is open (PROGRESS.md).
+
+- **Cause of "nothing works" (FACT).**  `handle_input` compared the pointer
+  in screen pixels with unit positions in logical game pixels (`unit_at`,
+  box selection, right-click targets); only `place_building` converted.
+  Away from 1x scale clicks missed every unit.  `in_view` compared screen y
+  with the view height in game px (true only on the top ~44 % at 1080p).
+  Clicks on the card ran a simplified `command_list` while the HUD drew the
+  retail card, so slot 1 of an SCV (drawn as Move) built a Command Center.
+  Orders given to grounded buildings overwrote their training.
+- **Change.**  `GameInput` + `App::handle_game_input`, shared by the window
+  and a new `--game-script` runner (`click-unit`, `click-view`, `drag`,
+  `key`, `ticks`, ...; `game.tsv` state lines).  Hit tests in logical px;
+  `playfield_bottom` in screen px.  The card is the retail one
+  (`buttons::card_of_set`) for drawing, clicks and hotkeys (the tooltip's
+  first letter).  Retail right click: enemies attacked, workers gather from
+  minerals/refineries, other units move, own buildings set their rally;
+  box selection keeps units over buildings, 12 max; number keys are control
+  groups only.
+- **Action addresses (FACT).**  `sc_dump --buttons` prints the 897-button
+  table of `x86/StarCraft.exe`; each `act` is classified by the icon and the
+  `stat_txt` tooltip it is used with (`buttons::Act`): `0x74d4c0` Move,
+  `0x74d850` Stop, `0x74d1d0` Attack, `0x74d640` Repair, `0x74d400` Gather,
+  `0x74d650` Return Cargo, `0x784d50` card switch (`act_var` 239 basic / 242
+  advanced / 228 back), `0x74d520` Build, `0x74d250` Train, `0x74d610` Rally,
+  ...  Conditions added from the Boot Camp recording (95 s / 110 s):
+  `0x781320` Return Cargo only while carrying, `0x7812d0` Gather only while
+  empty; `0x781440` Build Advanced only when a card-242 building is
+  available (hidden all through Boot Camp).
+- **Build times (FACT, falsifies the 1/15 s scaling).**  Backwater Station
+  recording, selection-panel progress bar: the Command Center's SCV runs
+  220.2 s -> 232.8 s = 12.6 s = 300 frames x 42 ms; a Barracks Marine fills
+  the 240 px bar at 16.4 px/s = 14.6 s ~ 360 x 42 ms.  `units.dat`,
+  `techdata.dat` and `upgrades.dat` times are frames; `build_ticks` etc. are
+  now identity (production was 1.6x too slow, upgrades 2.5x too fast).
+- **Command log v3.**  `research`, `upgrade`, `cancel_production`,
+  `set_rally`, `build_addon` and `cast` bypassed the log (saves and replays
+  lost them); they now record `RecAct` tags 4-9.  `VERSION` / `SAVE_VERSION`
+  3, v2 files still decode.
+- **Performance (FACT, measured with the new `GC_BENCH`/`GC_PROFILE`).**
+  1080p Boot Camp frame 108 ms: units 39, blit 21, HUD 18 (minimap 11.6),
+  stretch 14, fog 11, terrain 6.  Fixes: sprite frames shaded once per
+  (image, frame, flip, team, mode, scale, 1/4 px phase, light signature) and
+  blended from the cache (`hd_sprites::draw_baked`, test against the
+  per-pixel shader); the keyed world blit skips empty source rows; the
+  minimap terrain/fog layer refreshes every 8 ticks; console plates cached
+  (`LayerCache`, with opaque/transparent fast paths); terrain, fog and the
+  column stretch on row slices over parallel bands (`render::par_bands`).
+  The stretch is kept: its comment records the retail 3.0012 px/game px
+  measurement (rounding the view up instead was tried and reverted).
+  Result (`ingame-draw-time.txt`): 720p 48 -> 2.4 ms, 1080p 108 -> 4.3 ms,
+  3440x1440 181 -> 7.7 ms.  `ui-visual-diff` in-game references unchanged
+  (no screen moved by more than 0.05 mean).
+- **Open, seen on the way.**  The SCV leaves a Terran building as soon as
+  it starts; mineral cargo is handed in ~320 px from the Command Center.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy and `fmt --check` clean; `game_input_gate.py` 0 failures at 1280x720,
+1920x1080, 3440x1440; `ui_visual_diff` 51/51, `ultrawide_diff` 31/31,
+`resolution_diff` 245/245, walkthrough PASS, hover text 14/14.
