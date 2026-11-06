@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 19 | 24 | 79 % |
+| [In-game client](#in-game-client) | 10 | 20 | 25 | 80 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **85** | **105** | **81 %** |
+| **Overall (weighted)** | **100** | **86** | **106** | **81 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -131,7 +131,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Mined-out fields disappear and their workers move to the next field — `tests/reconstruction.rs::a_mined_out_field_disappears_and_its_worker_moves_to_the_next`
 - [x] Campaign AI attacks are the script's waves: `attack_do` takes the requested count per type, no invented periodic all-in — `aiscript::tests::attack_do_sends_the_requested_count_and_no_periodic_attack`
 - [x] Trigger timelines of the four mission openings match the recordings within 0.5 s (10 transmissions / objectives, onsets measured after each recording's first game frame) — `scripts/timeline_gate.py`, `engine-rust/docs/gates/timeline.txt`
-- [ ] Player-driven event times (each recording's own build / attack order replayed) against the recordings
+- [x] Flingy movement as retail: SCVs, Vultures, Drones, Overlords and lifted buildings accelerate by flingy.dat `acceleration` and brake on their stopping distance; Boot Camp gas with 3 SCVs every 2.05 s against the recording's 1.97 s (was 1.80 s) — `flingy_units_accelerate_from_rest_and_walkers_do_not`, `scripts/mission_gate.py`
+- [ ] Player-driven event times (each recording's own build / attack order replayed) against the recordings; Boot Camp anchors so far: supply 18 -> 26 -> 34, depot 600 frames, gas rate
 - [ ] Single-player cheat codes (retail feature)
 - [ ] Save Replay from the score screen (button shown disabled; F6 saves during play)
 

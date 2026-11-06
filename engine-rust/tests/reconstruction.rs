@@ -2290,3 +2290,42 @@ fn one_marine_leaves_the_bunker_and_the_act_is_logged() {
     let log = &world.recorder.as_ref().unwrap().cmds;
     assert!(log.iter().any(|c| matches!(c.act, galaxycraft::replay::RecAct::UnloadOne { unit, .. } if unit == marines[1])));
 }
+
+#[test]
+fn flingy_units_accelerate_from_rest_and_walkers_do_not() {
+    // flingy.dat: SCV top speed 1280, acceleration 67 (1/256 px per frame);
+    // retail SCVs ramp up over ~19 frames.  Marines move by iscript.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let scv = world.spawn_px(0, uid::SCV, 200, 200).unwrap();
+    let marine = world.spawn_px(0, uid::MARINE, 200, 600).unwrap();
+    let (sid, mid) = (world.units[scv].id, world.units[marine].id);
+    world.issue(sid, Order::Move { pos: (1800, 200) }).unwrap();
+    world.issue(mid, Order::Move { pos: (1800, 600) }).unwrap();
+    let x0 = world.units[scv].x;
+    let mut speeds = Vec::new();
+    for _ in 0..30 {
+        let before = world.units[scv].x;
+        world.step();
+        speeds.push(world.units[scv].x - before);
+    }
+    assert!(speeds[0] <= 2 * 67, "starts slow: {}", speeds[0]);
+    assert!(
+        speeds[5] > speeds[0] && speeds[10] > speeds[5],
+        "speeds up: {speeds:?}"
+    );
+    assert!(
+        (speeds[25] - 1280).abs() <= 1,
+        "top speed after the ramp: {}",
+        speeds[25]
+    );
+    assert!(
+        world.units[scv].x - x0 < 30 * 1280,
+        "the ramp costs distance"
+    );
+    let m0 = world.units[marine].x;
+    world.step();
+    assert!(
+        world.units[marine].x > m0,
+        "the Marine walks by its animation"
+    );
+}

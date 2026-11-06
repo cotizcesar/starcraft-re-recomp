@@ -459,6 +459,10 @@ pub struct SimUnit {
     pub path_goal: Option<(i32, i32)>,
     /// Ticks without getting closer to the current waypoint (crowds).
     pub path_stall: u8,
+    /// Current speed of a flingy-controlled unit (1/256 px per tick) and
+    /// the tick it last moved (a unit that skipped a tick starts from 0).
+    pub speed: i32,
+    pub moved_tick: u64,
     /// Distance to the current waypoint last tick (1/256 px).
     pub path_last_dist: i32,
     pub rally: Option<(i32, i32)>,
@@ -1123,6 +1127,8 @@ impl World {
             path: VecDeque::new(),
             path_goal: None,
             path_stall: 0,
+            speed: 0,
+            moved_tick: 0,
             path_last_dist: 0,
             rally: None,
             carry: 0,
@@ -1214,6 +1220,8 @@ impl World {
             path: VecDeque::new(),
             path_goal: None,
             path_stall: 0,
+            speed: 0,
+            moved_tick: 0,
             path_last_dist: 0,
             rally: None,
             carry: 0,
@@ -4615,10 +4623,44 @@ impl World {
                 self.units[i].path.push_back(goal_fp);
             }
         }
-        let speed = self.speed_of(i);
-        if speed <= 0 {
+        let top = self.speed_of(i);
+        if top <= 0 {
             return true;
         }
+        // Flingy-controlled units (SCV, Vulture, Drone, Overlord, lifted
+        // buildings; flingy.dat move control 0) accelerate by `acceleration`
+        // per frame up to their top speed and brake inside `halt_distance`
+        // of the goal, as retail.  FACT (Boot Camp recording, 3 SCVs on gas):
+        // a delivery every 1.97 s against our 1.80 s with SCVs at full speed
+        // from a standstill.  Iscript-moved walkers (Marines, Zerglings)
+        // keep their animation speeds.
+        let speed = match self.data.flingy(ty.flingy) {
+            Some(f)
+                if f.movement_type == crate::data::MovementType::Flingy && f.acceleration > 0 =>
+            {
+                let acc = f.acceleration as i32;
+                let cur = if self.units[i].moved_tick + 1 == self.tick {
+                    self.units[i].speed
+                } else {
+                    0
+                };
+                // Brake when the stopping distance at the current speed,
+                // cur^2 / (2 acc) in 1/256 px, reaches the goal: at top
+                // speed that is exactly flingy.dat's `halt_distance` (SCV
+                // 1280^2 / 134 = 12227).
+                let stopping = (cur as i64 * cur as i64 / (2 * acc as i64)) as i32;
+                let near = self.distance_to_point(i, goal_fp) <= stopping.max(acc);
+                let next = if near {
+                    (cur - acc).max(acc)
+                } else {
+                    (cur + acc).min(top)
+                };
+                self.units[i].speed = next;
+                self.units[i].moved_tick = self.tick;
+                next
+            }
+            _ => top,
+        };
         let mut remaining = speed;
         // Intermediate waypoints are reached within twice the unit's half
         // size, and given up after `PATH_STALL_TICKS` ticks without getting
