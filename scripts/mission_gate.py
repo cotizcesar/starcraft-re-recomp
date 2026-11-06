@@ -134,6 +134,36 @@ def run(install: str, size: str, map_index: int, steps: list[str]) -> list[str]:
     return [l.split("\t")[2] for l in (out / "game.tsv").read_text().splitlines()[1:]]
 
 
+def zerg_near_base(install: str, size: str) -> list[tuple[float, int]]:
+    """Desperate Alliance with a passive player: (game s, Zerg units within
+    900 px of the player's Command Center at (320, 2704)) every 80 frames."""
+    w, h = size.split("x")
+    out = Path(tempfile.mkdtemp(prefix="gc-mission-"))
+    env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(out))
+    steps = ["ticks:1"] + [s for i in range(360) for s in ("ticks:80", f"dump-units:d{i:04d}")]
+    subprocess.run(
+        [str(BIN), "--install", install, "--no-intro", "--width", w, "--height", h,
+         "--shot-map", "3", "--game-script", ",".join(steps)],
+        check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    rows = []
+    for i in range(360):
+        n = 0
+        for line in (out / f"d{i:04d}.tsv").read_text().splitlines()[1:]:
+            c = line.split("\t")
+            if c[1] == "4" and ((int(c[3]) - 320) ** 2 + (int(c[4]) - 2704) ** 2) < 900 ** 2:
+                n += 1
+        rows.append((round((1 + (i + 1) * 80) * 0.042, 1), n))
+    return rows
+
+
+# Desperate Alliance recording: minimap "under attack" pings / enemy dots at
+# the player's base, game seconds (session log 2026-11-06 (123)).  Waves 1-2
+# and the waves that land while our passive player's base is already
+# swarmed are not compared.
+DA_WAVES = [246.5, 310.5, 395.5, 449.5, 527.0, 698.5, 978.5, 1068.5, 1143.0]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--install", required=True)
@@ -234,6 +264,11 @@ def main() -> int:
     check(any(count(l, "Terran Marine") >= 20 for l in st), "desperate alliance: Marines trained")
     check(field(st[-1], "result") == "Some(true)", "desperate alliance: victory when the countdown ends")
     print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
+    rows = zerg_near_base(args.install, args.size)
+    arrivals = [t for (t, n), (_, p) in zip(rows[1:], rows) if n > p]
+    missed = [wv for wv in DA_WAVES if not any(abs(t - wv) <= 15 for t in arrivals)]
+    check(not missed, f"desperate alliance: Ter3 waves reach the base as recorded (missed {missed})")
+    print(f"  arrivals (s): {arrivals}")
     print(f"\nmission gate: {len(failures)} failure(s) at {args.size}")
     return 1 if failures else 0
 

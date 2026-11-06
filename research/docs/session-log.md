@@ -5928,3 +5928,27 @@ clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 1280x720 and 3440x1440 (gas 1.88 s, minerals 0.1667, Backwater supply
 timeline); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51; walkthrough
 PASS.
+
+## 2026-11-06 (123) — Desperate Alliance attack waves against the recording
+
+- **Recording (FACT).**  Minimap crop (300 x 300 at (505, 1090)), red
+  pixels in the base area (lower left) at 2 fps over the whole countdown
+  (game 0 = 127.3 s).  "Under attack" pings (2,000-4,000 px bursts) at
+  310.5, 395.5, 449.5, 527.0, 698.5, 724.5, 889.5, 978.5, 1068.5, 1143.0,
+  1153.5 s; enemy dots alone at 139.0 and 246.5-253.5 s.
+- **Ours.**  Passive player, Zerg units within 900 px of the Command Center
+  every 40 frames: increases at 72, 153, 244, 314, 395, 455, 536, 677-687,
+  969, 1060, 1131 s.  From wave 3 on every recorded event has one of ours
+  within ~10 s (244 / 246.5, 314 / 310.5, 395 / 395.5, 455 / 449.5,
+  536 / 527, 687 / 698.5, 969 / 978.5, 1060 / 1068.5, 1131 / 1143): the
+  `Ter3` wave timing matches.  Open: waves 1-2 (ours 72 and 153 s, the
+  recording one sighting at 139 s; INFERENCE: `attack_prepare` gathering
+  time, not modelled); persistence and size are not comparable (the
+  recorded player defended, ours is passive, so attackers accumulate).
+- **Gate.**  `mission_gate.py`: every recorded wave in 246.5-1143 s has an
+  arrival of ours within 15 s.  After ~950 s our count oscillates around a
+  swarmed base, so the late matches are weak; the 246-699 s waves are the
+  discriminating part.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed; clippy / fmt
+clean; `mission_gate.py` 0 failures at 1920x1080 and 3440x1440.
