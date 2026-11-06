@@ -194,6 +194,21 @@ def main() -> int:
     check(abs(per_tick / 0.1696 - 1) <= 0.10,
           f"wasteland: 5 SCVs bring {per_tick:.4f} minerals/frame (recording 0.1696)")
 
+    # Backwater Station recording: four SCVs queued at 83.5 s (14.6 s of
+    # game); supply rises at 83.5 / 96.0 / 109.0 / 121.5 s, one SCV at a time.
+    q = ["ticks:1", "look:300:1700", "ctrl-click-unit:SCV", "rclick-unit:Mineral", "ticks:342",
+         "click-unit:Command Center", "key:S", "key:S", "key:S", "key:S"] + ["ticks:4"] * 330
+    bq = run(args.install, args.size, 2, q)
+    rises, last = [], None
+    for l in bq:
+        sup = int(field(l, "supply").split("/")[0] or 0) // 2
+        if last is not None and sup > last:
+            rises.append(round(int(field(l, "tick")) * 0.0426 + 68.9, 1))
+        last = sup
+    want = [83.5, 96.0, 109.0, 121.5]
+    check(len(rises) == 4 and all(abs(a - b) <= 0.6 for a, b in zip(rises, want)),
+          f"backwater station: queued SCVs take supply as they start {rises} (recording {want})")
+
     idx, steps = MISSIONS["backwater-station"]
     st = run(args.install, args.size, idx, steps)
     check(any(count(l, "Terran Marine") >= 10 for l in st), "backwater station: the Barracks trains Marines (4 at start)")

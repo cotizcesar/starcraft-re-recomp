@@ -1580,13 +1580,16 @@ impl World {
             .filter(|u| (u.alive || u.in_transport.is_some()) && u.owner == owner)
             .map(|u| self.data.unit(u.type_id).supply_required as i32)
             .sum();
+        // Only the unit in training counts; queued ones take their supply
+        // when they start (FACT, Backwater Station recording 83.5-121.5 s:
+        // four SCVs queued at once, 200 minerals paid at once, supply 6 -> 7
+        // at once and +1 at each start, every 12.5-13.0 s).
         for u in &self.units {
-            if u.alive && u.owner == owner {
-                for o in u.production.iter().chain(std::iter::once(&u.order)) {
-                    if let Order::Train { unit_type } = o {
-                        used += self.data.unit(*unit_type).supply_required as i32;
-                    }
-                }
+            if u.alive
+                && u.owner == owner
+                && let Order::Train { unit_type } = u.order
+            {
+                used += self.data.unit(unit_type).supply_required as i32;
             }
         }
         used
@@ -1652,7 +1655,10 @@ impl World {
                 return Err(SimError::NotEnoughGas);
             }
         }
-        if self.supply_used(owner) + ty.supply_required as i32 > self.supply_cap(owner) {
+        let starts_now = self.units[i].production.is_empty() && self.units[i].order == Order::Idle;
+        if starts_now
+            && self.supply_used(owner) + ty.supply_required as i32 > self.supply_cap(owner)
+        {
             return Err(SimError::NotEnoughSupply);
         }
         if self.units[i].production.len() >= MAX_PRODUCTION_QUEUE {
@@ -2427,6 +2433,15 @@ impl World {
     }
 
     fn start_next_production(&mut self, i: usize) {
+        // A queued unit starts only when its supply is free; otherwise it
+        // waits at the front of the queue (retried every frame).
+        if let Some(Order::Train { unit_type }) = self.units[i].production.front() {
+            let owner = self.units[i].owner;
+            let need = self.data.unit(*unit_type).supply_required as i32;
+            if need > 0 && self.supply_used(owner) + need > self.supply_cap(owner) {
+                return;
+            }
+        }
         let next = self.units[i].production.pop_front();
         if let Some(Order::Train { unit_type }) = next {
             let ty = self.data.unit(unit_type);
@@ -2989,6 +3004,9 @@ impl World {
         // a Pylon field; it resumes when power returns.
         if !self.building_powered(i) {
             return;
+        }
+        if self.units[i].order == Order::Idle && !self.units[i].production.is_empty() {
+            self.start_next_production(i);
         }
         if self.units[i].build_remaining > 0 {
             self.units[i].build_remaining -= 1;

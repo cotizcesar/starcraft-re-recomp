@@ -5799,3 +5799,35 @@ clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720, 1920x1080,
 3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440 (gas
 1.89 s, minerals 0.1800); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
 (no screen moved by more than 0.05); walkthrough PASS.
+
+## 2026-11-06 (119) — Light buffer and gamma traced (negative); production supply as retail
+
+- **Light buffer (FACT).**  The only code reference to "lightBuffer"
+  (`0xa9b6bb`) is `glGetUniformLocation(program, "lightBuffer")` followed by
+  binding it to texture unit 6: set-up, not contents.  `anim/main.lit` has
+  no records for the Supply Depot (image 278), Command Center (275), SCV
+  (247), Refinery (307) or Barracks (266) (mineral fields do), so point
+  lights cannot explain the matched depot's extra brightness (session log
+  117).  Retail `CSettings.json`: `Gamma = 100`,
+  `RealtimeLightingEnabled = True`; no shader uses gamma and the dump names
+  no gamma-ramp API.  Decompiles of the "Gamma" users stop at callees Ghidra
+  marks non-returning (`FUN_00538810`, `FUN_0053a640`); clearing the flag
+  in-session (`research/tools/DecompileAt.java`, `noreturn=`) is not enough
+  because the fall-through was cut at disassembly.  Open: re-disassemble
+  those regions, then read the gamma path.
+- **Production queue (FACT, Backwater Station recording, HUD counters).**
+  Minerals 200 -> 0 at 83.5 s (four SCVs queued), supply 6 -> 7 at 83.5 s,
+  8 at 96.0, 9 at 109.0, 10 at 121.5 (one SCV per 300 frames).  Ours
+  charged supply for the whole queue at once (6 -> 10 at 83.5 s).  Now only
+  the unit in training counts; the queue-time supply check applies when
+  the unit would start at once; a queued unit starts only with room and the
+  producer retries every frame (INFERENCE for the blocked case, from BW).
+  Ours: 83.5 / 96.3 / 109.1 / 121.9 s.  Test
+  `queued_units_take_supply_when_they_start_training` (8 vs 2 on the old
+  rule); mission gate check.  The recorded SCV interval also confirms the
+  300-frame SCV.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
+1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
+(no screen moved by more than 0.05); walkthrough PASS.
