@@ -6148,3 +6148,19 @@ walkthrough PASS.
   (Wasteland -1.7 %, gas -4.5 %).
 
 **Verification.**  `git diff src/` empty after the revert.
+
+## 2026-11-06 (132) — Path-margin rule tested on the Boot Camp worker legs (falsified)
+
+- **Experiment (reverted).**  Worker Gather / ReturnCargo legs planned with
+  standing non-worker ground units as obstacles inflated by M px
+  (`GC_STEER_M`).  Field 14 / field 18 return legs and cycles: M = 8:
+  73 / 67-68, 239 / 228-229; M = 16: 73 / 68, 239 / 228; M = 24: 91 / 91,
+  275 / 275 (the gap closes and the route goes round both groups).  Retail:
+  field 14 return 65-69 (faster than ours), field 18 ~79, cycles ~251 /
+  ~253.  The response is a step, and a clearance rule cannot make field 14
+  faster while making field 18 slower, so a uniform margin is not the retail
+  rule.  Open: the client's path routine (the retail route through the gap
+  centre, session log 131).
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures (1920x1080).
