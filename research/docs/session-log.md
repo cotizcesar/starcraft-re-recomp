@@ -5573,3 +5573,40 @@ than 0.05.
 clippy / fmt clean; `game_input_gate.py` (two new Bunker checks),
 `mission_gate.py` 0 failures at 1280x720 and 3440x1440; `timeline_gate.py`
 10/10; `ui_visual_diff` 51/51, no screen moved by more than 0.05.
+
+## 2026-11-06 (113) — Mission endings against the recordings; single-unit unload
+
+- **Recorded endings (FACT).**  Boot Camp: gas 96 at 372 s, 110 at 376 s;
+  the closing ADVISOR transmission's text appears at 375.6 s and clears at
+  382.5 s; the game keeps running (units moving) and the "Congratulations!
+  You are victorious!" box appears at 383.9 s; the score screen reads
+  Elapsed Time 05:12 = 374.2 s after the 62.2 s start (the gas condition,
+  not the box).  Desperate Alliance: box 10.4 s after "Sons of Korhal",
+  where trigger 6 needs 9.4 s (transmissions 2,353 + 1,559 ms, waits
+  500 + 2,000 + 3,000).  Wasteland: the box at 302.5 s, ~0.6 s after the
+  tenth Marine's projected completion, with units still moving behind it
+  until 307.5 s.  Map voice clips last what the CHK says (T0M07tad 6.43 s),
+  falsifying a clip-length explanation.
+- **Change.**  `World::step` no longer stops at a winner; the client keeps
+  stepping under the end dialog and stops at the score screen.  The dialog
+  appears `END_DIALOG_DELAY_TICKS` = 24 frames after the result
+  (INFERENCE: ~1 s fits all three endings; Boot Camp's remaining 0.9 s
+  fits a trigger-cycle wait; falsifier: a box sooner than 1 s after its
+  event).  `App::result_tick` freezes Elapsed Time (score, profile record,
+  multiplayer score) at the result.  Ours now: Boot Camp result at tick
+  7,151, box 24 frames later (mission gate checks it).
+- **Single-unit unload.**  `World::unload_unit` (recorded,
+  `RecAct::UnloadOne`, save tag 11); a click on a cargo slot unloads that
+  unit.  Entering a transport now needs the units.dat boxes within 8 px
+  (`box_gap_px`); the 48 px centre distance left a Marine stuck on the
+  corner of a Bunker it approached diagonally.
+- **Not compared.**  The player-driven middle of each mission (the
+  recorded player's own build order) is not replayed step for step; the
+  observable anchors (depot 600 frames, SCV 300, supply 18/18 -> 26 at
+  ~197 s -> 34 at ~280 s in Boot Camp) agree with the simulation.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
+1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
+(no screen moved by more than 0.05); walkthrough PASS (the win fixture
+shows the dialog at once); hover text 14/14.

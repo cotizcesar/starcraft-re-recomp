@@ -1347,6 +1347,11 @@ struct App {
     /// the score screen (retail Wasteland recording: dialog at 3.5 s, the
     /// score screen after its Victory button).
     end_dialog: bool,
+    /// Frames left before the end dialog shows (`END_DIALOG_DELAY_TICKS`).
+    end_dialog_hold: u32,
+    /// Game tick of the result: the score's Elapsed Time (retail Boot Camp
+    /// 05:12 = the gas condition, not the dialog) while the world runs on.
+    result_tick: u64,
     /// Retail in-game error line ("Not enough minerals...mine more
     /// minerals.") and when it was shown.
     game_error: Option<(String, Instant)>,
@@ -3185,6 +3190,15 @@ type Card = [Option<(
     galaxycraft::button_sets::Button,
     galaxycraft::buttons::ButtonState,
 )>; 9];
+
+/// Frames between the game result and its Victory / Defeat dialog.
+/// INFERENCE (2026-11-06, three recordings): Desperate Alliance shows the box
+/// 10.4 s after "Sons of Korhal" where its trigger needs 9.4 s; Boot Camp
+/// 8.3 s after the closing line where the trigger needs 6.4 s; Wasteland
+/// ~0.6 s after the tenth Marine.  About 1 s fits all three (the remaining
+/// Boot Camp excess fits a trigger-cycle wait).  Falsifier: a capture where
+/// the box appears less than 1 s after the triggering event.
+const END_DIALOG_DELAY_TICKS: u32 = 24;
 
 /// `scvspark` (Fusion Cutter hit) image.
 const SCV_SPARK_IMAGE: u16 = 526;
@@ -5075,6 +5089,19 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 let at = app.screen_point_of_world(num(1), num(2));
                 mouse = click(app, fb, at, false, false);
             }
+            "click-cargo" => {
+                // Cargo slot N of the selected transport.
+                let rect = app
+                    .world
+                    .unit(*app.selected.first().unwrap_or(&0))
+                    .and_then(|t| {
+                        let ty = app.data.unit(t.type_id).clone();
+                        app.cargo_slot_rect(&ty, num(1).max(0) as usize)
+                    });
+                if let Some(r) = rect {
+                    mouse = click(app, fb, (r.x + r.w / 2, r.y + r.h / 2), false, false);
+                }
+            }
             "click-slot" | "shift-click-slot" => {
                 // Multi-selection slot N (0..11).
                 let r = app.group_slot_rect(num(1).max(0) as usize);
@@ -5163,6 +5190,8 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             app.briefing = false;
             app.menu = false;
             app.update();
+            // Menu steps do not run game frames: show the dialog now.
+            app.end_dialog_hold = 0;
         } else if let Some(n) = step.strip_prefix("wheel:") {
             wheel = n.parse().unwrap_or(0);
         } else if let Some(rest) = step.strip_prefix("fixture:progress:") {
@@ -5960,6 +5989,8 @@ fn main() {
         paused: false,
         game_result: None,
         end_dialog: false,
+        end_dialog_hold: 0,
+        result_tick: 0,
         game_error: None,
         next_map: None,
         tiles_dir: tiles_dir.clone(),
@@ -7586,6 +7617,10 @@ impl App {
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
+        ) + &format!(
+            " dialog={} elapsed={}",
+            self.end_dialog && self.end_dialog_hold == 0 && self.game_result.is_some(),
+            self.elapsed_ticks()
         ) + &format!(
             " ais=[{}]",
             self.campaign_ais
@@ -9262,7 +9297,8 @@ impl App {
             return;
         };
         if let Some(player) = self.world.players.get(self.local_player) {
-            let game = galaxycraft::profile::GameRecord::from_player(player, won, self.world.tick);
+            let game =
+                galaxycraft::profile::GameRecord::from_player(player, won, self.elapsed_ticks());
             self.profile_store.profiles[i].stats.record(&game);
         }
         if won && let Some(mission) = self.map_mission(self.map_index) {
@@ -10946,6 +10982,9 @@ impl App {
     /// One key on the score/result screen (also driven by `--menu-script`
     /// `result:<Key>` steps).
     fn result_key(&mut self, key: Key) {
+        if self.end_dialog && self.end_dialog_hold > 0 {
+            return;
+        }
         if self.end_dialog {
             // `wmission`/`lmission` default button: Victory (V) / OK (O),
             // also Enter; then the score screen.
@@ -11910,7 +11949,7 @@ impl App {
             &format!(
                 "{}   {} elapsed",
                 self.maps[self.map_index].name,
-                format_time(self.world.tick)
+                format_time(self.elapsed_ticks())
             ),
             Rgb::new(230, 230, 230),
             2,
@@ -12440,7 +12479,7 @@ impl App {
             }
         }
         if let Some(r) = ctl(9) {
-            let secs = galaxycraft::sim::real_seconds(self.world.tick);
+            let secs = galaxycraft::sim::real_seconds(self.elapsed_ticks());
             let text = format!("Elapsed Time: {:02}:{:02}", secs / 60, secs % 60);
             self.glue_text_face(
                 fb,
@@ -13559,6 +13598,12 @@ impl App {
             };
             if let Some(index) = slots.iter().position(|r| r.contains(mx, my)) {
                 self.activate_command(index);
+            } else if let Some((transport, unit)) = self.cargo_slot_at(mx, my) {
+                // Retail: a click on a cargo slot unloads that unit.
+                if let Err(e) = self.world.unload_unit(transport, unit) {
+                    self.show_sim_error(e);
+                }
+                self.play("ui_click");
             } else if let Some(n) = group_slot {
                 // Retail group panel: a click keeps only that unit, a
                 // Shift+click drops it from the selection.
@@ -13796,7 +13841,9 @@ impl App {
             // soon as the trigger VM has had its chance.
             self.next_map = self.resolve_next_map();
         }
-        if self.paused || self.game_result.is_some() {
+        // After the result the world runs on under the end dialog (and the
+        // `END_DIALOG_DELAY_TICKS` before it); the score screen stops it.
+        if self.paused || (self.game_result.is_some() && !self.end_dialog) {
             self.last_step = Instant::now();
             return;
         }
@@ -13824,6 +13871,11 @@ impl App {
     /// One simulation tick with the AIs, as the frame loop runs it (shared
     /// with `--game-script` `ticks:N`).
     fn step_once(&mut self) {
+        // The end dialog waits `END_DIALOG_DELAY_TICKS` frames after the
+        // result.
+        if self.game_result.is_some() {
+            self.end_dialog_hold = self.end_dialog_hold.saturating_sub(1);
+        }
         {
             // Each AI attacks an enemy of its own (never a teammate).
             let local = self.local_player as u8;
@@ -13896,6 +13948,8 @@ impl App {
                 let won = !defeat && victory;
                 self.game_result = Some(won);
                 self.end_dialog = true;
+                self.end_dialog_hold = END_DIALOG_DELAY_TICKS;
+                self.result_tick = self.world.tick;
                 self.score_tab = 0;
                 self.score_epoch = None;
                 self.score_count_epoch = None;
@@ -13917,7 +13971,12 @@ impl App {
     /// client is black outside it on all 56 reference captures.
     fn draw(&mut self, fb: &mut Framebuffer) {
         self.draw_frame(fb);
-        if self.end_dialog && self.game_result.is_some() && !self.menu && !self.intro {
+        if self.end_dialog
+            && self.end_dialog_hold == 0
+            && self.game_result.is_some()
+            && !self.menu
+            && !self.intro
+        {
             self.draw_end_dialog(fb);
         }
         let (cx, _, cw, _) = Self::content_rect(fb);
@@ -15472,8 +15531,6 @@ impl App {
         if ty.space_provided == 0 || u.cargo.is_empty() {
             return;
         }
-        let first = if ty.space_provided <= 4 { 27 } else { 25 };
-        let last = if ty.space_provided <= 4 { 30 } else { 32 };
         let k = self.content_box.3 as f32 / 1440.0;
         let cargo: Vec<SimUnit> = u
             .cargo
@@ -15481,11 +15538,9 @@ impl App {
             .filter_map(|id| self.world.unit(*id).cloned())
             .collect();
         for (n, c) in cargo.iter().enumerate() {
-            let id = first + n as i32;
-            if id > last {
+            let Some(r) = self.cargo_slot_rect(&ty, n) else {
                 break;
-            }
-            let r = self.hud_control("statdata", id, UiRect::new(0, 0, 0, 0));
+            };
             let cty = self.data.unit(c.type_id).clone();
             let Some(console) = &self.console else {
                 return;
@@ -15506,6 +15561,47 @@ impl App {
                 console.draw_wireframe(fb, c.type_id, rect, None);
             }
         }
+    }
+
+    /// Game time for Elapsed Time displays: frozen at the result.
+    fn elapsed_ticks(&self) -> u64 {
+        if self.game_result.is_some() {
+            self.result_tick
+        } else {
+            self.world.tick
+        }
+    }
+
+    /// Own transport and loaded unit under a HUD point (single selection).
+    fn cargo_slot_at(&self, mx: i32, my: i32) -> Option<(u32, u32)> {
+        if self.selected.len() != 1 {
+            return None;
+        }
+        let t = self.world.unit(self.selected[0])?;
+        if t.owner as usize != self.local_player {
+            return None;
+        }
+        let ty = self.data.unit(t.type_id);
+        t.cargo
+            .iter()
+            .enumerate()
+            .find(|(n, _)| {
+                self.cargo_slot_rect(ty, *n)
+                    .is_some_and(|r| r.contains(mx, my))
+            })
+            .map(|(_, &c)| (t.id, c))
+    }
+
+    /// Screen rect of cargo slot `n` of a transport of type `ty`: `statdata`
+    /// 27-30 for capacity 4, 25-32 above (see `draw_hud_cargo`).
+    fn cargo_slot_rect(&self, ty: &galaxycraft::data::UnitType, n: usize) -> Option<UiRect> {
+        let (first, last) = if ty.space_provided <= 4 {
+            (27, 30)
+        } else {
+            (25, 32)
+        };
+        let id = first + n as i32;
+        (id <= last).then(|| self.hud_control("statdata", id, UiRect::new(0, 0, 0, 0)))
     }
 
     /// Screen rect of multi-selection slot `n` (0..12): `statdata` control

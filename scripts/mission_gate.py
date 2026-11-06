@@ -146,11 +146,22 @@ def main() -> int:
             failures.append(what)
 
     idx, steps = MISSIONS["boot-camp"]
-    st = run(args.install, args.size, idx, steps)
+    # The last wait in 4-tick steps, to time the end dialog.
+    st = run(args.install, args.size, idx, steps[:-1] + ["ticks:4"] * 600)
     check(any(count(l, "Terran Supply Depot") >= 3 for l in st), "boot camp: three Supply Depots")
     check(any(count(l, "Terran Refinery") for l in st), "boot camp: a Refinery on the geyser")
     check(any(int(field(l, "gas") or 0) >= 100 for l in st), "boot camp: 100 gas")
     check(field(st[-1], "result") == "Some(true)", "boot camp: victory")
+    won = [l for l in st if field(l, "result") == "Some(true)"]
+    shown = [l for l in won if field(l, "dialog") == "true"]
+    if won and shown:
+        result_tick, dialog_tick = int(field(won[0], "elapsed")), int(field(shown[0], "tick"))
+        check(20 <= dialog_tick - result_tick <= 28,
+              f"boot camp: the Victory box follows the result by ~24 frames ({dialog_tick - result_tick})")
+        check(int(field(st[-1], "tick")) > dialog_tick and int(field(st[-1], "elapsed")) == result_tick,
+              "boot camp: the world runs on under the box, Elapsed Time stays at the result")
+    else:
+        check(False, "boot camp: the Victory box shows")
     print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
 
     idx, steps = MISSIONS["backwater-station"]

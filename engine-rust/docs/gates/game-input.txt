@@ -19,4 +19,5 @@ PASS I on Raynor's Vulture waits for a target
 PASS the click lays one Spider Mine
 PASS a right click on the Bunker loads the Marines
 PASS the loaded Bunker can be selected
+PASS a click on a cargo slot unloads that Marine
 game input gate: 0 failure(s) at 3440x1440 (minerals 150 -> 50)

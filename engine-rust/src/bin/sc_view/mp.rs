@@ -2722,7 +2722,7 @@ impl App {
                 Align::Center,
             );
         }
-        let elapsed = mpl::elapsed_text(self.world.tick);
+        let elapsed = mpl::elapsed_text(self.elapsed_ticks());
         self.mp_text(
             fb,
             &elapsed,
