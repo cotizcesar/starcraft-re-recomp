@@ -42,8 +42,8 @@ pub struct Contours {
 pub struct NodeStep {
     /// (left, top, right, bottom) the rays reached.
     pub reach: (i32, i32, i32, i32),
-    /// Up, right, down, left rays stopped by a wall.
-    pub hits: [bool; 4],
+    /// The walls that stopped the up, right, down, left rays.
+    pub hits: [Option<Segment>; 4],
     pub next: Vec<((i32, i32), u8)>,
     pub quadrants: u8,
 }
@@ -408,20 +408,20 @@ impl Contours {
             left = x;
         }
         let e = m.ext.map(i32::from);
-        let hit_up = self.up(m, y, x, x, top - 1).map(|s| s.pos as i32);
-        if let Some(p) = hit_up {
+        let hit_up = self.up(m, y, x, x, top - 1).copied();
+        if let Some(p) = hit_up.map(|s| s.pos as i32) {
             top = e[0] + 1 + p;
         }
-        let hit_right = self.right(m, x, y, y, right + 1).map(|s| s.pos as i32);
-        if let Some(p) = hit_right {
+        let hit_right = self.right(m, x, y, y, right + 1).copied();
+        if let Some(p) = hit_right.map(|s| s.pos as i32) {
             right = e[1] - 1 + p;
         }
-        let hit_down = self.down(m, y, x, x, bottom + 1).map(|s| s.pos as i32);
-        if let Some(p) = hit_down {
+        let hit_down = self.down(m, y, x, x, bottom + 1).copied();
+        if let Some(p) = hit_down.map(|s| s.pos as i32) {
             bottom = e[2] - 1 + p;
         }
-        let hit_left = self.left(m, x, y, y, left - 1).map(|s| s.pos as i32);
-        if let Some(p) = hit_left {
+        let hit_left = self.left(m, x, y, y, left - 1).copied();
+        if let Some(p) = hit_left.map(|s| s.pos as i32) {
             left = e[3] + 1 + p;
         }
         // Bits of directions that went nowhere are dropped (the client's
@@ -471,15 +471,167 @@ impl Contours {
         }
         NodeStep {
             reach: (left, top, right, bottom),
-            hits: [
-                hit_up.is_some(),
-                hit_right.is_some(),
-                hit_down.is_some(),
-                hit_left.is_some(),
-            ],
+            hits: [hit_up, hit_right, hit_down, hit_left],
             next,
             quadrants: b & 0x0f,
         }
+    }
+
+    /// `0x75e0e0`: the up-right quadrant's corner sweep after a node step.
+    /// Band A (the node's row up to the up limit, the node's column to the
+    /// right reach) finds the nearest up-facing wall and walks its segments
+    /// leftwards, emitting a candidate one pixel outside each end
+    /// (`FUN_0075db50`, extents `+0x30`); band B (above A) does the same
+    /// with right-facing walls downwards.  Returns (point, mask) candidates
+    /// in the client's emission order.  INFERENCE where the decompile loses
+    /// control flow: band B's segment walk stops like band A's.
+    pub fn sweep_up_right(
+        &self,
+        m: &Mover,
+        node: (i32, i32),
+        step: &NodeStep,
+    ) -> Vec<((i32, i32), u8)> {
+        let (x, y) = node;
+        let (_, top, right, _) = step.reach;
+        let e = m.ext.map(i32::from);
+        let e30 = [e[0] + 1, e[1] - 1, e[2] - 1, e[3] + 1];
+        let norm = |s: &Segment| {
+            (
+                s.pos as i32 + e30[s.facing as usize & 3],
+                s.start as i32 + e30[(s.flags & 3) as usize],
+                s.end as i32 + e30[(s.flags >> 2 & 3) as usize],
+            )
+        };
+        let index_of =
+            |list: &Vec<Segment>, seg: &Segment| list.iter().position(|q| std::ptr::eq(q, seg));
+        let mut out = Vec::new();
+        // Band A.
+        let mut band_bottom = y;
+        let mut band_right = right;
+        if x < right {
+            let mut upper = top;
+            let mut right_wall_top = top;
+            if let Some(rh) = step.hits[1] {
+                right_wall_top = e[(rh.flags & 3) as usize] - 1 + rh.start as i32;
+                if top < right_wall_top {
+                    upper = right_wall_top;
+                }
+            }
+            let found = self.up(m, y - 1, x, right, upper - 1);
+            let mut mask: u8 = 0x3b;
+            let mut wall = None;
+            if let Some(seg) = found {
+                let n = norm(seg);
+                upper = n.0;
+                if right < n.2 {
+                    mask = 0x22;
+                } else if right == n.2 {
+                    mask = if seg.flags & 0x20 != 0 { 0x33 } else { 0 };
+                }
+                wall = Some((index_of(&self.lists[0], seg), n));
+            }
+            if step.hits[1].is_some() {
+                mask &= 0xfd;
+                if right_wall_top < upper {
+                    mask &= 0xdc;
+                }
+            }
+            if upper < y {
+                out.push(((right, y), 0xe7));
+            } else {
+                mask |= 0x44;
+            }
+            out.push(((right, upper), mask));
+            if upper == top {
+                out.push(((x, upper), 0xdd));
+            }
+            let mut next_right = right;
+            if let Some((Some(mut idx), mut cur)) = wall {
+                if cur.2 < right {
+                    out.push(((cur.2, cur.0), 0x11));
+                }
+                next_right = x;
+                while x <= cur.1 {
+                    out.push(((cur.1, cur.0), 0x18));
+                    if idx == 0 {
+                        next_right = cur.1;
+                        break;
+                    }
+                    idx -= 1;
+                    let p = norm(&self.lists[0][idx]);
+                    if p.0 != upper || p.2 < x {
+                        next_right = cur.1;
+                        break;
+                    }
+                    if p.2 <= right {
+                        out.push(((p.2, p.0), 0x11));
+                    }
+                    cur = p;
+                }
+            }
+            band_bottom = upper;
+            band_right = next_right;
+        }
+        // Band B.
+        if top < band_bottom {
+            let mut limit = band_right;
+            let mut up_wall_end = band_right;
+            if let Some(uh) = step.hits[0] {
+                up_wall_end = e[(uh.flags >> 2 & 3) as usize] + 1 + uh.end as i32;
+                if up_wall_end < band_right {
+                    limit = up_wall_end;
+                }
+            }
+            let found = self.right(m, x + 1, top, band_bottom, limit + 1);
+            let mut mask: u8 = 0x3b;
+            let mut wall = None;
+            if let Some(seg) = found {
+                let n = norm(seg);
+                limit = n.0;
+                if n.1 < top {
+                    mask = 0x18;
+                } else if n.1 == top {
+                    mask = if seg.flags & 0x10 != 0 { 0x39 } else { 0 };
+                }
+                wall = Some((index_of(&self.lists[1], seg), n));
+            }
+            if step.hits[0].is_some() {
+                mask &= 0xf7;
+                if limit < up_wall_end {
+                    mask &= 0xd6;
+                }
+            }
+            if x < limit {
+                out.push(((x, top), 0xdd));
+            } else {
+                mask |= 0x84;
+            }
+            out.push(((limit, top), mask));
+            if limit < band_right {
+                out.push(((limit, band_bottom), 1));
+            }
+            if let Some((Some(mut idx), mut cur)) = wall {
+                if top < cur.1 {
+                    out.push(((cur.0, cur.1), 0x21));
+                }
+                while cur.2 <= band_bottom {
+                    out.push(((cur.0, cur.2), 0x22));
+                    idx += 1;
+                    if idx >= self.lists[1].len() {
+                        break;
+                    }
+                    let p = norm(&self.lists[1][idx]);
+                    if p.0 != limit || band_bottom < p.1 {
+                        break;
+                    }
+                    if top <= p.1 {
+                        out.push(((p.0, p.1), 0x21));
+                    }
+                    cur = p;
+                }
+            }
+        }
+        out
     }
 
     pub fn len(&self) -> usize {
@@ -559,7 +711,7 @@ mod tests {
         // From (176, 260): up hits the block's bottom (191) widened by 11.
         let s = c.node_step(&m, (176, 260), 0xff, (511, 511));
         assert_eq!(s.reach.1, 191 + 11 + 1);
-        assert!(s.hits[0] && !s.hits[1] && !s.hits[3]);
+        assert!(s.hits[0].is_some() && s.hits[1].is_none() && s.hits[3].is_none());
         assert_eq!(s.reach.2, 176 + 64);
         assert_eq!(s.quadrants, 0x0f);
         assert_eq!(s.next.len(), 4);
@@ -567,7 +719,7 @@ mod tests {
         assert_eq!(s.next[1], ((240, 260), 0x7f));
         // From (250, 300) looking right: the unit's left edge (300) less 11.
         let s = c.node_step(&m, (250, 300), 0xff, (511, 511));
-        assert!(s.hits[1]);
+        assert!(s.hits[1].is_some());
         assert_eq!(s.reach.2, 300 - 11 - 1);
         // Mask 0x19 (up, quadrants 1 and 8) shares bits with the right
         // (0x23) and left (0x8c) sides; only the down side stays at the
@@ -576,6 +728,46 @@ mod tests {
         assert_eq!((s.reach.0, s.reach.2, s.reach.3), (250 - 64, 300 - 12, 300));
         assert_eq!(s.quadrants & 0b0110, 0);
         assert!(s.next.iter().all(|(p, _)| p.1 <= 300));
+    }
+
+    #[test]
+    fn up_right_sweep_emits_the_corners_of_the_marine_gap() {
+        // Boot Camp, session log 131: the field-18 SCV turned up at about
+        // (1670, 237), between the Marine groups (units.dat Marine box
+        // 8 / 9 / 8 / 10, SCV 11 each way).
+        let t = Terrain::open(64, 64);
+        let marines = [
+            (1651, 172),
+            (1615, 187),
+            (1670, 199),
+            (1640, 211),
+            (1722, 304),
+            (1688, 288),
+            (1715, 340),
+            (1685, 321),
+        ];
+        let boxes: Vec<_> = marines
+            .iter()
+            .map(|&(x, y)| (x - 8, y - 9, x + 8, y + 10))
+            .collect();
+        let c = Contours::from_terrain(&t).with_units(&boxes);
+        let m = Mover::from_box(11, 11, 11, 11);
+        let s = c.node_step(&m, (1600, 291), 0xff, (2047, 2047));
+        let pts = c.sweep_up_right(&m, (1600, 291), &s);
+        // One pixel below the upper group's bottom (211 + 10 + 11 + 1 = 233),
+        // at both ends of the bottom Marine's widened edge.
+        assert!(pts.contains(&((1660, 233), 0x11)), "{pts:?}");
+        assert!(pts.contains(&((1620, 233), 0x18)), "{pts:?}");
+        // Out of the Marines' reach the sweep only gives the box corners.
+        let s = c.node_step(&m, (1484, 295), 0xff, (2047, 2047));
+        assert_eq!(
+            c.sweep_up_right(&m, (1484, 295), &s),
+            vec![
+                ((1548, 295), 0xe7),
+                ((1548, 231), 0x3b),
+                ((1484, 231), 0xdd)
+            ]
+        );
     }
 
     #[test]
