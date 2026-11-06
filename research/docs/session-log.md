@@ -6107,3 +6107,21 @@ walkthrough PASS.
 
 **Verification.**  No code change; `mission_gate.py` 0 failures at 1920x1080
 (session log 128).
+
+## 2026-11-06 (130) — Boot Camp route: Marines-in-the-path hypothesis falsified
+
+- **Positions (FACT).**  Our Boot Camp Marines start exactly at the recorded
+  group positions: (1323-1357, 68-106), (1615-1670, 172-211),
+  (1685-1722, 288-340), (1341-1389, 404-454); the player had not moved them
+  at 104-145 s.
+- **Experiment (reverted).**  Workers on Gather / ReturnCargo legs planned
+  paths around standing non-worker ground units (`GC_STEER`): field 14
+  return leg 73 -> 73 frames, cycle 239 -> 239; field 18 return leg 67 ->
+  68, cycle 227 -> 229.  Our field-18 route from (1485, 297) to the drop-off
+  (1753, 263) passes above the third group (path y ~270 at x 1700, group top
+  ~277), so the Marines are not in its way: the longer retail legs (79 / 77
+  frames) are not explained by them.  Open: the retail field-18 SCV's actual
+  route (frame-by-frame track of its sprite between 111 and 121 s).
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures (1920x1080).
