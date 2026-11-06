@@ -5432,3 +5432,46 @@ walkthrough PASS; `mission_gate.py` 0 failures.
 clippy / fmt clean; `game_input_gate.py` 0 failures; `ui_visual_diff` 51/51
 (no screen moved by more than 0.05); walkthrough PASS; in-game draw at
 3440x1440 6.8 ms (`GC_BENCH=60`).
+
+## 2026-11-06 (109) — Desperate Alliance waves checked against the recording; Terran construction look
+
+- **Desperate Alliance waves.**  Recording minimap every 20 s over the whole
+  countdown (127-1337 s): the player's base is never seriously attacked,
+  with a few enemy dots near it around 240, 300, 440, 520, 880 and 1,060 s of
+  play.  The `Ter3` waves the simulation now sends (traced per
+  `attack_do`): 2 Zerglings at tick 1,253, 4 at 3,301, 4 + 1 Hydralisk at
+  5,349, 2 Hydralisks + 1 Mutalisk at 7,022, then 2-20 units every
+  ~2,000 ticks.  These are small groups, consistent with the recording.  A
+  passive player loses the Command Center to the third wave because the
+  idle Marines stand ~150 px away, outside their 128 px acquisition range
+  (`target_acquisition_px` = max(units.dat 0, weapon 128)); INFERENCE that
+  retail behaves the same (falsifier: a retail capture of idle Marines
+  answering an attack 150 px away).  No change.
+- **Terran construction (FACT, Boot Camp recording, 10 fps pixel-change
+  trace of the depot).**  Placement 174.2 s, scaffold frame 1 at 177.1 s,
+  frame 2 at 182.7 s, the depot's AlmostBuilt frame at 188.3 s, Built at
+  199.4 s (600 frames).  That is progress 1/9, 1/3, 5/9, which is HP
+  20 / 40 / 60 % with HP growing from 10 % (INFERENCE that retail keys on
+  HP).  `units.dat` construction image (offset 1332) is now parsed
+  (`UnitType::construction_image`): CC / Barracks 325 `TBldLrg`, Academy /
+  Factory / Engineering Bay 327 `tBldMed`, Depot / Bunker / Comsat 330 and
+  Turret 329 `TBldSml`; their iscripts show frame 0 (Init), 1 and 2
+  (SpecialState1/2); the depot's AlmostBuilt (anim 15) is frame 1.
+  `terran_construction_stage` picks the image and frame; the scaffold's
+  own Init overlays (shadow) are drawn.
+- **Welding.**  The SCV iscript has no IsWorking animation; its welding is
+  the GndAttkRpt pose (frames 34 then 17 + direction) on the Fusion Cutter's
+  15-frame cooldown, with `scvspark` (image 526, 10 frames) on the building.
+  Drawn client-side (`welding_pose`).  In the simulation the SCV now moves
+  to a spot on the building's left, right or front edge that changes every
+  48 frames (`CONSTRUCT_HOP_TICKS`, derived from the tick and the unit id);
+  it stood in the building's centre and was hidden by it.  Draw order is
+  now elevation, then y; a welding SCV is drawn in front of its building.
+- **Gate.**  The Boot Camp script sends the builder back to the minerals
+  after each depot (it goes idle after building, as in retail);
+  `mission_gate.py` 0 failures at 1280x720, 1920x1080, 3440x1440.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed
+(new `scaffold_frames_switch_at_the_recorded_progress_marks`); clippy / fmt
+clean; `game_input_gate.py` 0 failures; `ui_visual_diff` 51/51, no screen
+moved by more than 0.05.

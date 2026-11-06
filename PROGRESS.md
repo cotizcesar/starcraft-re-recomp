@@ -15,7 +15,7 @@ restating status.
 <!-- progress:summary:start -->
 | Area | Weight | Done | Total | Progress |
 |---|---:|---:|---:|---:|
-| [Simulation rules](#simulation-rules) | 25 | 18 | 20 | 90 % |
+| [Simulation rules](#simulation-rules) | 25 | 19 | 20 | 95 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
@@ -25,7 +25,7 @@ restating status.
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **78** | **99** | **79 %** |
+| **Overall (weighted)** | **100** | **79** | **99** | **80 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -57,7 +57,7 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Alliances: allied players (lobby teams, trigger action 57) neither fight nor target each other and share vision in team games — `trigger::tests::set_alliance_status_stops_two_players_fighting`, `tests/multiplayer.rs::a_team_wins_together_and_never_targets_itself`, `teammates_share_vision`
 - [x] Build, research and upgrade times are game frames (SCV 300 frames = 12.6 s on the Backwater Station recording) — `tests/reconstruction.rs::time_units_are_game_frames`, session log 2026-11-05 (105)
 - [x] A Terran SCV stays on its building (orders.dat 33); construction pauses without it and resumes when an SCV is sent back; hit points grow with the progress — `tests/reconstruction.rs::a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`
-- [ ] Terran construction graphics (scaffold, then the rising building, SCV welding sparks) as on the Boot Camp recording 173-193 s
+- [x] Terran construction as on the Boot Camp recording: the `units.dat` scaffold (`TBldLrg`/`tBldMed`/`TBldSml`) frames 0/1/2, then the AlmostBuilt frame, switching at progress 1/9, 1/3, 5/9; the SCV works around the building's edges with Fusion Cutter frames and `scvspark` — `construction_look_tests::scaffold_frames_switch_at_the_recorded_progress_marks`, session log 2026-11-06 (109)
 - [ ] Campaign AI opcodes that only advance today (`if_dif`, `if_towns`, `get_oldpeons`, `wait_upgrades`, `set_attacks`, `quick_attack`, …; only `get_oldpeons` is used by an Episode I map) — `research/docs/session-log.md` 2026-11-05 (93)
 
 ## Data and file formats

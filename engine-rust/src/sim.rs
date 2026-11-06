@@ -57,6 +57,8 @@ pub const MAX_ORDER_QUEUE: usize = 8;
 /// Ticks a unit may fail to approach an intermediate waypoint before it is
 /// skipped (see `move_towards`).
 pub const PATH_STALL_TICKS: u8 = 8;
+/// Frames an SCV welds from one spot of its building before moving on.
+pub const CONSTRUCT_HOP_TICKS: u64 = 48;
 /// A unit stalled within this distance of its final destination counts as
 /// arrived (INFERENCE: 3 tiles; falsifier: a retail group move whose outer
 /// units keep walking).
@@ -5121,12 +5123,39 @@ impl World {
             self.order_done(i);
             return;
         }
-        if self.distance(i, b) > fp(48) {
-            let (bx, by) = (self.units[b].x, self.units[b].y);
-            self.move_towards(i, (bx / fp(1), by / fp(1)), fp(32));
+        // The SCV works its way around the structure: a spot on the edge of
+        // the building's box, changing every `CONSTRUCT_HOP_TICKS` (Boot Camp
+        // recording 175-199 s: the SCV welds the depot from its left, front
+        // and right sides, never from its centre).  Derived from the tick and
+        // the unit id, so no extra state and no RNG draw.
+        let ty = self.data.unit(self.units[b].type_id);
+        let (hw, hh) = (
+            ty.dimensions.left.max(ty.dimensions.right).max(8) as i64,
+            ty.dimensions.top.max(ty.dimensions.bottom).max(8) as i64,
+        );
+        let hop = self.tick / CONSTRUCT_HOP_TICKS;
+        let h = (hop as i64)
+            .wrapping_mul(2654435761)
+            .wrapping_add(self.units[i].id as i64 * 40503)
+            .rem_euclid(1 << 20);
+        let (ex, ey) = match h % 3 {
+            0 => (-hw, (h / 3).rem_euclid(2 * hh) - hh),
+            1 => (hw, (h / 3).rem_euclid(2 * hh) - hh),
+            _ => ((h / 3).rem_euclid(2 * hw) - hw, hh),
+        };
+        let (bx, by) = (self.units[b].x / fp(1), self.units[b].y / fp(1));
+        let spot = (bx + ex as i32, by + ey as i32);
+        if self.distance(i, b) > fp(96) {
+            self.move_towards(i, spot, fp(8));
             return;
         }
         self.units[b].builder = self.units[i].id;
+        if self.distance_to_point(i, (spot.0 * fp(1), spot.1 * fp(1))) > fp(6) {
+            self.move_towards(i, spot, fp(4));
+        } else {
+            self.units[i].path.clear();
+            self.units[i].path_goal = None;
+        }
     }
 
     /// SCV repair.  Rate is the documented `0.9 * maxHP / build_time` per

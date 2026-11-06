@@ -51,8 +51,11 @@ MISSIONS = {
         "ticks:500",
         "click-unit:SCV", "key:B", "key:S", "click-view:60:60",   # depot 2
         "ticks:1500",
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",             # builder back
         "click-unit:SCV", "key:B", "key:S", "click-view:40:60",   # depot 3
         "ticks:1800",
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",
+        "ticks:600",
         "look:1792:416",                                          # the geyser
         "click-unit:SCV", "key:B", "key:R", "click-world:1792:416",
         "ticks:1500",

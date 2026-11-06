@@ -87,6 +87,9 @@ pub struct UnitType {
     /// string `1302 + rank` (SCV 1 and Marine 2 -> "Private", Firebat 4 ->
     /// "Corporal"; 0 = no rank line).
     pub rank: u8,
+    /// `units.dat` construction image (`images.dat` id, 0 = none): the
+    /// Terran scaffold `TBldLrg` 325 / `tBldMed` 327 / `TBldSml` 329-330.
+    pub construction_image: u16,
 }
 
 impl UnitType {
@@ -693,6 +696,7 @@ fn parse_units(d: &[u8]) -> Result<Vec<UnitType>, DataError> {
             },
             portrait: u16_at(d, unit_off::PORTRAIT, i),
             rank: u8_at(d, unit_off::SUBLABEL, i),
+            construction_image: u32_at(d, unit_off::CONSTRUCTION, i) as u16,
         });
     }
     Ok(units)
