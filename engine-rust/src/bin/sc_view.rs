@@ -71,8 +71,66 @@ const HUD_H: i32 = 240;
 /// at a lower rate dropped one frame in five.
 const INTRO_FPS: f32 = 15.0;
 const INTRO_WIDTH: u32 = 960;
+/// Smallest UI scale (content height / 480) that draws the world with the
+/// retail HD art and screen-resolution fog.  It was 2.0, which sent 720p
+/// (1.5) and 900p (1.875) to the SD sprites and 1x fog, so the game looked
+/// different below 1080p.  Remastered draws the HD art at every supported
+/// size; `scripts/resolution_diff.py` checks 720p..4K against 1440p.
+const HD_WORLD_MIN_SCALE: f32 = 1.0;
+
+/// Default window: the smallest supported 16:9 size (720p).  The front end
+/// and the game are laid out in a 16:9 box; 4:3 defaults cut it off.
 const VIEW_W: usize = 1280;
-const VIEW_H: usize = 960;
+const VIEW_H: usize = 720;
+
+/// Where the 16:9 drawing surface sits in a `w`x`h` window:
+/// `(inner_w, inner_h, offset_x, offset_y)`.  Windows as wide as 16:9 or
+/// wider (16:9, ultrawide) draw at the window size and pillarbox inside
+/// `content_rect`.  Narrower windows (4:3, 16:10, 5:4) letterbox: the
+/// surface is the 16:9 box that fits the width, centred vertically between
+/// black bars, so nothing is laid out past the window edge (user report
+/// 2026-11-05: at 1277x954 the Select Connection Ok / Cancel plates were cut
+/// off on the right).
+fn letterbox(w: usize, h: usize) -> (usize, usize, i32, i32) {
+    let (w, h) = (w.max(1), h.max(1));
+    if w * 9 >= h * 16 {
+        return (w, h, 0, 0);
+    }
+    let ih = ((w as f32 * 9.0 / 16.0).round() as usize).clamp(1, h);
+    (w, ih, 0, ((h - ih) / 2) as i32)
+}
+
+/// The drawn surface as the window shows it (letterbox bars included).
+/// `None` when the surface already is the window.
+fn presented(inner: &Framebuffer, w: usize, h: usize, offset: (i32, i32)) -> Option<Framebuffer> {
+    if offset == (0, 0) && (inner.width as usize, inner.height as usize) == (w, h) {
+        return None;
+    }
+    let mut out = Framebuffer::new(w, h);
+    let mut pixels = Vec::new();
+    present_into(inner, w, h, offset, &mut pixels);
+    out.pixels = pixels;
+    Some(out)
+}
+
+/// Window point -> drawing-surface point.
+fn surface_point(offset: (i32, i32), x: i32, y: i32) -> (i32, i32) {
+    (x - offset.0, y - offset.1)
+}
+
+/// Copy the drawn surface into a `w`x`h` window buffer at `offset`, with
+/// black bars around it.
+fn present_into(inner: &Framebuffer, w: usize, h: usize, offset: (i32, i32), out: &mut Vec<u32>) {
+    out.clear();
+    out.resize(w * h, 0);
+    let (ox, oy) = (offset.0.max(0) as usize, offset.1.max(0) as usize);
+    let iw = (inner.width as usize).min(w.saturating_sub(ox));
+    for y in 0..(inner.height as usize).min(h.saturating_sub(oy)) {
+        let src = y * inner.width as usize;
+        let dst = (y + oy) * w + ox;
+        out[dst..dst + iw].copy_from_slice(&inner.pixels[src..src + iw]);
+    }
+}
 
 /// Retail campaign metadata materialised alongside the CHK file.
 #[derive(Clone, Debug, Default)]
@@ -1104,6 +1162,9 @@ struct App {
     /// The same layer without the panel introduction, for the modals and
     /// sub-screens drawn over the menu.
     menu_static_bare: Option<(usize, usize, Vec<u32>)>,
+    /// Offset of the drawing surface inside the window (`letterbox`): the
+    /// pointer is read in window pixels and moved into surface pixels.
+    present_offset: (i32, i32),
     intro_fit: Option<(usize, usize, DdsImage)>,
     /// Backdrop resampled once to the 16:9 content box (the 3412x1920 art is
     /// 25 MB decoded; bilinear-scaling it every frame is wasted work).
@@ -4730,7 +4791,12 @@ fn run_menu_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             }
         } else if let Some(rest) = step.strip_prefix("move:") {
             let (x, y) = rest.split_once(':').unwrap_or(("0", "0"));
-            mouse = Some((x.parse().unwrap_or(0), y.parse().unwrap_or(0)));
+            // Window pixels, like a real pointer.
+            mouse = Some(surface_point(
+                app.present_offset,
+                x.parse().unwrap_or(0),
+                y.parse().unwrap_or(0),
+            ));
         } else if step == "click" {
             down = true;
         } else if let Some(k) = step.strip_prefix("key:") {
@@ -5315,6 +5381,7 @@ fn main() {
         intro_started: Instant::now(),
         menu_static: None,
         menu_static_bare: None,
+        present_offset: (0, 0),
         intro_fit: None,
         backdrop_fit: None,
         moon_fit: None,
@@ -5550,8 +5617,17 @@ fn main() {
     let mut fb = if supersample {
         Framebuffer::new(3413, 1920)
     } else {
-        Framebuffer::new(width, height)
+        // Narrower-than-16:9 windows draw into the letterboxed 16:9 surface
+        // (`letterbox`); shots are composed back to the window size.
+        let (iw, ih, ox, oy) = letterbox(width, height);
+        app.present_offset = (ox, oy);
+        Framebuffer::new(iw, ih)
     };
+    // The view (and so every start camera `load_map` computes) must follow
+    // this surface from the start: it used to stay at the default window's
+    // until the first draw, so captures at other sizes framed the map from
+    // a different camera.
+    app.update_view(&fb);
     // Headless screen capture for UI verification: the exact same draw code
     // runs, but into a BMP instead of a window.  This lets the campaign
     // menu, retail briefing and mission screens be checked without an X
@@ -6141,6 +6217,8 @@ fn main() {
         };
         apply_capture_correction(&mut fb);
         if let Some(path) = &shot {
+            let composed = presented(&fb, width, height, app.present_offset);
+            let fb = composed.as_ref().unwrap_or(&fb);
             match fb.write_bmp(path) {
                 Ok(()) => eprintln!(
                     "screenshot: {} ({}x{})",
@@ -6204,15 +6282,19 @@ fn main() {
     let mut draw_ms = 0.0f64;
     let mut present_ms = 0.0f64;
     let mut needs_centre = start_screen.is_some();
+    let mut window_size = (fb.width as usize, fb.height as usize);
+    let mut window_pixels: Vec<u32> = Vec::new();
     while window.is_open() && !app.quit {
         let (w, h) = window.get_size();
-        if w != fb.width as usize || h != fb.height as usize {
-            fb = Framebuffer::new(w.max(640), h.max(480));
+        let (w, h) = (w.max(640), h.max(360));
+        let (iw, ih, ox, oy) = letterbox(w, h);
+        if iw != fb.width as usize || ih != fb.height as usize || (w, h) != window_size {
+            fb = Framebuffer::new(iw, ih);
+            app.present_offset = (ox, oy);
+            window_size = (w, h);
             app.update_view(&fb);
         }
-        app.pointer = window
-            .get_unscaled_mouse_pos(MouseMode::Clamp)
-            .map(|(x, y)| (x as i32, y as i32));
+        app.pointer = app.surface_mouse(&window);
         if needs_centre {
             // The logical view is only known once the window exists; centring
             // earlier leaves the camera clamped to the map corner (black fog).
@@ -6246,9 +6328,22 @@ fn main() {
         }
         app.draw_cursor(&mut fb);
         let present_started = Instant::now();
-        window
-            .update_with_buffer(&fb.pixels, fb.width as usize, fb.height as usize)
-            .expect("present frame");
+        if app.present_offset == (0, 0) && window_size == (fb.width as usize, fb.height as usize) {
+            window
+                .update_with_buffer(&fb.pixels, fb.width as usize, fb.height as usize)
+                .expect("present frame");
+        } else {
+            present_into(
+                &fb,
+                window_size.0,
+                window_size.1,
+                app.present_offset,
+                &mut window_pixels,
+            );
+            window
+                .update_with_buffer(&window_pixels, window_size.0, window_size.1)
+                .expect("present frame");
+        }
         let now = Instant::now();
         draw_ms += (present_started - draw_started).as_secs_f64() * 1000.0;
         present_ms += (now - present_started).as_secs_f64() * 1000.0;
@@ -6782,6 +6877,14 @@ impl App {
     /// The 16:9 content box, centred. The retail client pillarboxes a 16:9
     /// render inside a wider desktop (verified on the 3440x1440 references:
     /// content occupies columns 440..2999, i.e. 2560x1440).
+    /// Pointer in drawing-surface pixels (window pixels minus the
+    /// letterbox offset).
+    fn surface_mouse(&self, window: &Window) -> Option<(i32, i32)> {
+        window
+            .get_unscaled_mouse_pos(MouseMode::Clamp)
+            .map(|(x, y)| surface_point(self.present_offset, x as i32, y as i32))
+    }
+
     fn content_rect(fb: &Framebuffer) -> (i32, i32, i32, i32) {
         let h = fb.height.max(1);
         let want_w = ((h as f32 * 16.0 / 9.0).round() as i32).max(1);
@@ -8692,9 +8795,7 @@ impl App {
     fn handle_menu(&mut self, window: &Window) {
         let input = MenuInput {
             keys: window.get_keys_pressed(KeyRepeat::No),
-            mouse: window
-                .get_unscaled_mouse_pos(MouseMode::Clamp)
-                .map(|(x, y)| (x as i32, y as i32)),
+            mouse: self.surface_mouse(window),
             mouse_down: window.get_mouse_down(MouseButton::Left),
             wheel: window
                 .get_scroll_wheel()
@@ -10059,10 +10160,7 @@ impl App {
                 _ => {}
             }
         }
-        let (mx, my) = window
-            .get_unscaled_mouse_pos(MouseMode::Clamp)
-            .map(|(x, y)| (x as i32, y as i32))
-            .unwrap_or((-1, -1));
+        let (mx, my) = self.surface_mouse(window).unwrap_or((-1, -1));
         let lmb = window.get_mouse_down(MouseButton::Left);
         if lmb && !self.lmb_down {
             let scale = self.ui_scale;
@@ -10860,17 +10958,24 @@ impl App {
             fb.clear(Rgb::new(4, 5, 10));
         }
 
+        // Every offset below is in 1440p pixels scaled by `k`, and text is
+        // in UI px (`ui_label`): the page keeps its layout from 720p up
+        // (`scripts/resolution_diff.py`).  It used fixed screen pixels and
+        // whole-size bitmap text, which moved and enlarged the copy below
+        // 1440p.
+        let k = h as f32 / 1440.0;
+        let kp = |v: f32| (v * k).round() as i32;
         // A subtle vignette keeps the copy legible over bright artwork.
         let shade = if lower_left { 0.55 } else { 0.35 };
         let band_top = if lower_left {
             (h * 42 / 100) as i32
         } else {
-            (h / 2 - 140) as i32
+            h as i32 / 2 - kp(140.0)
         };
         let band_h = if lower_left {
             (h * 46 / 100) as i32
         } else {
-            300
+            kp(300.0)
         };
         for y in band_top..(band_top + band_h).min(h as i32) {
             let t = (y - band_top) as f32 / band_h.max(1) as f32;
@@ -10884,30 +10989,38 @@ impl App {
 
         let title_color = Rgb::new(255, 226, 150);
         let body_color = Rgb::new(226, 208, 178);
-        let chars = ((w as i32 - 160) / 16).max(24) as usize;
+        // Body 7 UI px (21 px at 1440p) on a 9 UI px pitch, the quoted
+        // title line 9 UI px; wrapped to the text width actually measured.
+        let (body_ui, title_ui, pitch_ui) = (7.0f32, 9.0f32, 9.0f32);
+        let max_w = w as i32 - kp(160.0);
+        let body_px = (body_ui * self.ui_scale).max(6.0);
         let lines: Vec<String> = if text.trim().is_empty() {
             Vec::new()
+        } else if let Some(font) = self.ui_font_info.as_mut() {
+            text.lines()
+                .flat_map(|para| wrap_words(para, max_w, |t| font.measure(t, body_px, 0.0)))
+                .collect()
         } else {
-            wrap_text(&text, chars)
+            wrap_text(&text, ((max_w / 16).max(24)) as usize)
         };
-
-        let line_h = 22;
+        let line_h = (pitch_ui * self.ui_scale).round() as i32;
         let total = lines.len() as i32 * line_h;
         let mut y = if lower_left {
-            (h as i32 - 70 - total).max(40)
+            (h as i32 - kp(70.0) - total).max(kp(40.0))
         } else {
             h as i32 / 2 - total / 2
         };
-        let x = 80;
+        let x = kp(80.0);
+        let (off, shade_rgb) = label_drop_shadow(self.ui_scale);
         for (i, line) in lines.iter().enumerate() {
-            let (scale, color) = if i == 0 && line.trim().starts_with('"') {
-                (3, title_color)
+            let (size, color) = if i == 0 && line.trim().starts_with('"') {
+                (title_ui, title_color)
             } else {
-                (2, body_color)
+                (body_ui, body_color)
             };
             // Hard shadow, as the retail text is drawn over full-frame art.
-            fb.text(x + 2, y + 2, line, Rgb::new(0, 0, 0), scale);
-            fb.text(x, y, line, color, scale);
+            self.ui_label(fb, line, x + off, y + off, size, shade_rgb, false);
+            self.ui_label(fb, line, x, y, size, color, false);
             y += line_h;
         }
         // Decoded intermission poster: when the page names a `</VIDEO>`
@@ -10942,7 +11055,7 @@ impl App {
             let bw = (w as f32 * 0.52) as i32;
             let bh = (poster.height as f32 * bw as f32 / poster.width.max(1) as f32) as i32;
             let bx = (w as i32 - bw) / 2;
-            let by = 24;
+            let by = kp(24.0);
             fb.rect(bx - 2, by - 2, bw + 4, bh + 4, Rgb::new(8, 10, 16));
             fb.rect_outline(bx - 2, by - 2, bw + 4, bh + 4, Rgb::new(110, 150, 185));
             for y in 0..bh {
@@ -10978,16 +11091,19 @@ impl App {
             } else {
                 format!("INTERMISSION  {stem}")
             };
-            fb.text_centered(
-                w as i32 / 2,
-                h as i32 - 46,
+            let color = if decoded {
+                Rgb::new(170, 220, 180)
+            } else {
+                Rgb::new(150, 160, 180)
+            };
+            self.ui_label(
+                fb,
                 &note,
-                if decoded {
-                    Rgb::new(170, 220, 180)
-                } else {
-                    Rgb::new(150, 160, 180)
-                },
-                1,
+                w as i32 / 2,
+                h as i32 - kp(50.0),
+                5.0,
+                color,
+                true,
             );
         }
 
@@ -11001,12 +11117,14 @@ impl App {
         } else {
             "ENTER: deploy   ESC: menu".to_string()
         };
-        fb.text_centered(
-            w as i32 / 2,
-            h as i32 - 26,
+        self.ui_label(
+            fb,
             &page_note,
+            w as i32 / 2,
+            h as i32 - kp(28.0),
+            5.0,
             Rgb::new(180, 195, 215),
-            1,
+            true,
         );
     }
 
@@ -11145,6 +11263,34 @@ impl App {
         fb.text_centered(w / 2, h / 2 + 100, help, Rgb::new(190, 200, 220), 1);
     }
 
+    /// Text at `size_ui` UI pixels (cap height scales with the content box)
+    /// in the HUD face, top-left or top-centred at a screen point.  The 8x8
+    /// bitmap font is the fallback when the install has no fonts.
+    #[allow(clippy::too_many_arguments)]
+    fn ui_label(
+        &mut self,
+        fb: &mut Framebuffer,
+        text: &str,
+        x: i32,
+        y: i32,
+        size_ui: f32,
+        color: Rgb,
+        centered: bool,
+    ) {
+        let px = (size_ui * self.ui_scale).max(6.0);
+        if let Some(font) = self.ui_font_info.as_mut() {
+            if centered {
+                font.draw_centered(fb, x, y, text, px, 0.0, color, None);
+            } else {
+                font.draw_top(fb, x, y, text, px, 0.0, color, None);
+            }
+        } else if centered {
+            fb.text_centered(x, y, text, color, 1);
+        } else {
+            fb.text(x, y, text, color, 1);
+        }
+    }
+
     /// Retail `gamemenu.ui.json` pause panel (264x288 at 184,32).
     fn draw_pause_menu(&mut self, fb: &mut Framebuffer) {
         let (scale, ox, oy) = self.ui_metrics(fb);
@@ -11176,21 +11322,29 @@ impl App {
         let title = self
             .maps
             .get(self.map_index)
-            .map(|m| m.name.as_str())
-            .unwrap_or("GAME MENU");
-        fb.text_centered(
-            base.x + base.w / 2,
-            base.y + (10.0 * scale) as i32,
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| "GAME MENU".to_string());
+        // Labels are sized in UI pixels (`ui_label`), so the panel reads
+        // the same at 720p as at 1440p; the 8x8 bitmap font only comes in
+        // whole-pixel sizes and was twice as large relative to the panel at
+        // 720p.
+        self.ui_label(
+            fb,
             "GAME MENU",
-            Rgb::new(255, 225, 130),
-            (1.6 * scale).round().max(1.0) as i32,
-        );
-        fb.text_centered(
             base.x + base.w / 2,
-            base.y + (36.0 * scale) as i32,
-            title,
+            base.y + (8.0 * scale) as i32,
+            13.0,
+            Rgb::new(255, 225, 130),
+            true,
+        );
+        self.ui_label(
+            fb,
+            &title,
+            base.x + base.w / 2,
+            base.y + (30.0 * scale) as i32,
+            7.0,
             Rgb::new(170, 190, 210),
-            1,
+            true,
         );
         let entries: &[(i32, &str, &str)] = &[
             (1, "ESC", "RESUME"),
@@ -11231,20 +11385,27 @@ impl App {
                     Rgb::new(80, 100, 125)
                 },
             );
-            fb.text(
-                rect.x + 10,
-                rect.y + 8,
-                &format!("{key:<4} {label}"),
-                Rgb::new(220, 228, 240),
-                1,
+            let white = Rgb::new(220, 228, 240);
+            let y = rect.y + (rect.h - (7.0 * scale) as i32) / 2;
+            self.ui_label(fb, key, rect.x + (6.0 * scale) as i32, y, 7.0, white, false);
+            self.ui_label(
+                fb,
+                label,
+                rect.x + (40.0 * scale) as i32,
+                y,
+                7.0,
+                white,
+                false,
             );
         }
-        fb.text_centered(
-            base.x + base.w / 2,
-            base.y + base.h + (8.0 * scale) as i32,
+        self.ui_label(
+            fb,
             "ESC: resume    R: restart    M: menu    Q: quit    F10: stats    F5: save    F6: replay",
+            base.x + base.w / 2,
+            base.y + base.h + (6.0 * scale) as i32,
+            6.0,
             Rgb::new(150, 170, 195),
-            1,
+            true,
         );
     }
 
@@ -12154,10 +12315,7 @@ impl App {
             self.handle_replay(window);
             return;
         }
-        let (mx, my) = window
-            .get_unscaled_mouse_pos(MouseMode::Clamp)
-            .map(|(x, y)| (x as i32, y as i32))
-            .unwrap_or((0, 0));
+        let (mx, my) = self.surface_mouse(window).unwrap_or((0, 0));
         self.drag_now = (mx, my);
         let in_view = my < self.view.1;
 
@@ -12617,7 +12775,7 @@ impl App {
         // console has see-through gaps), the 1x layer only carries creep and
         // units, and the fog is applied at screen resolution afterwards.
         let scale = self.ui_scale.max(0.5);
-        let hd = self.hd_terrain.is_some() && scale >= 2.0;
+        let hd = self.hd_terrain.is_some() && scale >= HD_WORLD_MIN_SCALE;
         let (vw, vh) = self.view;
         let vh = if hd {
             (Self::content_rect(fb_full).3 as f32 / scale).ceil() as i32
@@ -14176,16 +14334,27 @@ impl App {
 
 impl App {
     fn draw_menu_panel(
-        &self,
+        &mut self,
         fb: &mut Framebuffer,
         title: &str,
         lines: &[String],
         sel: usize,
         help: &str,
     ) {
-        let (cx, cy, cw, ch) = Self::content_rect(fb);
-        let (bx, by, bw, bh) = galaxycraft::menu::lan_panel_rect(cw, ch, lines.len());
-        let (bx, by) = (cx + bx, cy + by);
+        // `menu::lan_panel_rect` is in the 2560x1440 box space; text is in
+        // UI px (`ui_label`), so the panel keeps its look from 720p up.
+        let (cx, cy, _cw, ch) = Self::content_rect(fb);
+        let k = ch as f32 / 1440.0;
+        let px = |r: galaxycraft::menu::HitRect| {
+            (
+                cx + (r.0 * k).round() as i32,
+                cy + (r.1 * k).round() as i32,
+                (r.2 * k).round() as i32,
+                (r.3 * k).round() as i32,
+            )
+        };
+        let panel = galaxycraft::menu::lan_panel_rect(lines.len());
+        let (bx, by, bw, bh) = px(panel);
         for y in by..by + bh {
             for x in bx..bx + bw {
                 let c = fb.get(x, y);
@@ -14193,27 +14362,40 @@ impl App {
             }
         }
         fb.rect_outline(bx, by, bw, bh, Rgb::new(110, 150, 185));
-        fb.text_centered(cx + cw / 2, by + 12, title, Rgb::new(220, 230, 245), 2);
+        let s = self.ui_scale;
+        self.ui_label(
+            fb,
+            title,
+            bx + bw / 2,
+            by + (10.0 * s) as i32,
+            12.0,
+            Rgb::new(220, 230, 245),
+            true,
+        );
         for (i, line) in lines.iter().enumerate() {
-            let y = by + 44 + i as i32 * 22;
+            let (rx, ry, rw, rh) = px(galaxycraft::menu::lan_row_rect(panel, i));
             let selected = i == sel;
             if selected {
-                fb.rect(bx + 12, y - 2, bw - 24, 18, Rgb::new(36, 58, 82));
-                fb.rect_outline(bx + 12, y - 2, bw - 24, 18, Rgb::new(100, 190, 255));
+                fb.rect(rx, ry, rw, rh, Rgb::new(36, 58, 82));
+                fb.rect_outline(rx, ry, rw, rh, Rgb::new(100, 190, 255));
             }
-            fb.text(
-                bx + 24,
-                y,
-                line,
-                if selected {
-                    Rgb::new(255, 245, 180)
-                } else {
-                    Rgb::new(190, 200, 215)
-                },
-                1,
-            );
+            let color = if selected {
+                Rgb::new(255, 245, 180)
+            } else {
+                Rgb::new(190, 200, 215)
+            };
+            let ty = ry + (rh - (8.0 * s) as i32) / 2;
+            self.ui_label(fb, line, rx + (4.0 * s) as i32, ty, 8.0, color, false);
         }
-        fb.text_centered(cx + cw / 2, by + bh - 20, help, Rgb::new(150, 170, 195), 1);
+        self.ui_label(
+            fb,
+            help,
+            bx + bw / 2,
+            by + bh - (16.0 * s) as i32,
+            7.0,
+            Rgb::new(150, 170, 195),
+            true,
+        );
     }
 
     fn draw_main_full(&mut self, fb: &mut Framebuffer) {
@@ -14491,11 +14673,9 @@ impl App {
                 } else {
                     self.lan.entries.len()
                 };
-                let panel = m::lan_panel_rect(cw, ch, lines);
+                let panel = m::lan_panel_rect(lines);
                 for i in 0..lines {
-                    let r = m::lan_row_rect(panel, i);
-                    let r = (r.0 + cx as f32, r.1, r.2, r.3);
-                    if inside(r) {
+                    if inside(m::lan_row_rect(panel, i)) {
                         return Some(MenuHit::Row(i));
                     }
                 }
@@ -16509,14 +16689,18 @@ impl App {
             let type_x = cx + (cw as f32 * 0.2461) as i32;
             let race_x = cx + (cw as f32 * (910.0 / 2560.0)) as i32;
             let arrow_x = cx + (cw as f32 * 0.5078) as i32;
+            // Insets and the stepped arrow are 1440p pixels scaled with the
+            // box (`px`), so the slot rows keep their look from 720p up.
+            let off = |v: i32| (v as f32 * ch as f32 / 1440.0).round() as i32;
+            let px = |v: i32| off(v).max(1);
             for (x0, x1) in [
-                (name_x - 10, type_x - 12),
-                (type_x - 6, race_x - 12),
-                (race_x - 8, slots.0 + sw - 10),
+                (name_x - off(10), type_x - off(12)),
+                (type_x - off(6), race_x - off(12)),
+                (race_x - off(8), slots.0 + sw - off(10)),
             ] {
                 fb.rect_outline(
                     x0,
-                    y - 2,
+                    y - off(2),
                     (x1 - x0).max(1),
                     (ch as f32 * 0.031) as i32,
                     CSS_INNER,
@@ -16527,10 +16711,10 @@ impl App {
             for ax in [type_x, arrow_x] {
                 for k in 0..3 {
                     fb.rect(
-                        ax + k,
-                        y + (3.0 * scale) as i32 + k,
-                        (9 - k * 2) * 2,
-                        2,
+                        ax + off(k),
+                        y + (3.0 * scale) as i32 + off(k),
+                        px((9 - k * 2) * 2),
+                        px(2),
                         Rgb::new(220, 200, 40),
                     );
                 }
@@ -20192,5 +20376,59 @@ mod main_menu_hover_tests {
         assert_eq!(label_drop_shadow(3.0), (3, Rgb::new(0, 0, 0)));
         assert_eq!(label_drop_shadow(2.0).0, 2);
         assert_eq!(label_drop_shadow(0.4).0, 1);
+    }
+}
+
+#[cfg(test)]
+mod letterbox_tests {
+    use super::{Framebuffer, VIEW_H, VIEW_W, letterbox, present_into, surface_point};
+
+    #[test]
+    fn sixteen_by_nine_and_ultrawide_draw_at_the_window_size() {
+        for (w, h) in [
+            (1280, 720),
+            (1920, 1080),
+            (2560, 1440),
+            (3440, 1440),
+            (2560, 1080),
+        ] {
+            assert_eq!(letterbox(w, h), (w, h, 0, 0), "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn narrow_windows_letterbox_a_sixteen_by_nine_surface() {
+        // The reported window (2026-11-05): 1277x954.
+        assert_eq!(letterbox(1277, 954), (1277, 718, 0, 118));
+        assert_eq!(letterbox(1280, 960), (1280, 720, 0, 120));
+        assert_eq!(letterbox(1920, 1200), (1920, 1080, 0, 60));
+        for (w, h) in [(1277, 954), (1024, 768), (1920, 1200), (1280, 1024)] {
+            let (iw, ih, ox, oy) = letterbox(w, h);
+            assert_eq!(iw, w);
+            assert!((iw as f32 / ih as f32 - 16.0 / 9.0).abs() < 0.01, "{w}x{h}");
+            assert_eq!(ox, 0);
+            assert!(oy >= 0 && oy as usize + ih <= h);
+        }
+    }
+
+    #[test]
+    fn the_default_window_is_720p() {
+        assert_eq!((VIEW_W, VIEW_H), (1280, 720));
+        assert_eq!(letterbox(VIEW_W, VIEW_H).3, 0);
+    }
+
+    #[test]
+    fn presenting_adds_black_bars_and_the_pointer_follows_the_surface() {
+        let mut inner = Framebuffer::new(4, 2);
+        inner.pixels.fill(0x00ff_ffff);
+        let mut out = Vec::new();
+        present_into(&inner, 4, 6, (0, 2), &mut out);
+        assert_eq!(out.len(), 24);
+        assert!(out[..8].iter().all(|&p| p == 0), "top bar");
+        assert!(out[8..16].iter().all(|&p| p == 0x00ff_ffff), "surface");
+        assert!(out[16..].iter().all(|&p| p == 0), "bottom bar");
+        // A click on the first surface row lands on surface row 0.
+        assert_eq!(surface_point((0, 2), 3, 2), (3, 0));
+        assert_eq!(surface_point((0, 118), 640, 477), (640, 359));
     }
 }

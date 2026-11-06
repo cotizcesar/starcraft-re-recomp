@@ -4,6 +4,22 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — 720p and up, 16:9 and ultrawide
+
+### Fixed
+- Windows narrower than 16:9 (4:3, 16:10) letterbox the 16:9 view instead
+  of cutting off its right side (Select Connection's Ok / Cancel at 1277x954).
+- Below 1080p the game drew the SD sprites and fog; it now uses the HD art
+  from 720p up.
+- Captures at sizes other than the default framed the map from a stale camera.
+- The pause panel, LAN panel, briefing fallback and lobby slot arrows keep
+  their proportions at every size.
+
+### Changed
+- The default window is 1280x720 (was 1280x960).
+- `scripts/resolution_diff.py` checks every screen from 720p to 4K,
+  ultrawide and letterboxed sizes against its 1440p layout.
+
 ## 2026-11-05 — Main menu hover, View Intro and modal fixes
 
 ### Fixed

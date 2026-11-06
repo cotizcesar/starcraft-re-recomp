@@ -1125,21 +1125,21 @@ pub const OPTIONS_CHECKS_NETWORK: [HitRect; 1] = [(900.0, 341.0, 430.0, 29.0)];
 
 /// LAN panel geometry (dev lockstep screen): the plate is 360 UI px wide,
 /// 60 + 22*lines tall, centred in the content box; rows are 18 px high.
-pub fn lan_panel_rect(content_w: i32, content_h: i32, lines: usize) -> (i32, i32, i32, i32) {
-    let scale = content_h.max(1) as f32 / 480.0;
-    let bw = (360.0 * scale) as i32;
-    let bh = 60 + lines as i32 * 22;
-    ((content_w - bw) / 2, (content_h - bh) / 2, bw, bh)
+/// LAN panel in the 2560x1440 content-box space every other `HitRect`
+/// uses, so drawing and hit-testing agree at any window size: 360 UI px
+/// wide, a 36 UI px title band, one 14 UI px row per line and a 22 UI px
+/// help band, centred.  It used fixed screen pixels for the height and rows,
+/// which shrank the panel relative to the box below 1440p, and the hit test
+/// then scaled those pixels again.
+pub fn lan_panel_rect(lines: usize) -> HitRect {
+    let (w, h) = (1080.0, 108.0 + 42.0 * lines as f32 + 66.0);
+    ((2560.0 - w) / 2.0, ((1440.0 - h) / 2.0).round(), w, h)
 }
 
-pub fn lan_row_rect(panel: (i32, i32, i32, i32), i: usize) -> HitRect {
-    let (bx, by, bw, _) = panel;
-    (
-        (bx + 12) as f32,
-        (by + 44 + i as i32 * 22 - 2) as f32,
-        (bw - 24) as f32,
-        18.0,
-    )
+/// Row `i` of [`lan_panel_rect`] (same space).
+pub fn lan_row_rect(panel: HitRect, i: usize) -> HitRect {
+    let (x, y, w, _) = panel;
+    (x + 36.0, y + 108.0 + 42.0 * i as f32, w - 72.0, 42.0)
 }
 
 /// Lobby slot rows: the race cell of each of the eight player rows, measured
@@ -1934,12 +1934,17 @@ mod tests {
 
     #[test]
     fn lan_rows_are_clickable_inside_the_panel() {
-        let panel = lan_panel_rect(2560, 1440, 4);
-        assert_eq!(panel.2, 1080);
+        let panel = lan_panel_rect(4);
+        assert_eq!(panel.2, 1080.0);
+        assert_eq!(panel.0 + panel.2 / 2.0, 1280.0, "centred in the box");
         let row = lan_row_rect(panel, 2);
-        assert!(row.0 >= panel.0 as f32 && row.0 + row.2 <= (panel.0 + panel.2) as f32);
-        assert!(row.1 >= panel.1 as f32);
-        let next = lan_row_rect(panel, 3);
-        assert_eq!(next.1 - row.1, 22.0);
+        assert!(row.0 >= panel.0 && row.0 + row.2 <= panel.0 + panel.2);
+        assert!(row.1 >= panel.1);
+        let last = lan_row_rect(panel, 3);
+        assert!(
+            last.1 + last.3 <= panel.1 + panel.3,
+            "rows inside the panel"
+        );
+        assert_eq!(last.1 - row.1, 42.0, "14 UI px pitch at 3x");
     }
 }

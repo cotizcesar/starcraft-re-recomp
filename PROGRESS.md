@@ -17,7 +17,7 @@ restating status.
 |---|---:|---:|---:|---:|
 | [Simulation rules](#simulation-rules) | 25 | 16 | 17 | 94 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
-| [Front end (menus)](#front-end-menus) | 10 | 8 | 9 | 89 % |
+| [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
 | [In-game client](#in-game-client) | 10 | 6 | 8 | 75 % |
 | [Persistence](#persistence) | 5 | 4 | 5 | 80 % |
@@ -25,7 +25,7 @@ restating status.
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **67** | **84** | **80 %** |
+| **Overall (weighted)** | **100** | **68** | **85** | **80 %** |
 
 _Last updated: 2026-11-05_
 <!-- progress:summary:end -->
@@ -80,6 +80,7 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] View Intro asks Original / Expansion and plays that title movie; leaving the main menu plays only the click — `scripts/menu_walkthrough.py` (`view_intro_check`), `engine-rust/docs/gates/menu-walkthrough-run.txt`, session log 2026-11-05 (102)
 - [x] Saved Games and Replays browsers — `engine-rust/docs/replays.md`
 - [x] 16:9 to 4K and ultrawide: every screen pillarboxed, pixel-identical to 16:9 (31/31) — `engine-rust/docs/gates/ultrawide-diff.txt`
+- [x] Every screen keeps its 1440p layout from 1280x720 up (16:9, ultrawide); windows narrower than 16:9 are letterboxed (245/245) — `scripts/resolution_diff.py`, `engine-rust/docs/gates/resolution-diff.txt`
 - [x] Menu frame time under 20 ms at 3440x1440 — `engine-rust/docs/gates/menu-draw-time.txt`
 - [x] Retail multiplayer front end: Select Connection → Registry → Games → Create (map browser, 13 game types, teams, speed) → 8-slot lobby → countdown → game, each step within 2.0–3.6 grey levels of the recording — `scripts/mp_flow_gate.py`, `engine-rust/docs/gates/mp-flow.txt`
 - [ ] Special rules of Greed, Slaughter, Capture the Flag and Sudden Death (the types are selectable; their rules are not applied)

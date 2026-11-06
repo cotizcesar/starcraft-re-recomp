@@ -24,6 +24,11 @@ SC_NO_AUDIO=1 cargo run --release --bin sc_view -- --install "$SC_INSTALL" \
   --shot /tmp/pause.bmp --shot-screen pause
 ```
 
+Supported window sizes: 16:9 from 1280x720 (the default) upwards, and
+ultrawide (pillarboxed). A window narrower than 16:9 (4:3, 16:10) shows the
+16:9 view letterboxed between black bars. `--width` / `--height` set the
+window or capture size.
+
 Without `--install`, `sc_view` and `sc_assets` look in the platform's usual
 folders (Battle.net default, Wine/Proton prefixes) or use `SC_INSTALL`.  The
 first run materialises what the client needs into

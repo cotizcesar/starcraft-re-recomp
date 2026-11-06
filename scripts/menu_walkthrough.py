@@ -55,8 +55,8 @@ SCRIPT = ",".join(
         "move:1103:618",                    # Game Type: hover Original
         "key:L",                            # LAN screen
         "fixture:lan-peer", "fixture:lan-peer",  # two discovered peers
-        "move:1000:763", "click",           # select Peer2
-        "move:1000:763", "click",           # join it (connection refused)
+        "move:1000:804", "click",           # select Peer2 (row 3 of `menu::lan_panel_rect`)
+        "move:1000:804", "click",           # join it (connection refused)
         "key:Escape",                       # back to Game Type
         "move:1103:618", "click",           # Original -> Select Connection
         "wait-draw:900",                    # plates swish in

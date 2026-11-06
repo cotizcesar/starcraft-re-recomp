@@ -5218,3 +5218,40 @@ replicated.
 
 **Verification.**  `cargo test` 35 result lines, 0 failed; clippy and
 `fmt --check` clean.  Measurement scripts were local (`/var/tmp/svtools/clip_rate.py`).
+
+## 2026-11-05 (104) — 720p and up, 16:9 and ultrawide: letterbox narrow windows, HD world below 1080p, scale-free overlays
+
+The user reported Select Connection cut off on the right in a 1277x954
+window and asked for 16:9 from 720p upwards plus ultrawide.
+
+- **Cause (FACT).**  `content_rect` keeps the full window height and clips
+  the width, so any window narrower than 16:9 lost the right side of the
+  16:9 layout.  The default window was 1280x960 (4:3).
+- **Change.**  `letterbox(w, h)`: windows at 16:9 or wider draw at the window
+  size (pillarboxed as before); narrower windows draw a 16:9 surface that
+  fits the width, presented between black bars (`present_into`).  The
+  pointer and `--menu-script` moves are mapped through `surface_point`.
+  Default window 1280x720.  Smallest supported size: 1280x720.
+- **New gate `scripts/resolution_diff.py`.**  Every ultrawide-gate screen plus
+  the four multiplayer screens, at 1280x720, 1600x900, 1920x1080, 3440x1440,
+  2560x1080, 1277x954 and 1920x1200.  Each is compared with the 2560x1440
+  render scaled to its content box, both on a blurred 640x360 grid (mean
+  limit 3.0), and the bars must be black.  The previous build fails 1277x954
+  (means 13.9-32.3, bars 234-255).
+- **What the gate found below 1080p (FACT), fixed.**  (1) The world used the
+  SD sprites and the 1x fog below UI scale 2.0 (`HD_WORLD_MIN_SCALE` now
+  1.0); in-game means 9-10 → about 1.0.  (2) Shots computed `load_map`'s start
+  camera from the default window's view; `update_view` now runs as soon as
+  the surface exists.  (3) The pause panel, LAN panel and briefing fallback
+  used whole-pixel bitmap text and fixed pixel offsets.  They now use
+  `ui_label` (TrueType, UI px) and offsets scaled from 1440p.  The LAN panel
+  moved to the 2560x1440 `HitRect` space, which also fixes its hit test
+  (it scaled screen pixels twice and added `cx` twice).  (4) The lobby slot
+  arrows and row insets were fixed pixels.
+- **Result.**  `resolution-diff.txt` 245/245.  `ultrawide-diff.txt` 31/31,
+  `ui-visual-diff.txt` 51/51 and `menu-hover-text.txt` 14/14 came out
+  byte-identical to the committed outputs (1440p unchanged).  The walkthrough
+  passes after its LAN row click moved to the new row (y 763 → 804).
+
+**Verification.**  `cargo test` 35 result lines, 0 failed; clippy and
+`fmt --check` clean; unit tests `letterbox_tests` (4), `lan_rows_are_clickable_inside_the_panel`.
