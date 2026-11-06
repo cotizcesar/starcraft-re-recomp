@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 13 | 18 | 72 % |
+| [In-game client](#in-game-client) | 10 | 14 | 19 | 74 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **79** | **99** | **80 %** |
+| **Overall (weighted)** | **100** | **80** | **100** | **80 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -119,7 +119,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Mouse and keyboard act on the world at every UI scale: click and box selection (own units, units over buildings, 12 max), retail right click (attack enemies, workers gather, others move, buildings set rally), the retail command card and its tooltip hotkeys, build cards, placement, training, target buttons — `scripts/game_input_gate.py`, `engine-rust/docs/gates/game-input.txt`
 - [x] In-game frame under 8 ms at 3440x1440 (was 181 ms): baked sprite shading, row-sliced terrain / fog / stretch on parallel bands, cached console plates and minimap — `engine-rust/docs/gates/ingame-draw-time.txt`, `hd_sprites::tests::baked_frames_match_the_per_pixel_shader`
 - [x] Selection panel as retail: rank (`units.dat` sublabel), kills, armour / weapon upgrade boxes, the production queue with its progress bar (`pbrempt` / `pbrfull`), Under Construction, research and upgrade progress — `statdata.ui.json` controls, Backwater Station 126 s
-- [ ] Multi-selection panel (12 wireframes in `statdata` 33-44) and transport cargo slots
+- [x] Multi-selection panel as on the Wasteland recording: `statdata` 33-44 (6 x 2, column-major), `cmdbtns` box 13 (19 for heroes), wireframes; box selection ordered left to right; click keeps one unit, Shift+click drops it — `scripts/game_input_gate.py`, session log 2026-11-06 (110)
+- [ ] Transport / Bunker cargo slots in the selection panel
 - [ ] Remaining command-card actions: Cancel construction, spells with a target (only Stim Packs and siege are wired), the Land placement preview
 - [x] The four Episode I missions are won through input alone at 720p / 1080p / 3440x1440: Boot Camp (depots, Refinery, 100 gas; tick 6,542), Wasteland (Raynor, Barracks, 10 Marines; 7,320), Backwater Station (Infested CC destroyed; 9,728), Desperate Alliance (countdown survived, calm opening as recorded; 29,025) — `scripts/mission_gate.py`, `engine-rust/docs/gates/mission-gate.txt`
 - [x] Units no longer leave the map while chasing, idle units fight back, groups arrive through shared path corners, SCVs walk to build sites at full speed — `tests/reconstruction.rs` (`a_chasing_unit_walks_to_its_target_and_stays_on_the_map`, `an_idle_unit_that_is_shot_fights_back`, `a_group_move_through_one_corner_arrives_and_goes_idle`, `an_scv_walks_to_its_build_site_at_full_speed`)

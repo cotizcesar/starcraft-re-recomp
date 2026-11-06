@@ -5,8 +5,8 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)"]
-open: 2
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)"]
+open: 1
 ---
 
 ## Goal
@@ -25,7 +25,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - [x] Boot Camp playthrough in `mission_gate.py`. Closed 2026-11-06: `mission-gate.txt` (tick 6,542).
 - [x] Backwater Station playthrough. Closed 2026-11-06: `mission-gate.txt` (tick 9,728), depletion fix.
 - [x] Desperate Alliance playthrough. Closed 2026-11-06: `mission-gate.txt` (tick 29,025), AI wave fix.
-- [ ] Multi-selection panel (see [[2026-11-05-ingame-input-card-buildtimes-perf]]).
+- [x] Multi-selection panel (see [[2026-11-05-ingame-input-card-buildtimes-perf]]). Closed 2026-11-06: session log (110), `game_input_gate.py`.
 
 ## FACT vs INFERENCE
 - FACT: each bug traced with `dump-units` (positions, orders, anim state).

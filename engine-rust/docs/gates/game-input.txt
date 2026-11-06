@@ -11,4 +11,6 @@ PASS box selection keeps units over buildings
 PASS right click on minerals does not attack
 PASS M waits for a target
 PASS the world click moves the SCV
+PASS Shift+click on a group slot drops that unit
+PASS a click on a group slot keeps only that unit
 game input gate: 0 failure(s) at 3440x1440 (minerals 150 -> 50)

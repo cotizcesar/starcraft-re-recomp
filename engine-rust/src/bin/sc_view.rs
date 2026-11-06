@@ -3200,6 +3200,12 @@ struct WeldPose {
     spark_frame: usize,
 }
 
+/// `units.dat` flag of hero units (Jim Raynor: 0x40 over the plain unit).
+const UNIT_FLAG_HERO: u32 = 0x40;
+/// `cmdbtns` frames of the multi-selection boxes.
+const GROUP_BOX: usize = 13;
+const GROUP_BOX_HERO: usize = 19;
+
 /// iscript animation of a Terran building past its scaffold.
 const ALMOST_BUILT_ANIM: usize = 15;
 
@@ -5031,6 +5037,17 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             "click-world" => {
                 let at = app.screen_point_of_world(num(1), num(2));
                 mouse = click(app, fb, at, false, false);
+            }
+            "click-slot" | "shift-click-slot" => {
+                // Multi-selection slot N (0..11).
+                let r = app.group_slot_rect(num(1).max(0) as usize);
+                mouse = click(
+                    app,
+                    fb,
+                    (r.x + r.w / 2, r.y + r.h / 2),
+                    false,
+                    parts[0] == "shift-click-slot",
+                );
             }
             "click-cmd" => {
                 let slots = app.command_slots();
@@ -13385,8 +13402,24 @@ impl App {
         let lmb = input.lmb;
         if lmb && !self.lmb_down && !in_view {
             let slots = self.command_slots();
+            let group_slot = if self.selected.len() > 1 {
+                (0..self.selected.len().min(12)).find(|&n| self.group_slot_rect(n).contains(mx, my))
+            } else {
+                None
+            };
             if let Some(index) = slots.iter().position(|r| r.contains(mx, my)) {
                 self.activate_command(index);
+            } else if let Some(n) = group_slot {
+                // Retail group panel: a click keeps only that unit, a
+                // Shift+click drops it from the selection.
+                let id = self.selected[n];
+                if input.shift {
+                    self.selected.remove(n);
+                } else {
+                    self.selected = vec![id];
+                }
+                self.refresh_commands();
+                self.play_selected();
             } else if let Some(rect) = self
                 .console
                 .as_ref()
@@ -13476,6 +13509,16 @@ impl App {
                     })
                     .map(|u| (u.id, self.data.unit(u.type_id).is_building()))
                     .collect();
+                // Left edge first, like retail's x-sorted unit finder
+                // (Wasteland recording 84 s: the five SCVs at x 56-132 come
+                // before the five Marines at x 172-209 in the group panel).
+                let mut inside = inside;
+                inside.sort_by_key(|(id, _)| {
+                    self.world.unit(*id).map_or((0, 0), |u| {
+                        let left = self.data.unit(u.type_id).dimensions.left as i32;
+                        (u.x / 256 - left, u.y / 256)
+                    })
+                });
                 let any_unit = inside.iter().any(|(_, b)| !b);
                 let picked: Vec<u32> = inside
                     .iter()
@@ -14676,6 +14719,10 @@ impl App {
         let Some(u) = self.first_selected().cloned() else {
             return;
         };
+        if self.selected.len() > 1 {
+            self.draw_hud_group(fb);
+            return;
+        }
         if self.selected.len() != 1 {
             return;
         }
@@ -15134,6 +15181,61 @@ impl App {
                 h,
             );
         }
+    }
+
+    /// Multi-selection panel: `statdata` controls 33-44, a 6 x 2 grid filled
+    /// column by column (Wasteland recording 84-116 s: five Marines fill
+    /// three on top, two below).  Each slot is a `cmdbtns` box (frame 13,
+    /// dark blue; 19, white, for heroes: Jim Raynor at 100 s) holding the
+    /// unit's wireframe.  INFERENCE: the HD wireframe scaled into the box
+    /// stands in for `grpwire`; falsifier: a pixel diff against the slots.
+    fn draw_hud_group(&mut self, fb: &mut Framebuffer) {
+        let units: Vec<SimUnit> = self
+            .selected
+            .iter()
+            .filter_map(|id| self.world.unit(*id).cloned())
+            .take(12)
+            .collect();
+        let k = self.content_box.3 as f32 / 1440.0;
+        for (n, u) in units.iter().enumerate() {
+            let r = self.group_slot_rect(n);
+            let ty = self.data.unit(u.type_id).clone();
+            let Some(console) = &self.console else {
+                return;
+            };
+            let box_frame = if ty.flags & UNIT_FLAG_HERO != 0 {
+                GROUP_BOX_HERO
+            } else {
+                GROUP_BOX
+            };
+            if let Some(img) = console
+                .command_buttons_hd
+                .as_ref()
+                .and_then(|g| g.frame(box_frame))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+            }
+            let side = (r.w.min(r.h) as f32 * 0.86).round() as i32;
+            let rect = (r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, side);
+            let zerg = ty.group_flags & 0x01 != 0;
+            if !console.draw_wireframe_hd(fb, u.type_id, rect, zerg, ty.has_shields) {
+                console.draw_wireframe(fb, u.type_id, rect, None);
+            }
+        }
+    }
+
+    /// Screen rect of multi-selection slot `n` (0..12): `statdata` control
+    /// 33 + n (column-major).
+    fn group_slot_rect(&self, n: usize) -> UiRect {
+        let col = (n / 2) as i32;
+        let row = (n % 2) as i32;
+        self.hud_control(
+            "statdata",
+            33 + n as i32,
+            UiRect::new(168 + 36 * col, 396 + 37 * row, 33, 34),
+        )
     }
 
     /// The selection panel's state block (shipped `statdata.ui.json`
