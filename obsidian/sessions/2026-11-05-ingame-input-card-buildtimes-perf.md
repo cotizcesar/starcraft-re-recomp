@@ -6,7 +6,7 @@ type: session
 source: opencode
 area: in-game
 log: ["2026-11-05 (105)", "2026-11-05 (106)"]
-open: 3
+open: 2
 ---
 
 ## Goal
@@ -25,7 +25,7 @@ Make Boot Camp playable: frame rate, selection, orders, building (user report). 
 
 ## Pending
 - [x] Terran construction graphics (scaffold, rising building, welding sparks). Closed 2026-11-06: session log (109), `scaffold_frames_switch_at_the_recorded_progress_marks`.
-- [ ] Multi-selection panel and cargo slots.
+- [x] Multi-selection panel. Closed 2026-11-06: session log (110). Cargo slots stay open in PROGRESS.md.
 - [x] SCV stays on its Terran building until it completes. Closed 2026-11-05: `a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`.
 - [x] Mineral delivery distance (~320 px from the CC on Boot Camp). Closed 2026-11-05: falsified, session log (106) (the mineral line is ~330 px away).
 - [ ] Cancel construction, targeted spells, Land preview on the card.

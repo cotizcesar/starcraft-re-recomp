@@ -11,7 +11,8 @@ each step's state line (`game.tsv`) is checked:
 3. the Command Center trains an SCV in its retail 300 frames;
 4. a box over units and the Command Center keeps only the units;
 5. a right click on minerals never attacks them, and M (Move) waits for a
-   target that a world click then gives.
+   target that a world click then gives;
+6. in the group panel Shift+click drops a unit and a click keeps only it.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -46,6 +47,9 @@ SCRIPT = [
     "click-unit:SCV",          # 12
     "key:M",                   # 13 Move waits for a target
     "click-view:40:40",        # 14 the click gives it
+    "drag:10:5:1910:700",      # 15 a group again
+    "shift-click-slot:0",      # 16 Shift+click drops slot 0
+    "click-slot:1",            # 17 a click keeps only that unit
 ]
 
 
@@ -99,6 +103,10 @@ def main() -> int:
     check(field(st[11], "status") != '"Attacking"', "right click on minerals does not attack")
     check(field(st[13], "target").startswith("Some((Move"), "M waits for a target")
     check("order=Move" in st[14] and field(st[14], "target") == "None", "the world click moves the SCV")
+    group = lambda i: [x for x in field(st[i], "selected").strip("[]").split("+") if x]  # noqa: E731
+    check(len(group(16)) == len(group(15)) - 1 and len(group(15)) > 2,
+          "Shift+click on a group slot drops that unit")
+    check(len(group(17)) == 1, "a click on a group slot keeps only that unit")
     print(f"\ngame input gate: {len(failures)} failure(s) at {args.size} (minerals {minerals(4)} -> {minerals(5)})")
     return 1 if failures else 0
 

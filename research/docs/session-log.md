@@ -5475,3 +5475,27 @@ clippy / fmt clean; `game_input_gate.py` 0 failures; `ui_visual_diff` 51/51
 (new `scaffold_frames_switch_at_the_recorded_progress_marks`); clippy / fmt
 clean; `game_input_gate.py` 0 failures; `ui_visual_diff` 51/51, no screen
 moved by more than 0.05.
+
+## 2026-11-06 (110) — Multi-selection panel as recorded
+
+- **Layout (FACT, `statdata.ui.json` + Wasteland recording 84-116 s).**
+  Controls 33-44 are 33x34 UI px slots on a 36 px pitch, 6 columns x 2 rows
+  with ids column-major (33 top-left, 34 below it).  Five Marines fill three
+  slots on top and two below, as recorded.  Boxes are `cmdbtns.dds.grp`
+  frame 13 (dark blue); Jim Raynor's slot is white (frames 19-24), so hero
+  units (units.dat flag `0x40`, set on Raynor and not on the plain
+  Vulture / Marine) use frame 19 (INFERENCE that white means hero;
+  falsifier: a non-hero unit in a white box).  The HD wireframe is drawn
+  scaled into the box (INFERENCE standing in for `grpwire.dds.grp`, which
+  exists in the install but is not materialized and needs the wireframe
+  colour remap).
+- **Order (FACT).**  Retail lists the five SCVs (x 56-132) before the five
+  Marines (x 172-209) after a box selection: box selections are now
+  ordered by the unit's left edge (INFERENCE: BW's unit finder is x-sorted).
+- **Input.**  A click on a slot keeps only that unit, Shift+click drops it;
+  `--game-script` steps `click-slot:N` / `shift-click-slot:N`.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720 and
+3440x1440 (two new checks); `mission_gate.py` 0 failures; `ui_visual_diff`
+51/51, no screen moved by more than 0.05.
