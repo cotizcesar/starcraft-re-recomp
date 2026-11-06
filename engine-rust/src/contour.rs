@@ -477,94 +477,225 @@ impl Contours {
         }
     }
 
-    /// `0x75e0e0`: the up-right quadrant's corner sweep after a node step.
-    /// Band A (the node's row up to the up limit, the node's column to the
-    /// right reach) finds the nearest up-facing wall and walks its segments
-    /// leftwards, emitting a candidate one pixel outside each end
-    /// (`FUN_0075db50`, extents `+0x30`); band B (above A) does the same
-    /// with right-facing walls downwards.  Returns (point, mask) candidates
-    /// in the client's emission order.  INFERENCE where the decompile loses
-    /// control flow: band B's segment walk stops like band A's.
+    /// `0x75e0e0`: the up-right quadrant's corner sweep (quadrant bit 1).
     pub fn sweep_up_right(
         &self,
         m: &Mover,
         node: (i32, i32),
         step: &NodeStep,
     ) -> Vec<((i32, i32), u8)> {
-        let (x, y) = node;
-        let (_, top, right, _) = step.reach;
+        self.sweep(m, node, step, 1)
+    }
+
+    /// The corner sweep of one quadrant (bit 1 up-right `0x75e0e0`, 2
+    /// down-right `0x75eb90`, 4 down-left `0x75e650`, 8 up-left inline in
+    /// `FUN_0075f0f0`).  The four are mirror images (their emitted masks
+    /// are the up-right ones with directions mirrored, e.g. 0xe7 -> 0xee and
+    /// 0xdd -> 0x7b for up-left), so this runs the up-right sweep in a
+    /// mirrored frame (sx, sy).  Up-right: band A (the node's row up to the
+    /// up limit, the node's column to the right reach) finds the nearest
+    /// up-facing wall and walks its segments leftwards, emitting a candidate
+    /// one pixel outside each end (`FUN_0075db50`, extents `+0x30`); band B
+    /// (above A) does the same with right-facing walls downwards.  Returns
+    /// (point, mask) candidates in emission order.  INFERENCE where the
+    /// decompile loses control flow: band B's segment walk stops like band
+    /// A's.
+    pub fn sweep(
+        &self,
+        m: &Mover,
+        node: (i32, i32),
+        step: &NodeStep,
+        quadrant: u8,
+    ) -> Vec<((i32, i32), u8)> {
+        let (sx, sy): (i32, i32) = match quadrant {
+            1 => (1, 1),
+            2 => (1, -1),
+            4 => (-1, -1),
+            _ => (-1, 1),
+        };
         let e = m.ext.map(i32::from);
         let e30 = [e[0] + 1, e[1] - 1, e[2] - 1, e[3] + 1];
-        let norm = |s: &Segment| {
+        // World <-> frame.  In the frame "up" is world up when sy = 1 and
+        // world down when sy = -1; "right" likewise with sx.
+        let fp_ = |p: (i32, i32)| (sx * p.0, sy * p.1);
+        let span = |s: i32, a: i32, b: i32| if s > 0 { (a, b) } else { (-b, -a) };
+        let widened = |s: &Segment| {
             (
-                s.pos as i32 + e30[s.facing as usize & 3],
-                s.start as i32 + e30[(s.flags & 3) as usize],
-                s.end as i32 + e30[(s.flags >> 2 & 3) as usize],
+                e[(s.flags & 3) as usize] + s.start as i32,
+                e[(s.flags >> 2 & 3) as usize] + s.end as i32,
             )
         };
-        let index_of =
-            |list: &Vec<Segment>, seg: &Segment| list.iter().position(|q| std::ptr::eq(q, seg));
-        let mut out = Vec::new();
+        // (frame pos, frame start, frame end) one pixel outside the wall.
+        let vnorm = |s: &Segment| {
+            let (a, b) = (
+                s.start as i32 + e30[(s.flags & 3) as usize],
+                s.end as i32 + e30[(s.flags >> 2 & 3) as usize],
+            );
+            let (fa, fb) = span(sx, a, b);
+            (sy * (s.pos as i32 + e30[s.facing as usize & 3]), fa, fb)
+        };
+        let hnorm = |s: &Segment| {
+            let (a, b) = (
+                s.start as i32 + e30[(s.flags & 3) as usize],
+                s.end as i32 + e30[(s.flags >> 2 & 3) as usize],
+            );
+            let (fa, fb) = span(sy, a, b);
+            (sx * (s.pos as i32 + e30[s.facing as usize & 3]), fa, fb)
+        };
+        let vlist = if sy > 0 { 0 } else { 2 };
+        let hlist = if sx > 0 { 1 } else { 3 };
+        // Frame lookups: the nearest frame-up wall at or above frame row y
+        // over frame columns x0..=x1, not above `limit`; frame-right alike.
+        let vlook = |y: i32, x0: i32, x1: i32, limit: i32| {
+            let (w0, w1) = span(sx, x0, x1);
+            let r = if sy > 0 {
+                self.up(m, y, w0, w1, limit)
+            } else {
+                self.down(m, -y, w0, w1, -limit)
+            };
+            r.map(|seg| {
+                (
+                    self.lists[vlist].iter().position(|q| std::ptr::eq(q, seg)),
+                    *seg,
+                )
+            })
+        };
+        let hlook = |x: i32, y0: i32, y1: i32, limit: i32| {
+            let (w0, w1) = span(sy, y0, y1);
+            let r = if sx > 0 {
+                self.right(m, x, w0, w1, limit)
+            } else {
+                self.left(m, -x, w0, w1, -limit)
+            };
+            r.map(|seg| {
+                (
+                    self.lists[hlist].iter().position(|q| std::ptr::eq(q, seg)),
+                    *seg,
+                )
+            })
+        };
+        // Neighbour on the same line toward smaller frame start (band A) /
+        // larger frame start (band B).
+        let step_idx = |idx: usize, toward_larger_world: bool, len: usize| -> Option<usize> {
+            if toward_larger_world {
+                (idx + 1 < len).then_some(idx + 1)
+            } else {
+                idx.checked_sub(1)
+            }
+        };
+        // The corner flag of a segment's frame end / frame start.
+        let end_flag = |s: &Segment, sgn: i32| {
+            if sgn > 0 {
+                s.flags & 0x20
+            } else {
+                s.flags & 0x10
+            }
+        };
+        let start_flag = |s: &Segment, sgn: i32| {
+            if sgn > 0 {
+                s.flags & 0x10
+            } else {
+                s.flags & 0x20
+            }
+        };
+        // Direction bits 0x10 up, 0x20 right, 0x40 down, 0x80 left and
+        // quadrant bits 1 UR, 2 DR, 4 DL, 8 UL, mirrored with the frame.
+        let map_mask = |mk: u8| -> u8 {
+            let flip = |bit: u8| -> u8 {
+                let b = match (bit, sx < 0) {
+                    (0x20, true) => 0x80,
+                    (0x80, true) => 0x20,
+                    (1, true) => 8,
+                    (8, true) => 1,
+                    (2, true) => 4,
+                    (4, true) => 2,
+                    (b, _) => b,
+                };
+                match (b, sy < 0) {
+                    (0x10, true) => 0x40,
+                    (0x40, true) => 0x10,
+                    (1, true) => 2,
+                    (2, true) => 1,
+                    (4, true) => 8,
+                    (8, true) => 4,
+                    (b, _) => b,
+                }
+            };
+            (0..8)
+                .map(|i| 1u8 << i)
+                .filter(|b| mk & b != 0)
+                .fold(0, |o, b| o | flip(b))
+        };
+        let (x, y) = fp_(node);
+        let (l, t, r, b) = step.reach;
+        let top = if sy > 0 { t } else { -b };
+        let right = if sx > 0 { r } else { -l };
+        let hit_up = if sy > 0 { step.hits[0] } else { step.hits[2] };
+        let hit_right = if sx > 0 { step.hits[1] } else { step.hits[3] };
+        let mut out: Vec<((i32, i32), u8)> = Vec::new();
+        let mut push = |p: (i32, i32), mk: u8| out.push(((sx * p.0, sy * p.1), map_mask(mk)));
         // Band A.
         let mut band_bottom = y;
         let mut band_right = right;
         if x < right {
             let mut upper = top;
             let mut right_wall_top = top;
-            if let Some(rh) = step.hits[1] {
-                right_wall_top = e[(rh.flags & 3) as usize] - 1 + rh.start as i32;
+            if let Some(rh) = hit_right {
+                let (a, bb) = widened(&rh);
+                right_wall_top = span(sy, a, bb).0 - 1;
                 if top < right_wall_top {
                     upper = right_wall_top;
                 }
             }
-            let found = self.up(m, y - 1, x, right, upper - 1);
+            let found = vlook(y - 1, x, right, upper - 1);
             let mut mask: u8 = 0x3b;
             let mut wall = None;
-            if let Some(seg) = found {
-                let n = norm(seg);
+            if let Some((idx, seg)) = found {
+                let n = vnorm(&seg);
                 upper = n.0;
                 if right < n.2 {
                     mask = 0x22;
                 } else if right == n.2 {
-                    mask = if seg.flags & 0x20 != 0 { 0x33 } else { 0 };
+                    mask = if end_flag(&seg, sx) != 0 { 0x33 } else { 0 };
                 }
-                wall = Some((index_of(&self.lists[0], seg), n));
+                wall = Some((idx, n));
             }
-            if step.hits[1].is_some() {
+            if hit_right.is_some() {
                 mask &= 0xfd;
                 if right_wall_top < upper {
                     mask &= 0xdc;
                 }
             }
             if upper < y {
-                out.push(((right, y), 0xe7));
+                push((right, y), 0xe7);
             } else {
                 mask |= 0x44;
             }
-            out.push(((right, upper), mask));
+            push((right, upper), mask);
             if upper == top {
-                out.push(((x, upper), 0xdd));
+                push((x, upper), 0xdd);
             }
             let mut next_right = right;
             if let Some((Some(mut idx), mut cur)) = wall {
+                let list = &self.lists[vlist];
                 if cur.2 < right {
-                    out.push(((cur.2, cur.0), 0x11));
+                    push((cur.2, cur.0), 0x11);
                 }
                 next_right = x;
                 while x <= cur.1 {
-                    out.push(((cur.1, cur.0), 0x18));
-                    if idx == 0 {
+                    push((cur.1, cur.0), 0x18);
+                    let Some(ni) = step_idx(idx, sx < 0, list.len()) else {
                         next_right = cur.1;
                         break;
-                    }
-                    idx -= 1;
-                    let p = norm(&self.lists[0][idx]);
+                    };
+                    idx = ni;
+                    let p = vnorm(&list[idx]);
                     if p.0 != upper || p.2 < x {
                         next_right = cur.1;
                         break;
                     }
                     if p.2 <= right {
-                        out.push(((p.2, p.0), 0x11));
+                        push((p.2, p.0), 0x11);
                     }
                     cur = p;
                 }
@@ -576,56 +707,58 @@ impl Contours {
         if top < band_bottom {
             let mut limit = band_right;
             let mut up_wall_end = band_right;
-            if let Some(uh) = step.hits[0] {
-                up_wall_end = e[(uh.flags >> 2 & 3) as usize] + 1 + uh.end as i32;
+            if let Some(uh) = hit_up {
+                let (a, bb) = widened(&uh);
+                up_wall_end = span(sx, a, bb).1 + 1;
                 if up_wall_end < band_right {
                     limit = up_wall_end;
                 }
             }
-            let found = self.right(m, x + 1, top, band_bottom, limit + 1);
+            let found = hlook(x + 1, top, band_bottom, limit + 1);
             let mut mask: u8 = 0x3b;
             let mut wall = None;
-            if let Some(seg) = found {
-                let n = norm(seg);
+            if let Some((idx, seg)) = found {
+                let n = hnorm(&seg);
                 limit = n.0;
                 if n.1 < top {
                     mask = 0x18;
                 } else if n.1 == top {
-                    mask = if seg.flags & 0x10 != 0 { 0x39 } else { 0 };
+                    mask = if start_flag(&seg, sy) != 0 { 0x39 } else { 0 };
                 }
-                wall = Some((index_of(&self.lists[1], seg), n));
+                wall = Some((idx, n));
             }
-            if step.hits[0].is_some() {
+            if hit_up.is_some() {
                 mask &= 0xf7;
                 if limit < up_wall_end {
                     mask &= 0xd6;
                 }
             }
             if x < limit {
-                out.push(((x, top), 0xdd));
+                push((x, top), 0xdd);
             } else {
                 mask |= 0x84;
             }
-            out.push(((limit, top), mask));
+            push((limit, top), mask);
             if limit < band_right {
-                out.push(((limit, band_bottom), 1));
+                push((limit, band_bottom), 1);
             }
             if let Some((Some(mut idx), mut cur)) = wall {
+                let list = &self.lists[hlist];
                 if top < cur.1 {
-                    out.push(((cur.0, cur.1), 0x21));
+                    push((cur.0, cur.1), 0x21);
                 }
                 while cur.2 <= band_bottom {
-                    out.push(((cur.0, cur.2), 0x22));
-                    idx += 1;
-                    if idx >= self.lists[1].len() {
+                    push((cur.0, cur.2), 0x22);
+                    let Some(ni) = step_idx(idx, sy > 0, list.len()) else {
                         break;
-                    }
-                    let p = norm(&self.lists[1][idx]);
+                    };
+                    idx = ni;
+                    let p = hnorm(&list[idx]);
                     if p.0 != limit || band_bottom < p.1 {
                         break;
                     }
                     if top <= p.1 {
-                        out.push(((p.0, p.1), 0x21));
+                        push((p.0, p.1), 0x21);
                     }
                     cur = p;
                 }
@@ -767,6 +900,64 @@ mod tests {
                 ((1548, 231), 0x3b),
                 ((1484, 231), 0xdd)
             ]
+        );
+    }
+
+    #[test]
+    fn the_four_quadrant_sweeps_are_mirror_images() {
+        // The Boot Camp Marine layout mirrored about the 2048 px map: each
+        // quadrant's sweep gives the mirrored up-right points, with the
+        // masks mirrored as the client's (0xe7 -> 0xee and 0xdd -> 0x7b for
+        // up-left, `FUN_0075f0f0`).
+        let t = Terrain::open(64, 64);
+        let marines = [
+            (1651, 172),
+            (1615, 187),
+            (1670, 199),
+            (1640, 211),
+            (1722, 304),
+            (1688, 288),
+            (1715, 340),
+            (1685, 321),
+        ];
+        let m = Mover::from_box(11, 11, 11, 11);
+        let run = |mx: bool, my: bool, q: u8| {
+            let f = |p: (i32, i32)| {
+                (
+                    if mx { 2047 - p.0 } else { p.0 },
+                    if my { 2047 - p.1 } else { p.1 },
+                )
+            };
+            let boxes: Vec<_> = marines
+                .iter()
+                .map(|&(x, y)| {
+                    let (a, b) = (f((x - 8, y - 9)), f((x + 8, y + 10)));
+                    (a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1))
+                })
+                .collect();
+            let c = Contours::from_terrain(&t).with_units(&boxes);
+            let node = f((1600, 291));
+            let s = c.node_step(&m, node, 0xff, (2047, 2047));
+            c.sweep(&m, node, &s, q)
+                .into_iter()
+                .map(|(p, k)| (f(p), k))
+                .collect::<Vec<_>>()
+        };
+        let base = run(false, false, 1);
+        assert!(base.contains(&((1660, 233), 0x11)));
+        for (mx, my, q) in [(true, false, 8), (false, true, 2), (true, true, 4)] {
+            let got = run(mx, my, q);
+            assert_eq!(got.len(), base.len(), "quadrant {q}: {got:?}");
+            for (a, b) in base.iter().zip(&got) {
+                assert_eq!(a.0, b.0, "quadrant {q} point");
+            }
+        }
+        let ul = run(true, false, 8);
+        let masks = |v: &Vec<((i32, i32), u8)>| v.iter().map(|x| x.1).collect::<Vec<_>>();
+        let pairs: Vec<_> = masks(&base).into_iter().zip(masks(&ul)).collect();
+        assert!(
+            pairs.contains(&(0xe7, 0xee)) && pairs.contains(&(0xdd, 0x7b)),
+            "{pairs:x?}"
         );
     }
 

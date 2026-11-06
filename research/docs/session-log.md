@@ -6530,3 +6530,26 @@ tests); clippy / fmt clean; `cargo build --release --bin sc_view` OK.
 
 **Verification.**  `cargo test --no-fail-fast` 0 failed (5 contour tests);
 clippy / fmt clean; `sc_view` builds; movement unchanged.
+
+## 2026-11-06 (145) — All four corner sweeps (one mirrored routine)
+
+- **Port (`Contours::sweep(m, node, step, quadrant)`).**  The up-right sweep
+  (session log 144) now runs in a mirror frame (sx, sy): frame-up / -right
+  lookups map to the up / down and right / left lists, the segment walk
+  steps toward the frame's smaller (band A) / larger (band B) start, the
+  corner-flag test picks the stored end whose frame role matches (bit 0x20
+  stored end, 0x10 stored start), and the emitted masks are mirrored
+  (direction bits 0x20 <-> 0x80 / 0x10 <-> 0x40, quadrants 1 <-> 8, 2 <-> 4 /
+  1 <-> 2, 4 <-> 8).  FACT supporting the mirror reading: the up-left
+  inline code emits 0xee and 0x7b where up-right emits 0xe7 and 0xdd,
+  exactly the mirrored masks.  INFERENCE: the other constants of
+  `0x75eb90` / `0x75e650` were not compared one by one.
+- **Test `the_four_quadrant_sweeps_are_mirror_images`.**  The Boot Camp
+  Marine layout mirrored in x, y and both about the 2048 px map: every
+  quadrant returns the mirrored up-right points (including the gap corner
+  (1660, 233)), and the up-left masks include the client's 0xee / 0x7b.
+- **Next.**  `FUN_007661b0`'s search loop (open list, cost doubling outside
+  the next region, node budget), then wiring with the final approach.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (6 contour tests);
+clippy / fmt clean; `sc_view` builds; movement unchanged.
