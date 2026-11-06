@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)"]
 open: 2
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (120) Decompiler unblocked (noreturn=all, redo); Gamma option found (100 likely neutral); retail shader without AO beats the fitted model on the matched depot but not on the references.
 - (119) Light buffer / gamma traced (no depot lights; decompiler blocked by bad no-return flags); queued units take supply as they start (Backwater Station).
 - (118) Gas queue stalls fixed (harvest restart, 80 px range), contact hand-in, flingy turning: Boot Camp gas 1.89 s vs 1.97 s with the recorded rhythm.
 - (117) Shader port retried (linear space, eye sweep): still ~15-30 % dark, missing additive light buffer / bloom; Wasteland Marine timeline matches (360 frames); end-delay 0.6 s reading falsified.

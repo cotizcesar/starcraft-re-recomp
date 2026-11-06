@@ -5831,3 +5831,39 @@ clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720, 1920x1080,
 clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
 (no screen moved by more than 0.05); walkthrough PASS.
+
+## 2026-11-06 (120) — Decompiler unblocked; the Gamma option; retail shader without AO on the matched depot
+
+- **Tooling.**  `research/tools/DecompileAt.java` gains `noreturn=all`
+  (clears 323 mis-analysed no-return flags in the session) and `redo=N`
+  (clears and re-disassembles N bytes at each start, so fall-through after
+  those calls is decoded).  Functions that stopped at `FUN_00538810` /
+  `FUN_0053a640` now decompile in full (`FUN_0095ae20` 20 -> 95 lines).
+- **Gamma (FACT).**  `FUN_0095ae20` registers the "Gamma" option and calls
+  `FUN_0095abc0` on change; `FUN_008a9ba0` is the Options menu building its
+  Speed / Sound / Video / Network tabs.  The renderer-side consumer is not
+  reached yet.  The user's `CSettings.json` keeps `Gamma = 100` while
+  music / sfx are changed: INFERENCE that 100 is the untouched, neutral
+  default (falsifier: the option's registered default).
+- **Sharpness (FACT, matched camera).**  Laplacian std on the depot core:
+  retail 56.0, fitted model 32.6; on terrain patches 13.8 / 13.4 and
+  14.2 / 14.7 (equal).  The sprite path is not blurred (one bilinear tap
+  per pixel at k = 0.75 from the 4x `anim/main_NNN.anim`); the fitted
+  model's ambient term flattens the shading.  The retail shader structure
+  (`DirectionalLighting`, gamma space, eye z 3000) gives 55.3.
+- **AO.**  `ao_depth` decodes as R = B = 0, G = AO, A = depth (as
+  `deferred_sprite` reads it).  Retail shader with AO: box mean 41.9 vs
+  58.0, RMS 28.2 / 29.6 / 26.2; **without AO**: mean 53.6, RMS
+  24.5 / 24.1 / 23.9, below the fitted model's 24.7 / 27.2 / 28.0 on every
+  channel, correlation 0.890.  But `ui_visual_diff` frame means rise by
+  0.10-0.26 on the eight in-game references (the fitted model was fit on
+  them).  Not adopted; next: a per-object comparison on the references
+  (buildings, minerals, units) to decide between the two.  INFERENCE: the
+  client does not apply the AO texture as `deferred_blit.glsl` reads it,
+  or applies it with another scale; falsifier: the D3D11 shader bytecode.
+- **Not the cause.**  `shadershlsl/*.hlsl9` are the Direct3D 9 fallback
+  (`deferred_blit.hlsl9` returns black; directional light at
+  (200, 100, 500)).
+
+**Verification.**  Experiments reverted (`git diff src/` empty);
+`ui_visual_diff` 51/51, no screen moved by more than 0.05.
