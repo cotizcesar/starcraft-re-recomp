@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)"]
 open: 1
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (127) End dialog recovered from the client: game-end check every 46 frames (FUN_007ab9a0), replacing the 24-frame guess.
 - (126) Boot Camp per-field gap: drop-off measured, contact braking tested and reverted, two-SCV rhythm differs (open).
 - (125) Land preview (per-tile red) and fly-then-land as on Desperate Alliance 58-66 s; first waves met by the player away from the base.
 - (124) Waves 1-2: guard / attack_prepare training hypothesis falsified (later waves stop matching); reverted.

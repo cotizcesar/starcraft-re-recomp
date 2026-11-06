@@ -187,8 +187,10 @@ def main() -> int:
     shown = [l for l in won if field(l, "dialog") == "true"]
     if won and shown:
         result_tick, dialog_tick = int(field(won[0], "elapsed")), int(field(shown[0], "tick"))
-        check(20 <= dialog_tick - result_tick <= 28,
-              f"boot camp: the Victory box follows the result by ~24 frames ({dialog_tick - result_tick})")
+        # FUN_007ab9a0: the client checks the game end every 46 frames.
+        check(0 <= dialog_tick - result_tick < 46 + 4 and dialog_tick // 4 * 4 >= result_tick,
+              f"boot camp: the Victory box shows at the next 46-frame end check "
+              f"(result {result_tick}, box at {dialog_tick})")
         check(int(field(st[-1], "tick")) > dialog_tick and int(field(st[-1], "elapsed")) == result_tick,
               "boot camp: the world runs on under the box, Elapsed Time stays at the result")
     else:
