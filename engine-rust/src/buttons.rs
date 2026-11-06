@@ -39,6 +39,17 @@ pub enum Cond {
     Burrow,
     /// `0x780c50`: Unburrow (icon 260).
     Unburrow,
+    /// `0x781320`: the SCV's Return Cargo (icon 233), only while it carries
+    /// minerals or gas.  FACT (Boot Camp recording, 95 s / 110 s): slot 6
+    /// shows while the SCV carries and slot 5 (Gather) is empty; an empty
+    /// SCV shows Gather and no Return Cargo.
+    Carrying,
+    /// `0x7812d0`: Gather (icon 231), only while the worker carries nothing.
+    NotCarrying,
+    /// `0x781440`: Build Advanced Structures, only when one of card 242's
+    /// buildings has its requirements (hidden all through Boot Camp, which
+    /// has no Barracks).
+    AdvancedBuild,
     Unclassified,
 }
 
@@ -59,9 +70,127 @@ impl Cond {
             0x780ba0 => Cond::LiftOff,
             0x780be0 => Cond::Burrow,
             0x780c50 => Cond::Unburrow,
+            0x781320 => Cond::Carrying,
+            0x7812d0 => Cond::NotCarrying,
+            0x781440 => Cond::AdvancedBuild,
             _ => Cond::Unclassified,
         }
     }
+}
+
+/// Semantic class of a retail button action (`act`).  FACT: classified
+/// from the 1.23.10.13515 table (`sc_dump --buttons`) by the icon and the
+/// `stat_txt` tooltip each address is used with (2026-11-05): e.g.
+/// `0x74d4c0` is the 94 Move buttons (icon 228, hotkey `m`), `0x74d520` the
+/// Terran "Build ..." buttons of card 239, `0x784d50` the card switches
+/// (`act_var` 239 basic / 242 advanced build card, 228 back to the unit's
+/// own card).  Falsifier: a retail button whose effect differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Act {
+    Move,
+    Stop,
+    Attack,
+    Patrol,
+    Hold,
+    Repair,
+    Gather,
+    ReturnCargo,
+    /// Show the card `act_var` (228 = the unit's own card).
+    Card,
+    /// Place the building `act_var` (Terran SCV, Protoss Probe).
+    Build,
+    /// Drone mutation into the building `act_var`.
+    DroneBuild,
+    Train,
+    Addon,
+    Rally,
+    StimPacks,
+    Research,
+    Upgrade,
+    LiftOff,
+    Land,
+    CancelLast,
+    CancelAddon,
+    CancelConstruction,
+    CancelMorph,
+    /// Esc of the target / placement cards (229, 230, 235, 237).
+    CancelTarget,
+    Siege,
+    Unsiege,
+    /// Spell with a target (`act_var` tech).
+    TargetTech,
+    MorphUnit,
+    MorphBuilding,
+    Burrow,
+    Unburrow,
+    Cloak,
+    Decloak,
+    Unclassified,
+}
+
+impl Act {
+    pub fn of(addr: u32) -> Act {
+        match addr {
+            0x74d4c0 => Act::Move,
+            0x74d850 => Act::Stop,
+            0x74d1d0 => Act::Attack,
+            0x74d500 => Act::Patrol,
+            0x74d430 => Act::Hold,
+            0x74d640 => Act::Repair,
+            0x74d400 => Act::Gather,
+            0x74d650 => Act::ReturnCargo,
+            0x784d50 => Act::Card,
+            0x74d520 | 0x74d5d0 => Act::Build,
+            0x74dc20 => Act::DroneBuild,
+            0x74d250 => Act::Train,
+            0x74d560 => Act::Addon,
+            0x74d610 => Act::Rally,
+            0x74d790 => Act::StimPacks,
+            0x74d670 => Act::Research,
+            0x74dbd0 => Act::Upgrade,
+            0x74d240 => Act::LiftOff,
+            0x74d460 => Act::Land,
+            0x74d860 => Act::CancelLast,
+            0x74d280 => Act::CancelAddon,
+            0x74d440 => Act::CancelConstruction,
+            0x74d450 => Act::CancelMorph,
+            0x6cbec0 | 0x7814e0 | 0x74d2b0 | 0x533f30 => Act::CancelTarget,
+            0x74d780 => Act::Siege,
+            0x74d890 => Act::Unsiege,
+            0x74d8a0 => Act::TargetTech,
+            0x74d480 => Act::MorphUnit,
+            0x74dbe0 => Act::MorphBuilding,
+            0x74d270 => Act::Burrow,
+            0x74d390 => Act::Unburrow,
+            0x74d2f0 => Act::Cloak,
+            0x74d3a0 => Act::Decloak,
+            _ => Act::Unclassified,
+        }
+    }
+}
+
+/// Card shown for `unit`: its own set, or the set a [`Act::Card`] button
+/// switched to (`set` 228 or `None` = the unit's own card).
+pub fn card_of_set(
+    world: &World,
+    unit: &SimUnit,
+    set: Option<u16>,
+) -> [Option<(Button, ButtonState)>; 9] {
+    let index = match set {
+        Some(s) if s != 228 => s as usize,
+        _ => unit.type_id as usize,
+    };
+    let mut out = [None; 9];
+    for b in set_of(index) {
+        let i = (b.pos as usize).wrapping_sub(1);
+        if i < 9
+            && out[i].is_none()
+            && let Some(s) = state(world, unit, b)
+        {
+            out[i] = Some((*b, s));
+        }
+    }
+    out
 }
 
 /// How a card slot is drawn.
@@ -91,6 +220,11 @@ pub fn state(world: &World, unit: &SimUnit, b: &Button) -> Option<ButtonState> {
         Cond::LiftOff => on(!unit.lifted),
         Cond::Burrow => on(player.has_tech(b.cond_var as u8) && !unit.status.burrowed),
         Cond::Unburrow => on(unit.status.burrowed),
+        Cond::Carrying => on(unit.carry > 0),
+        Cond::NotCarrying => on(unit.carry == 0),
+        Cond::AdvancedBuild => on(set_of(242).iter().any(|a| {
+            Cond::of(a.cond) == Cond::MakeUnit && world.has_requirements(unit.owner, a.cond_var)
+        })),
     }
 }
 
@@ -98,18 +232,7 @@ pub fn state(world: &World, unit: &SimUnit, b: &Button) -> Option<ButtonState> {
 /// button of each position, as retail stacks alternatives (Lift Off /
 /// Land / Cancel all live in position 9 of the Command Center).
 pub fn card(world: &World, unit: &SimUnit) -> [Option<(Button, ButtonState)>; 9] {
-    let mut out = [None; 9];
-    let set = set_of(unit.type_id as usize);
-    for b in set {
-        let i = (b.pos as usize).wrapping_sub(1);
-        if i < 9
-            && out[i].is_none()
-            && let Some(s) = state(world, unit, b)
-        {
-            out[i] = Some((*b, s));
-        }
-    }
-    out
+    card_of_set(world, unit, None)
 }
 
 #[cfg(test)]
@@ -127,6 +250,55 @@ mod tests {
         let i = w.spawn_px(0, town, 512, 512).expect("spawn");
         w.units[i].completed = true;
         (w, i)
+    }
+
+    #[test]
+    fn act_addresses_follow_the_retail_table() {
+        // `sc_dump --buttons` on 1.23.10.13515 (SCV card set 7, CC set 106,
+        // Terran build card 239).
+        assert_eq!(Act::of(0x74d4c0), Act::Move);
+        assert_eq!(Act::of(0x74d850), Act::Stop);
+        assert_eq!(Act::of(0x74d1d0), Act::Attack);
+        assert_eq!(Act::of(0x74d640), Act::Repair);
+        assert_eq!(Act::of(0x74d400), Act::Gather);
+        assert_eq!(Act::of(0x74d650), Act::ReturnCargo);
+        assert_eq!(Act::of(0x784d50), Act::Card);
+        assert_eq!(Act::of(0x74d520), Act::Build);
+        assert_eq!(Act::of(0x74d250), Act::Train);
+        assert_eq!(Act::of(0x74d610), Act::Rally);
+        assert_eq!(Act::of(0x74d240), Act::LiftOff);
+        assert_eq!(Act::of(0x12345), Act::Unclassified);
+    }
+
+    #[test]
+    fn gather_and_return_cargo_swap_with_the_load() {
+        // Boot Camp recording: an empty SCV shows Gather in slot 5, a loaded
+        // one Return Cargo in slot 6, never both.
+        let (mut w, i) = world_with(Race::Terran, uid::COMMAND_CENTER);
+        let scv = w.spawn_px(0, uid::SCV, 600, 600).expect("scv");
+        let _ = i;
+        let gather = Button {
+            pos: 5,
+            icon: 231,
+            cond: 0x7812d0,
+            act: 0x74d400,
+            cond_var: 0,
+            act_var: 0,
+            enabled_string: 0,
+            disabled_string: 0,
+        };
+        let ret = Button {
+            pos: 6,
+            icon: 233,
+            cond: 0x781320,
+            act: 0x74d650,
+            ..gather
+        };
+        assert!(state(&w, &w.units[scv], &gather).is_some());
+        assert!(state(&w, &w.units[scv], &ret).is_none());
+        w.units[scv].carry = 8;
+        assert!(state(&w, &w.units[scv], &gather).is_none());
+        assert!(state(&w, &w.units[scv], &ret).is_some());
     }
 
     #[test]

@@ -41,10 +41,6 @@ pub const TICK_MS: u64 = 42;
 pub fn real_seconds(ticks: u64) -> u64 {
     ticks * TICK_MS / 1000
 }
-/// `units.dat` build times are in 1/15 second units.
-pub const BUILD_TIME_UNITS: u32 = 15;
-/// `upgrades.dat` research times are in 1/60 second units.
-pub const UPGRADE_TIME_UNITS: u32 = 60;
 pub const MAX_ENERGY: i32 = 200;
 /// Retail stores energy in 1/256 points (`CUnit+0xa2`), like shields and HP.
 /// Ability costs in `techdata.dat` are whole points and are scaled by this.
@@ -95,16 +91,23 @@ pub const RESCUE_INTERVAL: u64 = 15;
 /// half a second earlier; 2 tiles is the INFERENCE that fits.
 pub const RESCUE_RANGE_PX: i32 = 64;
 
+/// `units.dat` build times, `techdata.dat` research times and
+/// `upgrades.dat` times are game frames, i.e. simulation ticks.  FACT
+/// (Backwater Station recording, 2026-11-05): the Command Center's SCV
+/// progress bar runs 220.2 s -> 232.8 s = 12.6 s = 300 frames x 42 ms
+/// (`TICK_MS`), and a Barracks Marine fills at 16.4 px/s over the 240 px
+/// bar = 14.6 s ~ 360 x 42 ms.  The old 1/15 s and 1/60 s scalings made
+/// production 1.6x and upgrades 0.4x the retail duration.
 pub fn build_ticks(build_time: u16) -> i32 {
-    ((build_time as u32 * TICKS_PER_SECOND).div_ceil(BUILD_TIME_UNITS)) as i32
+    build_time as i32
 }
 
 pub fn research_ticks(research_time: u16) -> i32 {
-    ((research_time as u32 * TICKS_PER_SECOND).div_ceil(BUILD_TIME_UNITS)) as i32
+    research_time as i32
 }
 
 pub fn upgrade_ticks(time: u32) -> i32 {
-    ((time * TICKS_PER_SECOND).div_ceil(UPGRADE_TIME_UNITS)) as i32
+    time as i32
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1762,7 +1765,23 @@ impl World {
     /// recovered build tree names the parent as the add-on's producer
     /// (Command Center → Comsat/Nuclear Silo, Factory → Machine Shop,
     /// Starport → Control Tower, Science Facility → Covert Ops/Physics Lab).
+    /// Recorded mutator (`RecAct`): saves, replays and LAN replay it.
     pub fn build_addon(&mut self, parent_id: u32, addon_type: u16) -> Result<(), SimError> {
+        self.build_addon_unrecorded(parent_id, addon_type)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Addon {
+                    parent: parent_id,
+                    unit: addon_type,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn build_addon_unrecorded(&mut self, parent_id: u32, addon_type: u16) -> Result<(), SimError> {
         let p = self.index_of(parent_id).ok_or(SimError::BadUnit)?;
         if !self.units[p].alive || !self.units[p].completed {
             return Err(SimError::MissingRequirements);
@@ -2048,7 +2067,22 @@ impl World {
         Ok(())
     }
 
+    /// Recorded mutator (`RecAct`): saves, replays and LAN replay it.
     pub fn cancel_production(&mut self, building_id: u32) -> Result<(), SimError> {
+        self.cancel_production_unrecorded(building_id)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Cancel {
+                    building: building_id,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn cancel_production_unrecorded(&mut self, building_id: u32) -> Result<(), SimError> {
         let i = self.index_of(building_id).ok_or(SimError::BadUnit)?;
         let order = std::mem::replace(&mut self.units[i].order, Order::Idle);
         let refund = match order {
@@ -2067,7 +2101,23 @@ impl World {
         Ok(())
     }
 
+    /// Recorded mutator (`RecAct`): saves, replays and LAN replay it.
     pub fn research(&mut self, building_id: u32, tech_id: u8) -> Result<(), SimError> {
+        self.research_unrecorded(building_id, tech_id)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Research {
+                    building: building_id,
+                    tech: tech_id,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn research_unrecorded(&mut self, building_id: u32, tech_id: u8) -> Result<(), SimError> {
         let i = self.index_of(building_id).ok_or(SimError::BadUnit)?;
         let owner = self.units[i].owner;
         if !self.units[i].completed || self.units[i].lifted {
@@ -2106,7 +2156,23 @@ impl World {
         Ok(())
     }
 
+    /// Recorded mutator (`RecAct`): saves, replays and LAN replay it.
     pub fn upgrade(&mut self, building_id: u32, upgrade_id: u8) -> Result<(), SimError> {
+        self.upgrade_unrecorded(building_id, upgrade_id)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Upgrade {
+                    building: building_id,
+                    upgrade: upgrade_id,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn upgrade_unrecorded(&mut self, building_id: u32, upgrade_id: u8) -> Result<(), SimError> {
         let i = self.index_of(building_id).ok_or(SimError::BadUnit)?;
         let owner = self.units[i].owner;
         if !self.units[i].completed || self.units[i].lifted {
@@ -2478,7 +2544,23 @@ impl World {
         Ok(())
     }
 
+    /// Recorded mutator (`RecAct`): saves, replays and LAN replay it.
     pub fn set_rally(&mut self, building_id: u32, pos: (i32, i32)) -> Result<(), SimError> {
+        self.set_rally_unrecorded(building_id, pos)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Rally {
+                    building: building_id,
+                    pos,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn set_rally_unrecorded(&mut self, building_id: u32, pos: (i32, i32)) -> Result<(), SimError> {
         let i = self.index_of(building_id).ok_or(SimError::BadUnit)?;
         self.units[i].rally = Some(pos);
         Ok(())
@@ -5016,7 +5098,29 @@ impl World {
         Ok(restore_fp / fp(1))
     }
 
+    /// Recorded mutator (`RecAct::Cast`).
     pub fn cast(
+        &mut self,
+        caster_id: u32,
+        spell: Spell,
+        target: SpellTarget,
+    ) -> Result<(), SimError> {
+        self.cast_unrecorded(caster_id, spell, target)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::Cast {
+                    caster: caster_id,
+                    spell,
+                    target,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn cast_unrecorded(
         &mut self,
         caster_id: u32,
         spell: Spell,
@@ -5854,7 +5958,7 @@ pub fn is_resource_type(type_id: u16) -> bool {
 }
 
 /// Refinery/Assimilator/Extractor: the gas building that replaces a geyser.
-fn is_gas_building(type_id: u16) -> bool {
+pub fn is_gas_building(type_id: u16) -> bool {
     matches!(type_id, uid::REFINERY | uid::ASSIMILATOR | uid::EXTRACTOR)
 }
 

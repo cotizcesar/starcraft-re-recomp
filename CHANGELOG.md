@@ -4,6 +4,18 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-05 — In game: selection, orders, building and frame rate
+
+### Fixed
+- Units can be selected, ordered and used to build at every resolution
+  (mouse positions were compared in the wrong coordinate space).
+- The command card is the retail one for drawing, clicks and hotkeys
+  (M Move, S Stop, A Attack, B Build, ...); right click follows retail.
+- Production, research and upgrades take their retail time.
+- In-game frames are ~20x faster (3440x1440: 181 ms -> 8 ms).
+- Saves and replays keep research, upgrades, rally points, cancels,
+  add-ons and spells.
+
 ## 2026-11-05 — 720p and up, 16:9 and ultrawide
 
 ### Fixed

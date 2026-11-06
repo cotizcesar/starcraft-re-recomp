@@ -35,10 +35,11 @@ fn every_unit_can_be_queued_with_its_table_cost() {
 #[test]
 fn stock_build_times_match_the_documented_seconds() {
     let data = GameData::bundled().unwrap();
-    // 360 table units / 15 = 24 s; 600 / 15 = 40 s; 300 / 15 = 20 s.
-    assert_eq!(build_ticks(data.unit(unit_ids::MARINE).build_time), 576);
-    assert_eq!(build_ticks(data.unit(unit_ids::ZEALOT).build_time), 960);
-    assert_eq!(build_ticks(data.unit(unit_ids::SCV).build_time), 480);
+    // The table is in game frames (Backwater Station: an SCV's bar fills in
+    // 12.6 s = 300 x 42 ms).
+    assert_eq!(build_ticks(data.unit(unit_ids::MARINE).build_time), 360);
+    assert_eq!(build_ticks(data.unit(unit_ids::ZEALOT).build_time), 600);
+    assert_eq!(build_ticks(data.unit(unit_ids::SCV).build_time), 300);
 }
 
 #[test]

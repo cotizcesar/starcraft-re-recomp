@@ -1,0 +1,7 @@
+In-game draw time, Boot Camp (map 0) at game start, release build, GC_BENCH=60 (update + draw, no window present).
+Before this change (same machine, 2026-11-05): 1280x720 48.39 ms, 1920x1080 107.75 ms, 3440x1440 181.39 ms.
+
+bench game 1280x720: 60 frames, update 0.01 ms, draw 2.41 ms, worst 2.95 ms, tick 7
+bench game 1920x1080: 60 frames, update 0.02 ms, draw 4.28 ms, worst 15.35 ms, tick 9
+bench game 2560x1440: 60 frames, update 0.02 ms, draw 6.19 ms, worst 17.36 ms, tick 12
+bench game 3440x1440: 60 frames, update 0.03 ms, draw 7.70 ms, worst 17.39 ms, tick 14

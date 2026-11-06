@@ -7,7 +7,13 @@
 //! ```text
 //! sc_dump --install "/path/to/StarCraft" --out /tmp/sc-casc \
 //!         --include glue/ --include webui/ --include shaders
+//! sc_dump --install "/path/to/StarCraft" --buttons   # command-card table
 //! ```
+//!
+//! `--buttons` prints the retail button sets of `x86/StarCraft.exe` as TSV
+//! (set, pos, icon, cond, act, cond_var, act_var, enabled_string): the
+//! evidence for classifying the condition / action addresses in
+//! `galaxycraft::buttons`.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -20,6 +26,7 @@ fn main() -> ExitCode {
     let mut install_path = None;
     let mut out = None;
     let mut includes: Vec<String> = Vec::new();
+    let mut buttons = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -31,6 +38,10 @@ fn main() -> ExitCode {
                 out = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--buttons" => {
+                buttons = true;
+                i += 1;
+            }
             "--include" => {
                 includes.push(args[i + 1].to_ascii_lowercase());
                 i += 2;
@@ -40,6 +51,26 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+    if buttons {
+        let install = match install_path.as_ref() {
+            Some(path) => RetailInstall::open(path).ok(),
+            None => RetailInstall::from_env(),
+        };
+        let Some(sets) = install.and_then(|i| i.button_sets()) else {
+            eprintln!("no install or no button table in x86/StarCraft.exe");
+            return ExitCode::FAILURE;
+        };
+        println!("set\tpos\ticon\tcond\tact\tcond_var\tact_var\tenabled_string");
+        for (set, list) in sets.iter().enumerate() {
+            for b in list {
+                println!(
+                    "{set}\t{}\t{}\t{:#x}\t{:#x}\t{}\t{}\t{}",
+                    b.pos, b.icon, b.cond, b.act, b.cond_var, b.act_var, b.enabled_string
+                );
+            }
+        }
+        return ExitCode::SUCCESS;
     }
     let Some(out) = out else {
         eprintln!("--out DIR is required");
