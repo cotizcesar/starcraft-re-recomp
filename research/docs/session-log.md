@@ -5898,3 +5898,33 @@ clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
 (no screen moved by more than 0.05); walkthrough PASS.
+
+## 2026-11-06 (122) — Mineral trip phase by phase against Boot Camp; mining 93 frames
+
+- **Recording (FACT).**  Boot Camp 96-145 s, two SCVs, mineral counter at
+  20 fps: deliveries 108.0 / 118.8 / 129.5 / 140.55 s and 109.65 / 120.3 /
+  131.2 / 141.85 s, a 10.7-11.05 s cycle (~253 frames) each; 1.3-1.7 s
+  apart, so they mine different fields in parallel.  The camera equals our
+  start camera (the Command Center within a few px), so screen positions
+  convert to world: the SCVs work field 14 (1408, 208) from (~1452, 249)
+  and field 18 (1440, 272) from its lower right.  Occupancy of each mining
+  spot (70 x 60 crop against an empty frame, 20 fps): 99-115 frames per
+  visit; field -> drop-off 65-79 frames, drop-off -> field 70-77.
+- **Ours.**  One SCV per field: cycles 221 (field 14) and 209 (field 18);
+  the same occupancy test on our renders (every 2 frames, same camera,
+  same crop size) 88-92 frames; walks 73 / 73.  The walks agree within a
+  few frames; the gap is at the field (~15-20 frames).  Mining 75 -> 93
+  frames (`MINING_FRAMES`; INFERENCE for the mechanism, 75 being OpenBW's
+  timer): Boot Camp fields 239 / 227 frames (retail ~251 / ~253), and
+  independently Wasteland's five-SCV income 0.1800 -> 0.1667 per frame
+  against the recording's 0.1696 (+6 % -> -1.7 %).  Mission gate tolerance
+  for Wasteland income tightened to 5 %.  Test
+  `mineral_mining_time_is_the_recorded_93_frames`.
+- **Also seen.**  Our SCV mines field 14 standing ~13 px higher (closer)
+  than the recorded one (y 236 vs ~249): open, contact slack.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
+1280x720 and 3440x1440 (gas 1.88 s, minerals 0.1667, Backwater supply
+timeline); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51; walkthrough
+PASS.

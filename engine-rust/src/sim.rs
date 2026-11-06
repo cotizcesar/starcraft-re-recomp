@@ -47,8 +47,13 @@ pub const MAX_ENERGY: i32 = 200;
 pub const ENERGY_SCALE: i32 = 256;
 pub const MINERALS_PER_TRIP: i32 = 8;
 pub const GAS_PER_TRIP: i32 = 8;
-/// Frames a worker mines a mineral field (OpenBW `order_MiningMinerals`).
-pub const MINING_FRAMES: u16 = 75;
+/// Frames a worker mines a mineral field.  Measured (2026-11-06, Boot Camp
+/// recording 99-145 s): a recorded SCV stays at its field 99-115 frames per
+/// visit against ours 88-92 with 75, the walks matching within a few frames;
+/// 93 also brings Wasteland's five-SCV income from +6 % to -1.7 % of its
+/// recording.  INFERENCE for the mechanism (75 is OpenBW's timer; the rest
+/// may be the gather animation); falsifier: the client's mining order code.
+pub const MINING_FRAMES: u16 = 93;
 /// Frames a worker spends inside a refinery (OpenBW `order_HarvestGas`).
 pub const GAS_MINING_FRAMES: u16 = 37;
 pub const MINERAL_CAPACITY: i32 = 1500;

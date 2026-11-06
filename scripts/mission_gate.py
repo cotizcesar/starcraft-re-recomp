@@ -191,7 +191,7 @@ def main() -> int:
     wi = run(args.install, args.size, 1, inc_steps)
     m0, m1 = int(field(wi[-2], "minerals")), int(field(wi[-1], "minerals"))
     per_tick = (m1 - m0) / 1200
-    check(abs(per_tick / 0.1696 - 1) <= 0.10,
+    check(abs(per_tick / 0.1696 - 1) <= 0.05,
           f"wasteland: 5 SCVs bring {per_tick:.4f} minerals/frame (recording 0.1696)")
 
     # Backwater Station recording: four SCVs queued at 83.5 s (14.6 s of

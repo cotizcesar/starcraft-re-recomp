@@ -65,7 +65,7 @@ fn tech_requirements_are_not_silently_ignored() {
 /// worker at a time (a second worker waits, or takes a free field within
 /// 8 tiles).  Harvesting on arrival made income ~2.5x retail.
 #[test]
-fn mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time() {
+fn mining_takes_the_measured_frames_and_a_field_serves_one_worker_at_a_time() {
     use galaxycraft::ids::unit as uid;
     use galaxycraft::map::Terrain;
     use galaxycraft::sim::{MINING_FRAMES, Order, World};
@@ -143,4 +143,11 @@ fn mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time() {
         fields.contains(&Some(ids[0])) && fields.contains(&Some(ids[1])),
         "{fields:?}"
     );
+}
+
+#[test]
+fn mineral_mining_time_is_the_recorded_93_frames() {
+    // Boot Camp recording: a recorded SCV stays at its field 99-115 frames
+    // per visit (ours 88-92 with 75); Wasteland income -1.7 % with 93.
+    assert_eq!(galaxycraft::sim::MINING_FRAMES, 93);
 }
