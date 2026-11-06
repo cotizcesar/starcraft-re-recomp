@@ -197,6 +197,7 @@ impl Order {
             Order::ReturnCargo { .. } => 85,
             Order::Build { .. } => 15,
             Order::Repair { .. } => 34,
+            Order::Construct { .. } => 33,
             Order::Train { .. } => 37,
             Order::Research { .. } => 74,
             Order::Upgrade { .. } => 75,
@@ -302,6 +303,12 @@ pub enum Order {
     },
     Repair {
         target: u32,
+    },
+    /// A Terran SCV building `building` (orders.dat row 33,
+    /// ConstructingBuilding): construction only advances while an SCV holds
+    /// this order on it.
+    Construct {
+        building: u32,
     },
     Train {
         unit_type: u16,
@@ -426,6 +433,11 @@ pub struct SimUnit {
     pub invincible: bool,
     /// Unit that last dealt damage, used to credit kills and razings.
     pub last_damage_source: u32,
+    /// SCV constructing this (Terran) building, 0 when none.
+    pub builder: u32,
+    /// Units and buildings this unit destroyed (the selection panel's
+    /// "Kills:" line).
+    pub kills: u32,
     /// Trigger action 42 (Set Doodad State); `None` for ordinary units.
     pub doodad_enabled: Option<bool>,
     /// Paired Nydus Canal exit, when the map linked the two records by serial.
@@ -1030,6 +1042,8 @@ impl World {
         self.next_id += 1;
         let unit = SimUnit {
             id,
+            kills: 0,
+            builder: 0,
             owner: owner as u8,
             type_id,
             hp: ty.hit_points_raw as i32,
@@ -1117,6 +1131,8 @@ impl World {
         self.next_id += 1;
         let unit = SimUnit {
             id,
+            kills: 0,
+            builder: 0,
             owner: owner as u8,
             type_id,
             hp: ty.hit_points_raw as i32,
@@ -2732,7 +2748,25 @@ impl World {
         if self.units[i].completed {
             return;
         }
+        // A Terran building that was started by an SCV only advances while
+        // an SCV is constructing it (stopped SCV = paused construction), and
+        // its hit points grow with the progress like retail.
+        if self.units[i].builder != 0 {
+            let bid = self.units[i].id;
+            let busy = self.index_of(self.units[i].builder).is_some_and(|j| {
+                self.units[j].alive
+                    && matches!(self.units[j].order, Order::Construct { building } if building == bid)
+            });
+            if !busy {
+                return;
+            }
+        }
         if self.units[i].build_remaining > 0 {
+            if self.units[i].builder != 0 && self.units[i].build_total > 0 {
+                let max = self.data.unit(self.units[i].type_id).hit_points_raw as i32;
+                let gain = (max - max / 10) / self.units[i].build_total;
+                self.units[i].hp = (self.units[i].hp + gain.max(1)).min(max);
+            }
             self.units[i].build_remaining -= 1;
             if self.units[i].build_remaining <= 0 {
                 self.units[i].completed = true;
@@ -2950,6 +2984,7 @@ impl World {
                 }
             }
             Order::Repair { target } => self.order_repair(i, target),
+            Order::Construct { building } => self.order_construct(i, building),
             Order::Train { .. } | Order::Research { .. } | Order::Upgrade { .. } => {
                 // Handled by update_production.
             }
@@ -3992,6 +4027,9 @@ impl World {
             }
         }
         if let Some(killer) = source_owner {
+            if let Some(j) = self.index_of(source_id) {
+                self.units[j].kills += 1;
+            }
             self.players[killer].kills += 1;
             if (type_id as usize) < self.players[killer].kill_counts.len() {
                 self.players[killer].kill_counts[type_id as usize] += 1;
@@ -4870,9 +4908,39 @@ impl World {
         if worker_is_drone && is_zerg_building(unit_type) {
             // The Drone is consumed by the structure it starts.
             self.kill_unit(i);
+        } else if self.units[i].type_id == uid::SCV && !is_protoss_building(unit_type) {
+            // Retail Terran construction: the SCV stays on the building
+            // (`Order::Construct`) until it completes.
+            let bid = self.units[bidx].id;
+            self.units[bidx].builder = self.units[i].id;
+            self.units[i].order = Order::Construct { building: bid };
+            self.units[i].order_row = 33;
         } else {
             self.order_done(i);
         }
+    }
+
+    /// SCV on a building it constructs: hold the order until the building
+    /// completes or dies, then go idle (resume it by right-clicking the
+    /// unfinished building).
+    fn order_construct(&mut self, i: usize, building: u32) {
+        let Some(b) = self.index_of(building) else {
+            self.order_done(i);
+            return;
+        };
+        if !self.units[b].alive || self.units[b].completed {
+            if self.units[b].builder == self.units[i].id {
+                self.units[b].builder = 0;
+            }
+            self.order_done(i);
+            return;
+        }
+        if self.distance(i, b) > fp(48) {
+            let (bx, by) = (self.units[b].x, self.units[b].y);
+            self.move_towards(i, (bx / fp(1), by / fp(1)), fp(32));
+            return;
+        }
+        self.units[b].builder = self.units[i].id;
     }
 
     /// SCV repair.  Rate is the documented `0.9 * maxHP / build_time` per

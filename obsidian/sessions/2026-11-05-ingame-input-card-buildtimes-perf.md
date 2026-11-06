@@ -5,7 +5,7 @@ tags: [session, in-game, input, performance]
 type: session
 source: opencode
 area: in-game
-log: ["2026-11-05 (105)"]
+log: ["2026-11-05 (105)", "2026-11-05 (106)"]
 open: 4
 ---
 
@@ -18,13 +18,16 @@ Make Boot Camp playable: frame rate, selection, orders, building (user report). 
 - Build times are frames ([[build-times-are-game-frames]]).
 - Command log v3 records the card mutators.
 - Frame time 181 -> 7.7 ms at 3440x1440 (`ingame-draw-time.txt`); visual gate unchanged.
+- Selection panel as retail (rank, kills, upgrades, queue, construction); SCV stays on its building (106).
 
 ## Decisions
 - [[build-times-are-game-frames]]
 
 ## Pending
-- [ ] SCV stays on its Terran building until it completes.
-- [ ] Mineral delivery distance (~320 px from the CC on Boot Camp).
+- [ ] Terran construction graphics (scaffold, rising building, welding sparks).
+- [ ] Multi-selection panel and cargo slots.
+- [x] SCV stays on its Terran building until it completes. Closed 2026-11-05: `a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`.
+- [x] Mineral delivery distance (~320 px from the CC on Boot Camp). Closed 2026-11-05: falsified, session log (106) (the mineral line is ~330 px away).
 - [ ] Cancel construction, targeted spells, Land preview on the card.
 - [ ] Boot Camp, Wasteland, Backwater Station, Desperate Alliance step by step against the recordings.
 

@@ -69,6 +69,10 @@ pub struct ConsoleArt {
     pub con_over: Option<DdsImage>,
     pub clock: Option<DdsImage>,
     pub apm: Option<DdsImage>,
+    /// Production / construction progress bar, empty and full
+    /// (`pbrempt.dds` / `pbrfull.dds`, 432x36 at 4x).
+    pub progress_empty: Option<DdsImage>,
+    pub progress_full: Option<DdsImage>,
     pub command_buttons: Option<Grp>,
     pub command_buttons_hd: Option<dds::DdsGrp>,
     /// Remastered command glyphs (`hd2/unit/cmdicons/cmdicons.dds.grp`, 390
@@ -141,6 +145,8 @@ impl ConsoleArt {
             con_over: load_dds(root, &format!("{dir}/conover.dds")),
             clock: load_dds(root, &format!("{dir}/console_time.dds")),
             apm: load_dds(root, &format!("{dir}/console_apm.dds")),
+            progress_empty: load_dds(root, &format!("{dir}/pbrempt.dds")),
+            progress_full: load_dds(root, &format!("{dir}/pbrfull.dds")),
             command_buttons: load_grp(root, &format!("{dir}/cmdbtns.grp")),
             command_buttons_hd: load_dds_grp(root, &format!("{dir}/cmdbtns.dds.grp")),
             command_icons_hd: load_dds_grp(root, "hd2/unit/cmdicons/cmdicons.dds.grp"),
@@ -992,6 +998,8 @@ mod wireframe_tests {
             con_over: None,
             clock: None,
             apm: None,
+            progress_empty: None,
+            progress_full: None,
             command_buttons: None,
             command_buttons_hd: None,
             command_icons_hd: None,

@@ -385,6 +385,10 @@ pub fn encode_order(out: &mut Vec<u8>, o: &Order) {
             w_i32(out, pos.1);
         }
         Order::Die => w_u8(out, 23),
+        Order::Construct { building } => {
+            w_u8(out, 24);
+            w_u32(out, *building);
+        }
     }
 }
 
@@ -456,6 +460,7 @@ pub fn decode_order(c: &mut Cursor<'_>) -> Option<Order> {
             Order::Land { pos: (x, y) }
         }
         23 => Order::Die,
+        24 => Order::Construct { building: c.u32()? },
         _ => return None,
     })
 }
@@ -766,6 +771,8 @@ fn hash_unit(h: &mut DefaultHasher, u: &SimUnit) {
     u.facing.hash(h);
     u.alive.hash(h);
     u.completed.hash(h);
+    u.kills.hash(h);
+    u.builder.hash(h);
     u.credited.hash(h);
     u.cooldown.hash(h);
     hash_order(h, &u.order);

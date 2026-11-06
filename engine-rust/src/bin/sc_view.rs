@@ -3184,6 +3184,15 @@ type Card = [Option<(
     galaxycraft::buttons::ButtonState,
 )>; 9];
 
+/// `stat_txt` strings of the selection panel (1-based ids).
+const STAT_KILLS: u16 = 764;
+const STAT_UPGRADING: u16 = 766;
+const STAT_RESEARCHING: u16 = 769;
+const STAT_BUILDING: u16 = 772;
+const STAT_UNDER_CONSTRUCTION: u16 = 800;
+/// `units.dat` weapon id meaning "none".
+const NO_WEAPON: u8 = 130;
+
 /// Ticks between minimap terrain/fog recompositions.
 const MINIMAP_REFRESH_TICKS: u64 = 8;
 /// Retail Esc-only card shown while a target or a building spot is pending.
@@ -12769,6 +12778,28 @@ impl App {
                 self.play_ack();
                 return;
             }
+            // An SCV resumes the construction of an own unfinished building.
+            if towner == me
+                && self
+                    .world
+                    .unit(tid)
+                    .is_some_and(|t| !t.completed && t.builder != 0)
+            {
+                let scvs: Vec<u32> = mobile
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        self.world
+                            .unit(*id)
+                            .is_some_and(|u| u.type_id == galaxycraft::ids::unit::SCV)
+                    })
+                    .collect();
+                if let Some(&scv) = scvs.first() {
+                    self.send_order(scv, Order::Construct { building: tid });
+                    self.play_ack();
+                    return;
+                }
+            }
             if resource {
                 let (workers, others): (Vec<u32>, Vec<u32>) = mobile.iter().partition(|id| {
                     self.world
@@ -12876,6 +12907,8 @@ impl App {
             self.actions = self.actions.saturating_add(1);
             self.play("ui_click");
             self.build_mode = None;
+            // Retail returns to the unit's own card once the spot is given.
+            self.card_set = None;
         }
     }
 
@@ -14331,6 +14364,7 @@ impl App {
             None,
             GlueFace::Hud,
         );
+        self.draw_hud_status(fb, &u);
         // Hit points (and shields first for Protoss) under the wireframe.
         let hp = (u.hp / 256).max(0);
         let max_hp = ty.hit_points_raw as i32 / 256;
@@ -14360,15 +14394,23 @@ impl App {
                 GlueFace::Hud,
             );
         }
-        // Town halls list the player's supply.
-        if matches!(
-            u.type_id,
-            galaxycraft::ids::unit::COMMAND_CENTER
-                | galaxycraft::ids::unit::NEXUS
-                | galaxycraft::ids::unit::HATCHERY
-                | galaxycraft::ids::unit::LAIR
-                | galaxycraft::ids::unit::HIVE
-        ) {
+        // Town halls list the player's supply, unless the production or
+        // construction block is shown there (Backwater Station: a training
+        // Command Center shows only "Building" and its queue).
+        if u.completed
+            && !matches!(
+                u.order,
+                Order::Train { .. } | Order::Research { .. } | Order::Upgrade { .. }
+            )
+            && matches!(
+                u.type_id,
+                galaxycraft::ids::unit::COMMAND_CENTER
+                    | galaxycraft::ids::unit::NEXUS
+                    | galaxycraft::ids::unit::HATCHERY
+                    | galaxycraft::ids::unit::LAIR
+                    | galaxycraft::ids::unit::HIVE
+            )
+        {
             let used = self.world.supply_used(self.local_player as u8) / 2;
             let cap = self.world.supply_cap(self.local_player as u8) / 2;
             // "Provided" is this building's own supply (134905: a Hatchery
@@ -14741,6 +14783,232 @@ impl App {
                 rect.y + (rect.h - h) / 2,
                 w,
                 h,
+            );
+        }
+    }
+
+    /// The selection panel's state block (shipped `statdata.ui.json`
+    /// controls; look from the retail recordings):
+    /// - a building under construction: "Under Construction" (-30) over the
+    ///   `pbrempt` / `pbrfull` bar (13);
+    /// - a building training: "Building" (-15), the current item (2, `cmdbtns`
+    ///   frame 2, small "1"), the bar (7) and queue slots 2-5 (3-6): the queued
+    ///   unit with its yellow number, else the big digit (frames 7-10), linked
+    ///   by `cmdbtns` frame 4 (Backwater Station 126 s);
+    /// - research / upgrade: "Researching" (-35) / "Upgrading" (-40), item 15 /
+    ///   17, bar 14 / 16;
+    /// - a unit: its rank (-20, `stat_txt` 1302 + rank) and "Kills: N" (-21),
+    ///   and armour / weapon upgrade boxes in 3-6 (Boot Camp: SCV "Private",
+    ///   "Kills: 0", two boxes).
+    fn draw_hud_status(&mut self, fb: &mut Framebuffer, u: &SimUnit) {
+        let ty = self.data.unit(u.type_id).clone();
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cx0 = self.content_box.0;
+        let control = |app: &App, id: i32| app.hud_control("statdata", id, UiRect::new(0, 0, 0, 0));
+        let text = |app: &mut App, fb: &mut Framebuffer, r: UiRect, t: &str, small: bool| {
+            let (px, base) = if small {
+                (HUD_SMALL_PX, HUD_SMALL_BASE)
+            } else {
+                (HUD_NAME_PX, HUD_NAME_BASE)
+            };
+            let w = app.glue_measure(t, px, GlueFace::Hud);
+            app.glue_text_face(
+                fb,
+                (r.x - cx0) as f32 / k + (r.w as f32 / k - w) / 2.0,
+                r.y as f32 / k + base,
+                t,
+                px,
+                HUD_TEXT_COLOR,
+                None,
+                GlueFace::Hud,
+            );
+        };
+        let string = |app: &App, id: u16| {
+            app.data
+                .strings
+                .get(id - 1)
+                .unwrap_or("")
+                .trim_matches(|c: char| c.is_control())
+                .to_string()
+        };
+        let bar = |app: &App, fb: &mut Framebuffer, r: UiRect, frac: f32| {
+            let Some(console) = &app.console else {
+                return;
+            };
+            if let Some(e) = &console.progress_empty {
+                e.draw_scaled(fb, r.x, r.y, r.w, r.h);
+            }
+            if let Some(f) = &console.progress_full {
+                let frac = frac.clamp(0.0, 1.0);
+                let sw = (f.width as f32 * frac).round() as i32;
+                let dw = (r.w as f32 * frac).round() as i32;
+                if sw > 0 && dw > 0 {
+                    f.draw_sub(fb, (0, 0, sw, f.height as i32), (r.x, r.y, dw, r.h));
+                }
+            }
+        };
+        let frame = |app: &App, fb: &mut Framebuffer, r: UiRect, n: usize| {
+            if let Some(img) = app
+                .console
+                .as_ref()
+                .and_then(|c| c.command_buttons_hd.as_ref())
+                .and_then(|g| g.frame(n))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+            }
+        };
+        let icon = |app: &App, fb: &mut Framebuffer, r: UiRect, n: u16| {
+            if let Some(img) = app
+                .console
+                .as_ref()
+                .and_then(|c| c.cmdicons4.as_ref())
+                .and_then(|g| g.frame(n as usize))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                draw_tinted(
+                    fb,
+                    img,
+                    (r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h),
+                    HUD_GLYPH_ENABLED,
+                );
+            }
+        };
+        let frac = if u.build_total > 0 {
+            1.0 - u.build_remaining as f32 / u.build_total as f32
+        } else {
+            0.0
+        };
+        if ty.is_building() && !u.completed {
+            text(
+                self,
+                fb,
+                control(self, -30),
+                &string(self, STAT_UNDER_CONSTRUCTION),
+                false,
+            );
+            bar(self, fb, control(self, 13), frac);
+            return;
+        }
+        match u.order {
+            Order::Train { unit_type } => {
+                text(
+                    self,
+                    fb,
+                    control(self, -15),
+                    &string(self, STAT_BUILDING),
+                    false,
+                );
+                let cur = control(self, 2);
+                frame(self, fb, cur, 2);
+                icon(self, fb, cur, unit_type);
+                bar(self, fb, control(self, 7), frac);
+                let queued: Vec<u16> = u
+                    .production
+                    .iter()
+                    .filter_map(|o| match o {
+                        Order::Train { unit_type } => Some(*unit_type),
+                        _ => None,
+                    })
+                    .collect();
+                for slot in 0..4usize {
+                    let r = control(self, 3 + slot as i32);
+                    frame(self, fb, r, if slot < 3 { 4 } else { 2 });
+                    match queued.get(slot) {
+                        Some(&t) => icon(self, fb, r, t),
+                        None => frame(self, fb, r, 7 + slot),
+                    }
+                }
+                return;
+            }
+            Order::Research { tech_id } => {
+                text(
+                    self,
+                    fb,
+                    control(self, -35),
+                    &string(self, STAT_RESEARCHING),
+                    false,
+                );
+                let r = control(self, 15);
+                frame(self, fb, r, 2);
+                let n = self.data.tech(tech_id).map_or(0, |t| t.icon);
+                icon(self, fb, r, n);
+                bar(self, fb, control(self, 14), frac);
+                return;
+            }
+            Order::Upgrade { upgrade_id, .. } => {
+                text(
+                    self,
+                    fb,
+                    control(self, -40),
+                    &string(self, STAT_UPGRADING),
+                    false,
+                );
+                let r = control(self, 17);
+                frame(self, fb, r, 2);
+                let n = self.data.upgrade(upgrade_id).map_or(0, |t| t.icon);
+                icon(self, fb, r, n);
+                bar(self, fb, control(self, 16), frac);
+                return;
+            }
+            _ => {}
+        }
+        if ty.is_building() {
+            return;
+        }
+        if ty.rank != 0 {
+            let rank = string(self, 1302 + ty.rank as u16);
+            text(self, fb, control(self, -20), &rank, false);
+        }
+        let kills = format!("{} {}", string(self, STAT_KILLS), u.kills);
+        text(self, fb, control(self, -21), &kills, false);
+        // Armour then weapon boxes (shields first for Protoss, drawn by
+        // `draw_hud_upgrade` in box 3).
+        let mut boxes: Vec<(u16, u8)> = Vec::new();
+        if let Some(up) = self.data.upgrade(ty.armor_upgrade) {
+            boxes.push((up.icon, ty.armor_upgrade));
+        }
+        for w in [ty.ground_weapon, ty.air_weapon] {
+            if w != NO_WEAPON
+                && let Some(wt) = self.data.weapon(w)
+                && !boxes.iter().any(|(i, _)| *i == wt.icon)
+            {
+                boxes.push((wt.icon, wt.damage_upgrade));
+            }
+        }
+        let first = if ty.has_shields { 4 } else { 3 };
+        for (n, (ic, up)) in boxes.into_iter().enumerate().take((7 - first) as usize) {
+            let mut r = control(self, first + n as i32);
+            r.x += (UPGRADE_DRAW_SHIFT.0 * k).round() as i32;
+            r.y += (UPGRADE_DRAW_SHIFT.1 * k).round() as i32;
+            // Upgrade icons are drawn untinted (Boot Camp: grey art on the
+            // dark box), unlike the yellow queue icons.
+            if let Some(img) = self
+                .console
+                .as_ref()
+                .and_then(|c| c.cmdicons4.as_ref())
+                .and_then(|g| g.frame(ic as usize))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+            }
+            frame(self, fb, r, 12);
+            let level = self.world.players[self.local_player]
+                .upgrade_level(up)
+                .to_string();
+            let x = (r.x + r.w - cx0) as f32 / k - UPGRADE_LEVEL_DX;
+            self.glue_text_face(
+                fb,
+                x,
+                (r.y + r.h) as f32 / k - UPGRADE_LEVEL_DY,
+                &level,
+                HUD_SMALL_PX,
+                HUD_TEXT_COLOR,
+                None,
+                GlueFace::Hud,
             );
         }
     }
