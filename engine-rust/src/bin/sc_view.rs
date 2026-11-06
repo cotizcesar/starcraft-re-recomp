@@ -3186,6 +3186,58 @@ type Card = [Option<(
     galaxycraft::buttons::ButtonState,
 )>; 9];
 
+/// `scvspark` (Fusion Cutter hit) image.
+const SCV_SPARK_IMAGE: u16 = 526;
+/// Fusion Cutter cooldown in frames (`weapons.dat` 15).
+const WELD_CYCLE: u64 = 15;
+
+/// See `App::welding_pose`.
+#[derive(Clone, Copy, Debug)]
+struct WeldPose {
+    facing: u8,
+    raw: usize,
+    spark: Option<(i32, i32)>,
+    spark_frame: usize,
+}
+
+/// iscript animation of a Terran building past its scaffold.
+const ALMOST_BUILT_ANIM: usize = 15;
+
+/// How an unfinished Terran building is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConstructionStage {
+    /// The `units.dat` construction image at this frame.
+    Scaffold(usize),
+    /// The building's own image in its AlmostBuilt frame.
+    AlmostBuilt,
+}
+
+/// FACT (Boot Camp recording, Supply Depot placed at 174.2 s, done at 199.4 s
+/// = 600 frames): the scaffold shows frame 0, switches to frame 1 at 177.1 s,
+/// frame 2 at 182.7 s and the depot's AlmostBuilt frame at 188.3 s, i.e. at
+/// progress 1/9, 1/3 and 5/9.  With hit points growing from 10 % that is
+/// 20 / 40 / 60 % HP (INFERENCE that retail keys the stages on HP; falsifier:
+/// a repaired or damaged building switching stage off these progress marks).
+fn terran_construction_stage(
+    u: &SimUnit,
+    ty: &galaxycraft::data::UnitType,
+) -> Option<ConstructionStage> {
+    if u.completed || !ty.is_building() || !(325..=330).contains(&ty.construction_image) {
+        return None;
+    }
+    let total = u.build_total.max(1) as i64;
+    let done = (total - u.build_remaining.clamp(0, u.build_total) as i64) * 9;
+    Some(if done < total {
+        ConstructionStage::Scaffold(0)
+    } else if done < 3 * total {
+        ConstructionStage::Scaffold(1)
+    } else if done < 5 * total {
+        ConstructionStage::Scaffold(2)
+    } else {
+        ConstructionStage::AlmostBuilt
+    })
+}
+
 /// `stat_txt` strings of the selection panel (1-based ids).
 const STAT_KILLS: u16 = 764;
 const STAT_UPGRADING: u16 = 766;
@@ -13737,7 +13789,18 @@ impl App {
         let mut order: Vec<usize> = (0..self.world.units.len())
             .filter(|&i| self.world.units[i].alive)
             .collect();
-        order.sort_by_key(|&i| self.world.units[i].y);
+        // Elevation first, then y (retail sprite order); an SCV welding a
+        // building is drawn in front of it.
+        order.sort_by_key(|&i| {
+            let u = &self.world.units[i];
+            let y = match u.order {
+                Order::Construct { building } => {
+                    self.world.unit(building).map_or(u.y, |b| u.y.max(b.y + 1))
+                }
+                _ => u.y,
+            };
+            (self.data.unit(u.type_id).elevation, y)
+        });
         let mut hd_units = Vec::new();
         for i in order {
             let u = &self.world.units[i];
@@ -13885,6 +13948,87 @@ impl App {
             .image(self.data.hd_anim_id(image), |path| install?.read(path))
     }
 
+    /// Pose of an SCV constructing a Terran building next to it: facing the
+    /// building, the Fusion Cutter cycle (`iscript` GndAttkRpt: frame 34
+    /// then 17) every `WELD_CYCLE` frames, and a `scvspark` on a point of the
+    /// building that changes each cycle (Boot Camp recording 175-199 s: the
+    /// SCV works the depot with blue sparks).  Render only; the simulation
+    /// keeps `Order::Construct`.
+    fn welding_pose(&self, u: &SimUnit) -> Option<WeldPose> {
+        let Order::Construct { building } = u.order else {
+            return None;
+        };
+        let b = self.world.unit(building)?;
+        if b.completed {
+            return None;
+        }
+        let (dx, dy) = ((b.x - u.x) / 256, (b.y - u.y) / 256);
+        if dx * dx + dy * dy > 96 * 96 {
+            return None;
+        }
+        let facing = (((dy as f32).atan2(dx as f32).to_degrees() + 90.0).rem_euclid(360.0) * 256.0
+            / 360.0) as u8;
+        let tick = self.world.tick + u.id as u64 * 7;
+        let phase = (tick % WELD_CYCLE) as usize;
+        let cycle = tick / WELD_CYCLE;
+        let ty = self.data.unit(b.type_id);
+        let (hw, hh) = (
+            (ty.dimensions.left.max(ty.dimensions.right) as i64).max(8),
+            (ty.dimensions.top.max(ty.dimensions.bottom) as i64).max(8),
+        );
+        let h = (cycle as i64)
+            .wrapping_mul(2654435761)
+            .wrapping_add(building as i64 * 97);
+        let spark = (phase < 10).then(|| {
+            (
+                b.x / 256 + (h.rem_euclid(2 * hw) - hw) as i32 * 2 / 3,
+                b.y / 256 + ((h / 7).rem_euclid(2 * hh) - hh) as i32 * 2 / 3,
+            )
+        });
+        Some(WeldPose {
+            facing,
+            raw: if phase < 2 { 34 } else { 17 },
+            spark,
+            spark_frame: phase,
+        })
+    }
+
+    /// Overlays one image's animation `anim` attaches (the Terran scaffold's
+    /// shadow, `TBldSml` Init -> image 331).
+    fn hd_image_layers(&self, image: u16, anim: usize) -> Vec<(u16, i8, i8, bool)> {
+        let Some(script) = self.data.image(image).map(|i| i.iscript_id as u16) else {
+            return Vec::new();
+        };
+        let Some(mut st) = self.data.iscript.start_animation(script, anim, 0) else {
+            return Vec::new();
+        };
+        let mut ctx = galaxycraft::iscript::AnimContext::default();
+        let mut out = Vec::new();
+        for _ in 0..4 {
+            for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
+                if let galaxycraft::iscript::AnimEvent::Overlay { id, x, y, below } = e {
+                    out.push((id, x, y, below));
+                }
+            }
+        }
+        out
+    }
+
+    /// First `playfram` of an image's animation (the AlmostBuilt frame).
+    fn first_frame_of(&self, image: u16, anim: usize) -> Option<usize> {
+        let script = self.data.image(image)?.iscript_id as u16;
+        let mut st = self.data.iscript.start_animation(script, anim, 0)?;
+        let mut ctx = galaxycraft::iscript::AnimContext::default();
+        for _ in 0..4 {
+            for e in self.data.iscript.tick_anim(&mut st, &mut ctx) {
+                if let galaxycraft::iscript::AnimEvent::Frame { raw, .. } = e {
+                    return Some(raw as usize);
+                }
+            }
+        }
+        None
+    }
+
     /// Overlays the unit's Init animation attaches (`imgul` shadows below,
     /// `imgol` glows above), from the retail iscript: image id, offset and
     /// whether it is drawn under the main image.
@@ -13934,6 +14078,9 @@ impl App {
                 .copied()
                 .unwrap_or((u.x / 256, u.y / 256, u.facing));
         let directional = img.header.frames.len() >= 17;
+        // An SCV welding its building faces it (`welding_pose`).
+        let weld = self.welding_pose(u);
+        let facing = weld.map_or(facing, |w| w.facing);
         let (frame, flip) = if directional {
             let dir = ((facing as i32 + 4) / 8).rem_euclid(32);
             if dir <= 16 {
@@ -13948,7 +14095,7 @@ impl App {
         let sx = cx as f32 + (ux - self.camera.0) as f32 * s;
         let sy = cy as f32 + (uy - self.camera.1) as f32 * s;
         let ty = self.data.unit(u.type_id);
-        let image_id = self
+        let mut image_id = self
             .data
             .flingy(ty.flingy)
             .and_then(|f| self.data.sprite(f.sprite))
@@ -13958,8 +14105,47 @@ impl App {
             self.hd_sprites
                 .image(self.data.hd_anim_id(id), |path| install?.read(path))
         };
-        let layers = self
-            .hd_unit_layers(u.type_id, u.is_completed_building(&self.data))
+        let (mut img, mut frame) = (img, frame);
+        if let Some(w) = weld {
+            // Attack frames are `raw + direction` like every directional
+            // GRP (17 frames per pose).
+            let posed = w.raw + frame;
+            if posed < img.header.frames.len() {
+                frame = posed;
+            }
+        }
+        let mut layer_list = self.hd_unit_layers(u.type_id, u.is_completed_building(&self.data));
+        if let Some(stage) = terran_construction_stage(u, ty) {
+            match stage {
+                ConstructionStage::Scaffold(n) => {
+                    if let Some(si) = fetch(ty.construction_image) {
+                        image_id = ty.construction_image;
+                        img = si;
+                        frame = n;
+                        layer_list = self.hd_image_layers(ty.construction_image, 0);
+                    }
+                }
+                ConstructionStage::AlmostBuilt => {
+                    frame = self
+                        .first_frame_of(image_id, ALMOST_BUILT_ANIM)
+                        .unwrap_or(0);
+                }
+            }
+        }
+        let spark = weld.and_then(|w| {
+            let (bx, by) = w.spark?;
+            let si = fetch(SCV_SPARK_IMAGE)?;
+            let n = si.header.frames.len().max(1);
+            Some(HdPart {
+                image_id: SCV_SPARK_IMAGE,
+                frame: w.spark_frame.min(n - 1),
+                img: si,
+                x: cx as f32 + (bx - self.camera.0) as f32 * s,
+                y: content.1 as f32 + (by - self.camera.1) as f32 * s,
+                below: false,
+            })
+        });
+        let layers = layer_list
             .into_iter()
             .filter_map(|(id, ox, oy, below)| {
                 let li = fetch(id)?;
@@ -13973,6 +14159,7 @@ impl App {
                     below,
                 })
             })
+            .chain(spark)
             .collect();
         // Geyser smoke (`creategasoverlays`): image 430 + overlay at the
         // geyser's LO offset, above it.
@@ -21668,5 +21855,41 @@ mod letterbox_tests {
         // A click on the first surface row lands on surface row 0.
         assert_eq!(surface_point((0, 2), 3, 2), (3, 0));
         assert_eq!(surface_point((0, 118), 640, 477), (640, 359));
+    }
+}
+
+#[cfg(test)]
+mod construction_look_tests {
+    use super::{ConstructionStage, terran_construction_stage};
+    use galaxycraft::ids::unit as uid;
+
+    #[test]
+    fn scaffold_frames_switch_at_the_recorded_progress_marks() {
+        // Boot Camp recording: a 600-frame depot switches at 1/9, 1/3, 5/9.
+        let data = std::sync::Arc::new(galaxycraft::data::GameData::bundled().expect("tables"));
+        let mut w =
+            galaxycraft::sim::World::new(data.clone(), galaxycraft::map::Terrain::open(32, 32), 2);
+        let i = w.spawn_px(0, uid::SUPPLY_DEPOT, 300, 300).expect("depot");
+        let ty = data.unit(uid::SUPPLY_DEPOT).clone();
+        assert_eq!(ty.construction_image, 330, "units.dat: TBldSml");
+        let u = &mut w.units[i];
+        u.completed = false;
+        u.build_total = 600;
+        let at = |u: &mut galaxycraft::sim::SimUnit, done: i32| {
+            u.build_remaining = 600 - done;
+            terran_construction_stage(u, &ty)
+        };
+        assert_eq!(at(u, 0), Some(ConstructionStage::Scaffold(0)));
+        assert_eq!(at(u, 66), Some(ConstructionStage::Scaffold(0)));
+        assert_eq!(at(u, 67), Some(ConstructionStage::Scaffold(1)));
+        assert_eq!(at(u, 200), Some(ConstructionStage::Scaffold(2)));
+        assert_eq!(at(u, 333), Some(ConstructionStage::Scaffold(2)));
+        assert_eq!(at(u, 334), Some(ConstructionStage::AlmostBuilt));
+        u.completed = true;
+        assert_eq!(terran_construction_stage(u, &ty), None);
+        // Not Terran: no scaffold, even unfinished.
+        w.units[i].completed = false;
+        let pool = data.unit(uid::SPAWNING_POOL).clone();
+        assert_eq!(terran_construction_stage(&w.units[i], &pool), None);
     }
 }

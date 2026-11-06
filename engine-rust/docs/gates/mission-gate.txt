@@ -2,7 +2,7 @@ PASS boot camp: three Supply Depots
 PASS boot camp: a Refinery on the geyser
 PASS boot camp: 100 gas
 PASS boot camp: victory
-  end: tick=6542 units=[Terran Command Center=1 Terran Marine=16 Terran Refinery=1 Terran SCV=2 Terran Supply Depot=3]
+  end: tick=7142 units=[Terran Command Center=1 Terran Marine=16 Terran Refinery=1 Terran SCV=2 Terran Supply Depot=3]
 PASS backwater station: the Barracks trains Marines (4 at start)
 PASS backwater station: Jim Raynor survives
 PASS backwater station: victory (Infested CC)
