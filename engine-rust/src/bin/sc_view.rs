@@ -4856,10 +4856,9 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     app.menu = false;
     app.update_view(fb);
     app.draw(fb);
-    let mut log = String::from(
-        "step	action	state
-",
-    );
+    let mut log = String::from("step\taction\tstate\n");
+    let mut cue_log = String::from("tick\tkind\tcontent\n");
+    let mut cues_logged = 0usize;
     let mut mouse: Option<(i32, i32)> = None;
     let frame = |app: &mut App, fb: &mut Framebuffer, input: GameInput| {
         app.handle_game_input(&input);
@@ -4954,6 +4953,26 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             "ticks" => {
                 for _ in 0..num(1).max(0) {
                     app.step_once();
+                    // Trigger cues with the tick they appeared (timeline
+                    // comparisons against the recordings).
+                    if let Some(t) = app.world.triggers.as_ref() {
+                        for cue in &t.cues[cues_logged.min(t.cues.len())..] {
+                            let text = match *cue {
+                                galaxycraft::trigger::TriggerCue::Text { string, .. } => format!(
+                                    "text\t{}",
+                                    app.scenario
+                                        .string(string)
+                                        .unwrap_or("")
+                                        .replace(['\n', '\r', '\t'], " ")
+                                ),
+                                galaxycraft::trigger::TriggerCue::Wav { string, .. } => {
+                                    format!("wav\t{}", app.scenario.string(string).unwrap_or(""))
+                                }
+                            };
+                            cue_log.push_str(&format!("{}\t{text}\n", app.world.tick));
+                        }
+                        cues_logged = t.cues.len();
+                    }
                 }
                 app.after_steps();
                 app.draw(fb);
@@ -4964,6 +4983,22 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     mouse = click_mod(app, fb, at, false, false, true);
                 } else {
                     eprintln!("game script: no on-screen unit named {name:?}");
+                }
+            }
+            "rclick-unit-at" => {
+                // Right click on the own unit named NAME nearest world x, y.
+                let name = parts.get(1).copied().unwrap_or("");
+                let (wx, wy) = (num(2), num(3));
+                let best = app
+                    .world
+                    .units
+                    .iter()
+                    .filter(|u| u.alive && app.data.unit_name(u.type_id).contains(name))
+                    .min_by_key(|u| (u.x / 256 - wx).abs() + (u.y / 256 - wy).abs())
+                    .map(|u| (u.x / 256, u.y / 256));
+                if let Some((x, y)) = best {
+                    let at = app.screen_point_of_world(x, y);
+                    mouse = click(app, fb, at, true, false);
                 }
             }
             "click-unit" | "rclick-unit" => {
@@ -5066,6 +5101,7 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
         }
         log.push_str(&format!("{i}\t{step}\t{}\n", app.game_state_line()));
     }
+    let _ = std::fs::write(format!("{dir}/cues.tsv"), &cue_log);
     if let Err(e) = std::fs::write(format!("{dir}/game.tsv"), &log) {
         eprintln!("game.tsv write failed: {e}");
     }
@@ -13052,6 +13088,33 @@ impl App {
                 self.play_ack();
                 return;
             }
+            // Retail smart command on an own Bunker / transport with room:
+            // the units that fit go in (Desperate Alliance recording 272 s:
+            // four Marines inside a Bunker).
+            if towner == me
+                && let Some(t) = self.world.unit(tid).cloned()
+                && t.completed
+                && self.data.unit(t.type_id).space_provided > 0
+            {
+                let riders: Vec<u32> = mobile
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != tid)
+                    .filter(|id| {
+                        self.world.unit(*id).is_some_and(|u| {
+                            let ty = self.data.unit(u.type_id);
+                            ty.space_required > 0 && ty.space_required < 8 && !ty.is_building()
+                        })
+                    })
+                    .collect();
+                if !riders.is_empty() {
+                    for id in riders {
+                        self.send_order(id, Order::EnterTransport { transport: tid });
+                    }
+                    self.play_ack();
+                    return;
+                }
+            }
             // An SCV resumes the construction of an own unfinished building.
             if towner == me
                 && self
@@ -14931,6 +14994,7 @@ impl App {
             GlueFace::Hud,
         );
         self.draw_hud_status(fb, &u);
+        self.draw_hud_cargo(fb, &u);
         // Hit points (and shields first for Protoss) under the wireframe.
         let hp = (u.hp / 256).max(0);
         let max_hp = ty.hit_points_raw as i32 / 256;
@@ -15392,6 +15456,54 @@ impl App {
             let zerg = ty.group_flags & 0x01 != 0;
             if !console.draw_wireframe_hd(fb, u.type_id, rect, zerg, ty.has_shields) {
                 console.draw_wireframe(fb, u.type_id, rect, None);
+            }
+        }
+    }
+
+    /// Loaded units of a Bunker / transport (Desperate Alliance recording
+    /// 272 s: a Bunker with four Marines shows them in a 2 x 2 block of
+    /// `cmdbtns` boxes at `statdata` controls 27-30, the middle two columns
+    /// of the eight cargo slots 25-32).  Capacity 4 uses 27-30, larger
+    /// transports 25-32; one-space units only (INFERENCE: fill order
+    /// column-major by control id, as the group grid; the two-space and
+    /// four-space slots 18-24 are not drawn yet).
+    fn draw_hud_cargo(&mut self, fb: &mut Framebuffer, u: &SimUnit) {
+        let ty = self.data.unit(u.type_id).clone();
+        if ty.space_provided == 0 || u.cargo.is_empty() {
+            return;
+        }
+        let first = if ty.space_provided <= 4 { 27 } else { 25 };
+        let last = if ty.space_provided <= 4 { 30 } else { 32 };
+        let k = self.content_box.3 as f32 / 1440.0;
+        let cargo: Vec<SimUnit> = u
+            .cargo
+            .iter()
+            .filter_map(|id| self.world.unit(*id).cloned())
+            .collect();
+        for (n, c) in cargo.iter().enumerate() {
+            let id = first + n as i32;
+            if id > last {
+                break;
+            }
+            let r = self.hud_control("statdata", id, UiRect::new(0, 0, 0, 0));
+            let cty = self.data.unit(c.type_id).clone();
+            let Some(console) = &self.console else {
+                return;
+            };
+            if let Some(img) = console
+                .command_buttons_hd
+                .as_ref()
+                .and_then(|g| g.frame(GROUP_BOX))
+            {
+                let w = (img.width as f32 * 0.75 * k).round() as i32;
+                let h = (img.height as f32 * 0.75 * k).round() as i32;
+                img.draw_scaled(fb, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h);
+            }
+            let side = (r.w.min(r.h) as f32 * 0.86).round() as i32;
+            let rect = (r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, side);
+            let zerg = cty.group_flags & 0x01 != 0;
+            if !console.draw_wireframe_hd(fb, c.type_id, rect, zerg, cty.has_shields) {
+                console.draw_wireframe(fb, c.type_id, rect, None);
             }
         }
     }

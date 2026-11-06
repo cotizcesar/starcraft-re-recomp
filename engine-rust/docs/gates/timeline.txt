@@ -1,0 +1,11 @@
+PASS map 0 ADVISOR    The T-280 SCV                recorded   1.6s ours   1.6s
+PASS map 0 SCV        Roger that                   recorded   9.1s ours   9.0s
+PASS map 0 ADVISOR    In order to build            recorded  10.2s ours  10.0s
+PASS map 0 ADVISOR    You can build additional     recorded  14.8s ours  14.6s
+PASS map 0 -          - Select the Command Center  recorded  18.0s ours  17.7s
+PASS map 1 TIP        You can select multiple      recorded   0.0s ours   0.0s
+PASS map 1 TERRAN SCV I can't believe              recorded   6.5s ours   6.3s
+PASS map 2 RAYNOR     Glad to see you              recorded   0.0s ours   0.0s
+PASS map 3 VULTURE    Hey, this thing              recorded   1.4s ours   1.1s
+PASS map 3 MARINE     We can take cover            recorded  23.7s ours  23.3s
+timeline gate: 0 failure(s), tolerance 0.5 s

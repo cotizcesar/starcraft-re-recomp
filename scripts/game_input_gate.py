@@ -14,7 +14,8 @@ each step's state line (`game.tsv`) is checked:
    target that a world click then gives;
 6. in the group panel Shift+click drops a unit and a click keeps only it;
 7. Esc on a selected unfinished building cancels it with a 75 % refund;
-8. Backwater Station: I on Raynor's Vulture then a click lays one Spider Mine.
+8. Backwater Station: I on Raynor's Vulture then a click lays one Spider Mine;
+9. Desperate Alliance: a right click on a Bunker loads the selected Marines.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -136,6 +137,23 @@ def main() -> int:
           "I on Raynor's Vulture waits for a target")
     check(count(mine_rows[-1], "Vulture Spider Mine") == 1,
           "the click lays one Spider Mine")
+    # Bunker (Desperate Alliance, map 3): box-select Marines, right click
+    # the Bunker -> they go in (fewer Marines on the map, Bunker selected
+    # afterwards by a click).
+    out3 = Path(tempfile.mkdtemp(prefix="gc-game-"))
+    env3 = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(out3))
+    subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", w, "--height", h,
+         "--shot-map", "3", "--game-script",
+         "ticks:1,look:1072:2752,dump-units:a,ctrl-click-unit:Marine,"
+         "rclick-unit-at:Bunker:1072:2752,ticks:200,dump-units:b,click-world:1072:2752"],
+        check=True, env=env3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    marines = lambda f: sum(1 for l in (out3 / f).read_text().splitlines()[1:]  # noqa: E731
+                            if l.split("\t")[2] == "Terran Marine")
+    bunker_rows = [l.split("\t")[2] for l in (out3 / "game.tsv").read_text().splitlines()[1:]]
+    check(marines("b.tsv") < marines("a.tsv"), "a right click on the Bunker loads the Marines")
+    check(field(bunker_rows[-1], "selected") == "[Terran Bunker]", "the loaded Bunker can be selected")
     print(f"\ngame input gate: {len(failures)} failure(s) at {args.size} (minerals {minerals(4)} -> {minerals(5)})")
     return 1 if failures else 0
 

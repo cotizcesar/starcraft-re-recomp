@@ -17,4 +17,6 @@ PASS an unfinished depot is placed and selected
 PASS Esc cancels the construction with a 75 % refund
 PASS I on Raynor's Vulture waits for a target
 PASS the click lays one Spider Mine
+PASS a right click on the Bunker loads the Marines
+PASS the loaded Bunker can be selected
 game input gate: 0 failure(s) at 3440x1440 (minerals 150 -> 50)

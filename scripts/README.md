@@ -16,6 +16,8 @@ local-only and never committed.
 | `render_screens.sh` | Headless render of every client screen to `/tmp/shots/` | `SC_INSTALL` |
 | `ui_diff.py` | Per-reference control checks (dialog borders, rings, art panels) | references |
 | `ui_visual_diff.py` | Full-frame visual gate over the 2560x1440 content box | references |
+| `timeline_gate.py` | Episode I opening trigger timelines (transmissions, objectives) against onsets measured on the retail recordings | `SC_INSTALL` |
+| `mission_gate.py` | The four Episode I missions won through scripted input | `SC_INSTALL` |
 | `resolution_diff.py` | Every screen at 720p..4K, ultrawide and 4:3 / 16:10 (letterboxed) against its 1440p layout | `SC_INSTALL` |
 | `menu_time_diff.py` | Deterministic check of the four main-menu references at fixed clip phases | references |
 | `menu_walkthrough.py` | Scripted menu walkthrough: transitions, UI sounds, state and frames | `SC_INSTALL` |
