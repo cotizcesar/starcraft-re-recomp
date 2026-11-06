@@ -6125,3 +6125,26 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures (1920x1080).
+
+## 2026-11-06 (131) — Retail field-18 SCV route tracked: a dogleg through the gap between Marine groups
+
+- **Track (FACT, Boot Camp 115.4-117.6 s, moving-pixel median at 10 fps,
+  world = 1195 + (sx - 440) / 3, 36 + sy / 3 - 13).**  The field-18 SCV
+  leaves at (1489, 294), runs east along y ~295 to x ~1600 (116.5 s), then
+  climbs north-east to (1670, 237) by 117.5 s, i.e. through the middle of
+  the gap between the Marine groups at (1615-1670, 172-211) (bottom ~221)
+  and (1685-1722, 288-340) (top ~279), before heading to the drop-off.
+  After 117.6 s the field-14 SCV leaves its field and the median mixes the
+  two.  This corrects (130): the Marines do shape the retail route.
+- **Ours.**  The planner returns one straight segment from (1484, 295) to
+  the free cell (1764, 260) next to the Command Center; with standing units
+  added as obstacles (`GC_STEER`, reverted) it is unchanged, because the
+  line clears the third group's top edge by ~0 px (the SCV's 11 px half
+  height touches y 279).  Retail keeps a margin (INFERENCE: BW's region /
+  contour pathing aims through gap centres; falsifier: the client's path
+  routine or a recording with the Marines moved).
+- **Open.**  A pathing change of that kind affects every unit's movement;
+  not attempted without the client's path code.  Anchors unchanged
+  (Wasteland -1.7 %, gas -4.5 %).
+
+**Verification.**  `git diff src/` empty after the revert.
