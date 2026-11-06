@@ -2026,3 +2026,111 @@ fn a_terran_scv_stays_on_its_building_and_construction_pauses_without_it() {
     let max = world.data.unit(uid::SUPPLY_DEPOT).hit_points_raw as i32;
     assert_eq!(world.units[d].hp, max);
 }
+
+#[test]
+fn a_chasing_unit_walks_to_its_target_and_stays_on_the_map() {
+    // `attack_target` passed the target's 1/256 px position as pixels, so
+    // every chase headed 256x too far (Wasteland: Marines at x 3700-4200 on
+    // a 2048 px map).
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let marine = world.spawn_px(0, uid::MARINE, 200, 200).unwrap();
+    let ling = world.spawn_px(1, uid::ZERGLING, 900, 700).unwrap();
+    let target = world.units[ling].id;
+    world
+        .issue(world.units[marine].id, Order::AttackUnit { target })
+        .unwrap();
+    let start = (world.units[marine].x, world.units[marine].y);
+    for _ in 0..120 {
+        world.step();
+    }
+    let (x, y) = (world.units[marine].x / 256, world.units[marine].y / 256);
+    assert!(
+        (0..2048).contains(&x) && (0..2048).contains(&y),
+        "on the map: {x},{y}"
+    );
+    let before = ((start.0 / 256 - 900).pow(2) + (start.1 / 256 - 700).pow(2)) as f64;
+    let after = ((x - 900).pow(2) + (y - 700).pow(2)) as f64;
+    assert!(after < before, "closer to the target");
+}
+
+#[test]
+fn an_idle_unit_that_is_shot_fights_back() {
+    // Wasteland: Zerglings (3-tile acquisition) shot by Marines (4-tile
+    // range) stayed idle until dead.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let marine = world.spawn_px(0, uid::MARINE, 500, 500).unwrap();
+    let ling = world.spawn_px(1, uid::ZERGLING, 620, 500).unwrap();
+    let marine_id = world.units[marine].id;
+    world
+        .issue(
+            marine_id,
+            Order::AttackUnit {
+                target: world.units[ling].id,
+            },
+        )
+        .unwrap();
+    let mut answered = false;
+    for _ in 0..200 {
+        world.step();
+        if matches!(world.units[ling].order, Order::AttackUnit { target } if target == marine_id) {
+            answered = true;
+            break;
+        }
+    }
+    assert!(answered, "the Zergling attacks the Marine that shot it");
+}
+
+#[test]
+fn a_group_move_through_one_corner_arrives_and_goes_idle() {
+    // Nine units sharing the same path corners froze when each had to stand
+    // exactly on the corner (Wasteland jam); crowded arrivals never ended.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let mut ids = Vec::new();
+    for k in 0..9 {
+        let i = world
+            .spawn_px(0, uid::MARINE, 200 + (k % 3) * 20, 200 + (k / 3) * 20)
+            .unwrap();
+        ids.push(world.units[i].id);
+    }
+    world.command_attack_move(&ids, (1400, 1400));
+    for _ in 0..1500 {
+        world.step();
+    }
+    for id in ids {
+        let u = world.unit(id).unwrap();
+        assert!(
+            matches!(u.order, Order::Idle),
+            "unit {id} still {:?} at ({}, {})",
+            u.order,
+            u.x / 256,
+            u.y / 256
+        );
+        let d = (((u.x / 256 - 1400).pow(2) + (u.y / 256 - 1400).pow(2)) as f64).sqrt();
+        assert!(d < 150.0, "unit {id} arrived ({d:.0} px away)");
+    }
+}
+
+#[test]
+fn an_scv_walks_to_its_build_site_at_full_speed() {
+    // `Order::Build` only ran on the 8-tick order cadence, so the SCV
+    // walked one tick in eight (~0.6 px/tick instead of 5, Wasteland).
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    world.players[0].minerals = 500;
+    let scv = world.spawn_px(0, uid::SCV, 200, 200).unwrap();
+    let id = world.units[scv].id;
+    world
+        .issue(
+            id,
+            Order::Build {
+                unit_type: uid::BARRACKS,
+                pos: (1600, 208),
+            },
+        )
+        .unwrap();
+    let x0 = world.units[scv].x;
+    for _ in 0..48 {
+        world.step();
+    }
+    let speed = (world.units[scv].x - x0) as f64 / 256.0 / 48.0;
+    assert!(speed > 4.0, "SCV build walk {speed:.2} px/tick");
+}

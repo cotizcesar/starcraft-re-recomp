@@ -18,9 +18,9 @@ use crate::combat::{Defense, StatusDamage, fp, resolve_damage_status};
 use crate::data::{GameData, UnitType, WeaponType};
 use crate::ids::{tech as tech_id, unit as uid, upgrade, weapon as wid};
 use crate::iscript::{
-    ANIM_AIR_ATTACK_INIT, ANIM_AIR_ATTACK_REPEAT, ANIM_AIR_ATTACK_TO_IDLE, ANIM_CAST_SPELL,
-    ANIM_GND_ATTACK_INIT, ANIM_GND_ATTACK_REPEAT, ANIM_GND_ATTACK_TO_IDLE, ANIM_INIT, ANIM_WALKING,
-    ANIM_WALKING_TO_IDLE, AnimContext, AnimEvent, AnimState,
+    ANIM_AIR_ATTACK_INIT, ANIM_AIR_ATTACK_REPEAT, ANIM_CAST_SPELL, ANIM_GND_ATTACK_INIT,
+    ANIM_GND_ATTACK_REPEAT, ANIM_INIT, ANIM_WALKING, ANIM_WALKING_TO_IDLE, AnimContext, AnimEvent,
+    AnimState,
 };
 use crate::map::{Scenario, Terrain, UnitProperties};
 use crate::path::{Obstacles, PathRequest, Rect, RegionMap, find_path_with_regions};
@@ -54,6 +54,13 @@ pub const GAS_MINING_FRAMES: u16 = 37;
 pub const MINERAL_CAPACITY: i32 = 1500;
 pub const GAS_CAPACITY: i32 = 5000;
 pub const MAX_ORDER_QUEUE: usize = 8;
+/// Ticks a unit may fail to approach an intermediate waypoint before it is
+/// skipped (see `move_towards`).
+pub const PATH_STALL_TICKS: u8 = 8;
+/// A unit stalled within this distance of its final destination counts as
+/// arrived (INFERENCE: 3 tiles; falsifier: a retail group move whose outer
+/// units keep walking).
+pub const ARRIVAL_CROWD_PX: i32 = 96;
 pub const MAX_PRODUCTION_QUEUE: usize = 5;
 /// The retail engine caps active Halo Rockets at 80; use the same hard cap for
 /// every projectile so a pathological custom map cannot grow without bound.
@@ -406,6 +413,10 @@ pub struct SimUnit {
     pub target: Option<u32>,
     pub path: VecDeque<(i32, i32)>,
     pub path_goal: Option<(i32, i32)>,
+    /// Ticks without getting closer to the current waypoint (crowds).
+    pub path_stall: u8,
+    /// Distance to the current waypoint last tick (1/256 px).
+    pub path_last_dist: i32,
     pub rally: Option<(i32, i32)>,
     pub carry: i32,
     pub carry_kind: CarryKind,
@@ -1067,6 +1078,8 @@ impl World {
             target: None,
             path: VecDeque::new(),
             path_goal: None,
+            path_stall: 0,
+            path_last_dist: 0,
             rally: None,
             carry: 0,
             carry_kind: CarryKind::None,
@@ -1156,6 +1169,8 @@ impl World {
             target: None,
             path: VecDeque::new(),
             path_goal: None,
+            path_stall: 0,
+            path_last_dist: 0,
             rally: None,
             carry: 0,
             carry_kind: CarryKind::None,
@@ -2912,7 +2927,8 @@ impl World {
         if let Some(tidx) = self.index_of(target)
             && self.units[tidx].alive
         {
-            let p = (self.units[tidx].x, self.units[tidx].y);
+            // Game pixels (see `attack_target`).
+            let p = (self.units[tidx].x / fp(1), self.units[tidx].y / fp(1));
             self.move_towards(i, p, fp(2));
         }
     }
@@ -2981,6 +2997,14 @@ impl World {
             Order::Build { unit_type, pos } => {
                 if think {
                     self.order_build(i, unit_type, pos);
+                } else {
+                    // The walk to the site advances every tick; only the
+                    // placement decision runs on the 8-tick order cadence
+                    // (the SCV crawled at 1/8 of its speed, Wasteland).
+                    let pos_fp = (pos.0 * fp(1), pos.1 * fp(1));
+                    if self.distance_to_point(i, pos_fp) > fp(64) {
+                        self.move_towards(i, pos, fp(32));
+                    }
                 }
             }
             Order::Repair { target } => self.order_repair(i, target),
@@ -3093,8 +3117,11 @@ impl World {
         if self.attack_target_no_move(i, target) {
             return;
         }
+        // `move_towards` takes game pixels: passing the fixed-point position
+        // sent every chasing unit toward a point 256x farther away, off the
+        // map (Wasteland: Marines at x 3700-4200 on a 2048 px map).
         let (tx, ty) = (self.units[tidx].x, self.units[tidx].y);
-        self.move_towards(i, (tx, ty), fp(2));
+        self.move_towards(i, (tx / fp(1), ty / fp(1)), fp(2));
     }
 
     /// Fire if in range.  Returns true when the unit is in range (whether or
@@ -3979,6 +4006,67 @@ impl World {
         self.units[target].last_damaged = self.tick;
         if self.units[target].hp <= 0 {
             self.kill_unit(target);
+        } else if source != 0 {
+            self.retaliate(target, source);
+        }
+    }
+
+    /// An idle unit that takes damage attacks its attacker when one of its
+    /// weapons can hit it; idle units of a computer player near the victim
+    /// join in.  FACT (Wasteland, 2026-11-05): without this, Zerglings shot
+    /// by Marines (4-tile range against their 3-tile acquisition) stayed idle
+    /// until dead.  INFERENCE: the helper radius (8 tiles) and that only
+    /// computer players call for help; falsifier: a retail recording of a
+    /// human player's idle unit next to an attacked one.
+    fn retaliate(&mut self, victim: usize, source: u32) {
+        let Some(a) = self.index_of(source) else {
+            return;
+        };
+        let (owner, attacker_owner) = (self.units[victim].owner, self.units[a].owner);
+        if !self.units[a].alive || !self.hostile(owner, attacker_owner) {
+            return;
+        }
+        let air = self.is_air_unit(a);
+        let attacker_ty = self.data.unit(self.units[a].type_id).clone();
+        let can_hit = |w: &World, i: usize| {
+            let ty = w.data.unit(w.units[i].type_id);
+            if ty.is_worker() || !matches!(w.units[i].order, Order::Idle | Order::Stop) {
+                return false;
+            }
+            let weapon = if air {
+                w.data.air_weapon(ty)
+            } else {
+                w.data.ground_weapon(ty)
+            };
+            weapon.is_some_and(|wt| weapon_can_target(wt, &attacker_ty))
+        };
+        let mut responders = Vec::new();
+        if can_hit(self, victim) {
+            responders.push(victim);
+        }
+        if self
+            .players
+            .get(owner as usize)
+            .is_some_and(|p| p.is_computer)
+        {
+            let r = (8 * 32 * fp(1)) as i64;
+            let (vx, vy) = (self.units[victim].x as i64, self.units[victim].y as i64);
+            for j in 0..self.units.len() {
+                if j != victim
+                    && self.units[j].alive
+                    && self.units[j].owner == owner
+                    && (self.units[j].x as i64 - vx).pow(2) + (self.units[j].y as i64 - vy).pow(2)
+                        <= r * r
+                    && !self.data.unit(self.units[j].type_id).is_building()
+                    && can_hit(self, j)
+                {
+                    responders.push(j);
+                }
+            }
+        }
+        for j in responders {
+            self.units[j].order = Order::AttackUnit { target: source };
+            self.units[j].order_row = self.units[j].order.order_id();
         }
     }
 
@@ -4365,7 +4453,43 @@ impl World {
             return true;
         }
         let mut remaining = speed;
+        // Intermediate waypoints are reached within twice the unit's half
+        // size, and given up after `PATH_STALL_TICKS` ticks without getting
+        // closer: a group shares the same path corners, and requiring each
+        // unit to stand on one froze the whole group once the others
+        // occupied it (Wasteland: nine units jammed for 1,500+ ticks).
+        let reach = fp((2 * half_extent_px(&ty)).max(16));
+        if let Some(&(wx, wy)) = self.units[i].path.front() {
+            let d = self.distance_to_point(i, (wx, wy));
+            if d >= self.units[i].path_last_dist {
+                self.units[i].path_stall = self.units[i].path_stall.saturating_add(1);
+            } else {
+                self.units[i].path_stall = 0;
+            }
+            self.units[i].path_last_dist = d;
+            if self.units[i].path_stall >= PATH_STALL_TICKS {
+                self.units[i].path_stall = 0;
+                self.units[i].path_last_dist = i32::MAX;
+                if self.units[i].path.len() > 1 {
+                    self.units[i].path.pop_front();
+                } else if self.distance_to_point(i, goal_fp) <= fp(ARRIVAL_CROWD_PX) {
+                    // The goal is taken by the rest of the group: stop here,
+                    // as retail units around a crowded destination do.
+                    self.units[i].path.clear();
+                    self.finish_move_animation(i);
+                    return true;
+                }
+            }
+        }
         while remaining > 0 {
+            if self.units[i].path.len() > 1
+                && let Some(&(wx, wy)) = self.units[i].path.front()
+                && self.distance_to_point(i, (wx, wy)) <= reach
+            {
+                self.units[i].path.pop_front();
+                self.units[i].path_last_dist = i32::MAX;
+                continue;
+            }
             let Some(&(wx, wy)) = self.units[i].path.front() else {
                 if self.distance_to_point(i, goal_fp) > stop_distance {
                     // Replan next tick instead of freezing.
@@ -4624,15 +4748,31 @@ impl World {
     }
 
     fn ensure_walking_animation(&mut self, i: usize) {
+        // Any resting state starts the walk.  Only Init and the *ToIdle
+        // states used to qualify, so a unit whose script sat in Init (map
+        // placed units) or IsWorking (an SCV back from mining) kept
+        // `move_speed` 0 and crawled on the walk-cycle fallback (Wasteland,
+        // 2026-11-06: an SCV ordered to build moved ~0.5 px/tick instead of
+        // 5; a Marine group stood still for 1,500 ticks).
         let current = self.units[i].anim.as_ref().map(|a| a.anim as usize);
-        if current.is_none()
-            || matches!(
-                current,
-                Some(ANIM_WALKING_TO_IDLE)
-                    | Some(ANIM_GND_ATTACK_TO_IDLE)
-                    | Some(ANIM_AIR_ATTACK_TO_IDLE)
+        let busy = matches!(
+            current,
+            Some(
+                crate::iscript::ANIM_WALKING
+                    | crate::iscript::ANIM_DEATH
+                    | crate::iscript::ANIM_GND_ATTACK_INIT
+                    | crate::iscript::ANIM_AIR_ATTACK_INIT
+                    | crate::iscript::ANIM_GND_ATTACK_REPEAT
+                    | crate::iscript::ANIM_AIR_ATTACK_REPEAT
+                    | crate::iscript::ANIM_CAST_SPELL
+                    | crate::iscript::ANIM_BURROW
+                    | crate::iscript::ANIM_UNBURROW
+                    | crate::iscript::ANIM_LANDING
+                    | crate::iscript::ANIM_LIFT_OFF
+                    | crate::iscript::ANIM_WARP_IN
             )
-        {
+        );
+        if !busy {
             self.start_animation(i, ANIM_WALKING);
         }
     }
@@ -6202,6 +6342,12 @@ fn isqrt(n: i64) -> i64 {
         y = (x + n / x) / 2;
     }
     x
+}
+
+/// Larger half extent of a unit's `units.dat` box, in pixels.
+fn half_extent_px(ty: &UnitType) -> i32 {
+    let d = &ty.dimensions;
+    (d.left.max(d.right).max(d.top).max(d.bottom)).max(0) as i32
 }
 
 #[cfg(test)]
