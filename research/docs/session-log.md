@@ -6370,3 +6370,34 @@ walkthrough PASS.
   the `+0x97a1c` struct).
 
 **Verification.**  No code change; gates as in (138).
+
+## 2026-11-06 (140) — Contour builder found: FUN_00760350
+
+- **RE (FACT, `research/analysis/contour2`, local).**  A byte scan of the
+  pathing range for 16-bit stores at offsets 0x10-0x16 found
+  `FUN_00760350`, the only routine that appends to all four lists; its only
+  caller is the allocator `FUN_00760a80` (call at `0x760abb`, past where the
+  earlier decompile stopped).  So the contours are built once at map load,
+  not lazily; the `FUN_0075f0f0` callees `0x75e0e0` / `0x75e650` /
+  `0x75eb90` only read the counts as loop bounds.
+- **Algorithm.**  It scans the 1 MB walk grid `DAT_011a6470` (one byte per
+  8 px cell, low 4 bits = blocked-edge flags, 0x400 row stride) for a cell
+  with an unvisited edge bit, then traces that boundary: it clears each edge
+  bit it walks, turns by direction tables at `0xf2b6a0` / `0xf2b6b0` /
+  `0xf2b6c0..0xf2b6d1`, and closes a straight segment at each corner, with
+  pixel ends from offset tables `0xf2b6f4` (start) and `0xf2b714` (end),
+  coordinates `cell * 8 + offset`.  Each segment goes to the list of its
+  facing (0..3 = the up / right / down / left lists at `+0x0..+0xc`, counts
+  `+0x10..+0x16`) as (position, span start, span end, flags: facing, corner
+  kinds in bits 0-5, convex / concave bit).  A full list grows by 2500
+  entries (`FUN_00760ac0`); when the scan wraps round with no edge left, the
+  lists are trimmed and each sorted by (position, span start)
+  (`FUN_00c9cb40` = qsort, comparator `FUN_007609f0`), which is what the
+  lookups' binary search needs.  The table bytes are recorded in the
+  session's notes (`0xf2b6a0` = `ff00010002000100 0300010002000100`, ...).
+- **Status.**  Every piece of the short-range chain is now located: walk
+  grid (`FUN_00760c20`), contours (`FUN_00760350`), lookups (session log 136),
+  free box (`FUN_0075f290`), corners (`FUN_0075f0f0`), search
+  (`FUN_007661b0`).  Port next, as one change.
+
+**Verification.**  No code change; gates as in (138).
