@@ -6328,3 +6328,28 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures at 1280x720 and 3440x1440 (Boot Camp result 7713, box 7729).
+
+## 2026-11-06 (138) — Pathing initialiser recovered (tile groups, contour lists); grouping fix reverted
+
+- **RE (FACT, `research/analysis/contour`, local).**  The pathing block
+  (`DAT_011a6478`, 0x97a20 bytes) is created at map load by
+  `FUN_00764f50`: it builds the walk grid (`FUN_00760c20`), labels every
+  tile by its flags (`& 0x410000 == 0` -> `0x1ffd` unwalkable; else by
+  `& 0x6010000`: `0x2010000` -> `0x1ff9`, `0x4010000` -> `0x1ffa`, other ->
+  `0x1ffb`; i.e. walkable x middle / high / low ground; unwalkable tiles
+  form regions too), reserves the bottom tile row as one `0x1ffd` region,
+  runs the region builder (`FUN_00762c10`), allocates the contour lists
+  (`FUN_00760a80`: four lists of 5000 x 8-byte segments at `+0x97a1c`), and
+  counts each region's distinct neighbouring groups.  `FUN_00762210` /
+  `FUN_007625d0` save / load the block; `FUN_00765340` frees it.  The
+  contour lists are filled elsewhere (not found yet).
+- **Grouping fix (tried, reverted).**  Our region groups used
+  `tile_height_flags` including the very-high bit, which the client does not
+  use; masking it (Boot Camp 82 -> 77 regions) changed worker routes enough
+  to fail two gates (Wasteland 0.1600 / frame, Desperate Alliance 1143 s
+  wave).  Reverted: one retail-exact piece alone moves our approximate
+  pathing away from the recordings; the region / contour / short-path chain
+  has to be ported together.
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures at 3440x1440.
