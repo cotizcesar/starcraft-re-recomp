@@ -71,6 +71,19 @@ impl Mover {
     }
 }
 
+/// `FUN_00604060`: the client's approximate distance (octagonal, in the
+/// caller's units).
+pub fn approx_distance(dx: i32, dy: i32) -> i32 {
+    let (a, b) = (dx.abs(), dy.abs());
+    let (hi, lo) = if a < b { (b, a) } else { (a, b) };
+    if hi >> 2 < lo {
+        let l = (lo >> 1) + lo;
+        (l >> 2) + ((l >> 7) - (hi >> 6) - (hi >> 4)) + hi
+    } else {
+        hi
+    }
+}
+
 const UNWALKABLE: u8 = 0x80;
 const STRIDE: usize = 0x400;
 
@@ -767,6 +780,144 @@ impl Contours {
         out
     }
 
+    /// `FUN_007661b0`'s best-first search over `node_step` + `sweep`
+    /// candidates, from `start` toward `goal` (pixels).  Node table of at
+    /// most 249, open list of at most 150 (the client's arrays); cost =
+    /// `approx_distance` to the parent in 1/256 px, doubled when
+    /// `doubled(point)` (the client doubles outside the next region and the
+    /// start region); heuristic = distance to the goal.  A candidate equal to
+    /// the goal, or a goal inside an open quadrant's swept box, reaches it.
+    /// Without reaching it, the path ends at the node closest to the goal.
+    /// Returns the waypoints after `start`.  INFERENCE / not ported: the
+    /// swept-area mask pruning (`FUN_00767510`), the region-count budgets
+    /// (0x12bf / 0x18ff bytes of nodes) and the unit-at-goal target box.
+    pub fn short_path(
+        &self,
+        m: &Mover,
+        start: (i32, i32),
+        goal: (i32, i32),
+        limits: (i32, i32),
+        doubled: &dyn Fn((i32, i32)) -> bool,
+    ) -> Vec<(i32, i32)> {
+        struct Node {
+            p: (i32, i32),
+            mask: u8,
+            parent: usize,
+            g: i32,
+            h: i32,
+            closed: bool,
+            reached: bool,
+        }
+        let d = |a: (i32, i32), b: (i32, i32)| approx_distance((a.0 - b.0) << 8, (a.1 - b.1) << 8);
+        let mut nodes = vec![Node {
+            p: start,
+            mask: 0xff,
+            parent: usize::MAX,
+            g: 0,
+            h: d(start, goal),
+            closed: false,
+            reached: start == goal,
+        }];
+        let mut open: Vec<usize> = vec![0];
+        let mut best = None;
+        while let Some(k) = (0..open.len()).min_by_key(|&k| {
+            let n = &nodes[open[k]];
+            (n.g + n.h, open[k])
+        }) {
+            let ni = open.swap_remove(k);
+            if nodes[ni].reached {
+                best = Some(ni);
+                break;
+            }
+            nodes[ni].closed = true;
+            let (p, mask, g) = (nodes[ni].p, nodes[ni].mask, nodes[ni].g);
+            let step = self.node_step(m, p, mask, limits);
+            let mut cands: Vec<((i32, i32), u8, bool)> =
+                step.next.iter().map(|&(q, k)| (q, k, q == goal)).collect();
+            for q in [1u8, 2, 4, 8] {
+                if step.quadrants & q != 0 {
+                    for (pt, k) in self.sweep(m, p, &step, q) {
+                        cands.push((pt, k, pt == goal));
+                    }
+                    // `FUN_00760080`: the goal inside this quadrant's box.
+                    let (l, t, r, b) = step.reach;
+                    let (x0, x1) = if q & 0b0011 != 0 { (p.0, r) } else { (l, p.0) };
+                    let (y0, y1) = if q & 0b1001 != 0 { (t, p.1) } else { (p.1, b) };
+                    if (x0..=x1).contains(&goal.0) && (y0..=y1).contains(&goal.1) {
+                        cands.push((goal, 0xff, true));
+                    }
+                }
+            }
+            // `FUN_0075f1a0`: duplicates merge by and-ing their masks.
+            let mut merged: Vec<((i32, i32), u8, bool)> = Vec::new();
+            for (q, k, r) in cands {
+                if q == p {
+                    continue;
+                }
+                if let Some(c) = merged.iter_mut().find(|c| c.0 == q) {
+                    c.1 &= k;
+                    c.2 |= r;
+                } else if merged.len() < 32 {
+                    merged.push((q, k, r));
+                }
+            }
+            for (q, k, reached) in merged {
+                let mut cost = d(p, q);
+                if doubled(q) {
+                    cost *= 2;
+                }
+                let g2 = g + cost;
+                if let Some(j) = nodes.iter().position(|n| n.p == q) {
+                    if g2 < nodes[j].g {
+                        nodes[j].g = g2;
+                        nodes[j].parent = ni;
+                        if nodes[j].closed {
+                            nodes[j].closed = false;
+                            nodes[j].mask = k;
+                            if open.len() < 150 {
+                                open.push(j);
+                            }
+                        }
+                    } else if !nodes[j].closed {
+                        nodes[j].mask &= k;
+                    }
+                    continue;
+                }
+                if nodes.len() >= 249 {
+                    break;
+                }
+                if k == 0 && !reached {
+                    continue;
+                }
+                nodes.push(Node {
+                    p: q,
+                    mask: k,
+                    parent: ni,
+                    g: g2,
+                    h: d(q, goal),
+                    closed: false,
+                    reached,
+                });
+                if open.len() < 150 {
+                    open.push(nodes.len() - 1);
+                }
+            }
+        }
+        let end = best.unwrap_or_else(|| {
+            (0..nodes.len())
+                .min_by_key(|&i| (nodes[i].h, i))
+                .unwrap_or(0)
+        });
+        let mut out = Vec::new();
+        let mut i = end;
+        while i != 0 && i != usize::MAX {
+            out.push(nodes[i].p);
+            i = nodes[i].parent;
+        }
+        out.reverse();
+        out
+    }
+
     pub fn len(&self) -> usize {
         self.lists.iter().map(Vec::len).sum()
     }
@@ -959,6 +1110,55 @@ mod tests {
             pairs.contains(&(0xe7, 0xee)) && pairs.contains(&(0xdd, 0x7b)),
             "{pairs:x?}"
         );
+    }
+
+    #[test]
+    fn short_path_threads_the_boot_camp_marine_gap() {
+        // Session log 131: the recorded field-18 SCV runs east along y ~295,
+        // then climbs between the Marine groups to the drop-off; its route is
+        // ~286 px against 282 px straight.
+        let t = Terrain::open(64, 64);
+        let marines = [
+            (1651, 172),
+            (1615, 187),
+            (1670, 199),
+            (1640, 211),
+            (1722, 304),
+            (1688, 288),
+            (1715, 340),
+            (1685, 321),
+        ];
+        let boxes: Vec<_> = marines
+            .iter()
+            .map(|&(x, y)| (x - 8, y - 9, x + 8, y + 10))
+            .collect();
+        let c = Contours::from_terrain(&t).with_units(&boxes);
+        let m = Mover::from_box(11, 11, 11, 11);
+        let p = c.short_path(&m, (1484, 295), (1764, 260), (2047, 2047), &|_| false);
+        assert_eq!(*p.last().unwrap(), (1764, 260), "{p:?}");
+        // Through the gap: one waypoint between x 1650 and 1690 with y
+        // between the upper group's widened bottom (233) and the lower
+        // group's widened top (268).
+        assert!(
+            p.iter()
+                .any(|q| (1650..=1690).contains(&q.0) && (233..=268).contains(&q.1)),
+            "{p:?}"
+        );
+        let mut len = 0.0f64;
+        let mut a = (1484.0, 295.0);
+        for q in &p {
+            len += ((q.0 as f64 - a.0).powi(2) + (q.1 as f64 - a.1).powi(2)).sqrt();
+            a = (q.0 as f64, q.1 as f64);
+        }
+        assert!((282.0..300.0).contains(&len), "length {len}");
+        // No obstacle: straight to the goal.
+        let open = Contours::from_terrain(&t);
+        assert_eq!(
+            open.short_path(&m, (500, 500), (540, 520), (2047, 2047), &|_| false),
+            vec![(540, 520)]
+        );
+        // 3-4-5 triangle: 1280 exactly, the approximation 3 % under.
+        assert_eq!(approx_distance(256 * 3, 256 * 4), 1241);
     }
 
     #[test]

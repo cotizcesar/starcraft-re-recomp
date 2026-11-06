@@ -6553,3 +6553,35 @@ clippy / fmt clean; `sc_view` builds; movement unchanged.
 
 **Verification.**  `cargo test --no-fail-fast` 0 failed (6 contour tests);
 clippy / fmt clean; `sc_view` builds; movement unchanged.
+
+## 2026-11-06 (146) — Short-path search ported; it threads the Boot Camp Marine gap
+
+- **RE (FACT, `FUN_007661b0` loop).**  A* over a node table at `0x11a66a0`
+  (32-byte nodes: x, y, region, in-neighbour-region / in-target-region /
+  reached / closed flags, mask, depth, parent, h, g, f; at most 249) with a
+  heap at `0x11a85c0` (at most 150; sift `FUN_00766e50` / `0x766dd0`).
+  Start node mask 0xff, f = 0x400000.  Each pop: success if reached;
+  budgets (once nodes exist in the target region: more than 0x12bf bytes of
+  nodes, or 0x18ff with neighbour-region nodes) end it; else
+  `node_step` + the quadrant sweeps, then every candidate: cost =
+  `FUN_00604060` distance to the parent in 1/256 px, doubled outside the
+  next region and the start region; h = distance to the goal; existing
+  nodes are relaxed (heap re-sifted) or their masks and-ed.  Without
+  success the path ends at the open node of least h (in the right region).
+  `FUN_00604060` is the octagonal approximation
+  (`hi + 3/8 lo - hi/16 - hi/64 + ...` when `lo > hi/4`).  `FUN_00767510`
+  prunes candidate masks against the swept area (sweep-line rectangles at
+  `0x11a9b00`); not ported.
+- **Port (`contour::approx_distance`, `Contours::short_path`).**  As above,
+  with the region doubling as a caller predicate.  INFERENCE / omitted: the
+  mask pruning, the region-count budgets, the unit-at-goal target box.
+- **Boot Camp (test `short_path_threads_the_boot_camp_marine_gap`).**
+  From (1484, 295) to the drop-off corner (1764, 260) with the eight
+  Marines standing: (1548, 295) (1612, 295) (1668, 267) (1732, 267)
+  (1764, 260), 287 px (recorded ~286, straight 282), 10 us.  The recorded
+  bend is higher (~y 237-250 at x 1670-1712): open.
+- **Next.**  Wire it into ground movement (sim.rs) with the final
+  approach, as one change, and measure the field-18 / 14 legs.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (7 contour tests);
+clippy / fmt clean; `sc_view` builds; movement unchanged.
