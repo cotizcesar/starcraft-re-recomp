@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)", "2026-11-06 (132)"]
 open: 1
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (132) Uniform path margin around standing units falsified (step response; cannot speed field 14 while slowing field 18).
 - (131) Retail field-18 SCV route tracked: dogleg through the gap between Marine groups; our planner grazes them (0 px margin); BW-style path margin open.
 - (130) Marines-in-the-path hypothesis falsified (our path passes them; steering changes legs by 1 frame).
 - (129) Two-SCV rhythm is not a lock (gap stable, equal natural cycles); field 18's retail route is ~55 px longer each way (Marines in the path, inference).
