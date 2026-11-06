@@ -4784,7 +4784,8 @@ fn script_key(name: &str) -> Key {
 /// name contains NAME), `click-cmd:N` (command-card slot N, 1..9),
 /// `click-world:x:y` (world game px), `click-view:px:py` / `rclick-view`
 /// (percent of the visible playfield), `minimap-click:px:py` /
-/// `minimap-rclick` (percent of the minimap), `dump-units:NAME`, `shot:NAME`.  Writes `game.tsv` (one
+/// `minimap-rclick` (percent of the minimap), `look:x:y` (minimap click on a
+/// world point), `dump-units:NAME`, `shot:NAME`.  Writes `game.tsv` (one
 /// state line per step) to `GC_WALK_DIR`.
 fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     let dir = std::env::var("GC_WALK_DIR").unwrap_or_else(|_| "/tmp/opencode/game".into());
@@ -4938,6 +4939,10 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                         u.path.len(),
                         u.path.front().map(|p| (p.0 / 256, p.1 / 256))
                     ));
+                    if u.is_resource() {
+                        out.pop();
+                        out.push_str(&format!("\tres={}\n", u.resource_amount));
+                    }
                     if let Some(a) = &u.anim {
                         out.pop();
                         out.push_str(&format!(
@@ -4953,6 +4958,17 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 }
                 let name = parts.get(1).copied().unwrap_or("units");
                 let _ = std::fs::write(format!("{dir}/{name}.tsv"), out);
+            }
+            "look" => {
+                // Minimap click on the world point (x, y) game px: centres
+                // the camera there through the real minimap input.
+                let (rx, ry, rw, rh) = app.minimap_rect();
+                let (mw, mh) = app.tileset.minimap_size;
+                let at = (
+                    rx + (num(1) as i64 * rw as i64 / (mw.max(1) as i64 * TILE_PX as i64)) as i32,
+                    ry + (num(2) as i64 * rh as i64 / (mh.max(1) as i64 * TILE_PX as i64)) as i32,
+                );
+                mouse = click(app, fb, at, false, false);
             }
             "minimap-click" | "minimap-rclick" => {
                 // Percent of the minimap (0..100).

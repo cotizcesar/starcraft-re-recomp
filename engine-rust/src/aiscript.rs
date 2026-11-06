@@ -380,9 +380,7 @@ impl CampaignAi {
     }
 
     /// `default_build` trains a race's standard army when the town has spare
-    /// resources, and idle military units are committed to the enemy base
-    /// every twenty seconds.  Script `attack_*` commands still take priority
-    /// because they clear/add to the same party.
+    /// resources.
     fn maintain_army(&self, world: &mut World, enemy_base: Option<(i32, i32)>) {
         if !self.town_started {
             return;
@@ -424,9 +422,12 @@ impl CampaignAi {
                 }
             }
         }
-        if world.tick.is_multiple_of(480) && self.military_ids(world).len() >= 6 {
-            self.launch_attack(world, enemy_base, false);
-        }
+        // No periodic "send everything" here: the attacks are the script's
+        // own `attack_add` / `attack_do` waves.  FACT (Desperate Alliance,
+        // 2026-11-06): an every-480-ticks commit of all idle fighters sent
+        // 96 Zerg units at the player at tick 480, while the retail recording
+        // is calm for the first 2.5 minutes.
+        let _ = enemy_base;
     }
 
     /// Retail `start_town` starts the engine-side town manager.  The manager
@@ -1572,17 +1573,54 @@ impl CampaignAi {
             .map(|(i, _)| i)
     }
 
+    /// The attack force of `attack_do`: `attack_add N unit` asks for N units
+    /// of that type, so exactly N are taken per type, nearest the AI's town
+    /// first.  FACT (Desperate Alliance, 2026-11-06): taking every unit of a
+    /// listed type sent all 75 Zerglings at tick ~600 for `attack_add 2
+    /// Zergling`, while the retail recording is calm for 2.5 minutes.  An
+    /// empty group (a bare `attack_do`) takes the fighting units only: never
+    /// workers, Overlords or Larvae (they had joined the attack too).
     fn military_ids(&self, world: &World) -> Vec<u32> {
-        world
+        let (bx, by) = self.base(world).unwrap_or((0, 0));
+        let fighter = |u: &crate::sim::SimUnit| {
+            let ty = world.data.unit(u.type_id);
+            u.alive
+                && u.completed
+                && u.owner == self.player
+                && !ty.is_building()
+                && !ty.is_worker()
+                && !matches!(
+                    u.type_id,
+                    crate::ids::unit::OVERLORD | crate::ids::unit::LARVA | crate::ids::unit::EGG
+                )
+        };
+        let mut by_dist: Vec<(i64, u16, u32)> = world
             .units
             .iter()
-            .filter(|u| {
-                u.alive
-                    && u.owner == self.player
-                    && !world.data.unit(u.type_id).is_building()
-                    && (self.attack_group.is_empty() || self.attack_group.contains(&u.type_id))
+            .filter(|u| fighter(u))
+            .map(|u| {
+                let (dx, dy) = ((u.x - bx) as i64 / 256, (u.y - by) as i64 / 256);
+                (dx * dx + dy * dy, u.type_id, u.id)
             })
-            .map(|u| u.id)
+            .collect();
+        by_dist.sort();
+        if self.attack_group.is_empty() {
+            return by_dist.into_iter().map(|(_, _, id)| id).collect();
+        }
+        let mut want: HashMap<u16, usize> = HashMap::new();
+        for t in &self.attack_group {
+            *want.entry(*t).or_default() += 1;
+        }
+        by_dist
+            .into_iter()
+            .filter(|(_, t, _)| match want.get_mut(t) {
+                Some(n) if *n > 0 => {
+                    *n -= 1;
+                    true
+                }
+                _ => false,
+            })
+            .map(|(_, _, id)| id)
             .collect()
     }
 
@@ -2091,6 +2129,63 @@ mod tests {
                 .any(|u| u.alive && u.owner == 0 && u.type_id == uid::SCV),
             "the AI script should train an SCV"
         );
+    }
+
+    #[test]
+    fn attack_do_sends_the_requested_count_and_no_periodic_attack() {
+        // Desperate Alliance: `attack_add 2 Zergling` sent all 75 Zerglings
+        // (plus Drones and Overlords), and an invented every-480-ticks
+        // commit sent the whole army at tick 480.
+        use crate::data::GameData;
+        use crate::ids::unit as uid;
+        use crate::map::Terrain;
+        use crate::sim::{Order, Race, World};
+        use std::sync::Arc;
+
+        let mut world = World::new(
+            Arc::new(GameData::bundled().unwrap()),
+            Terrain::open(64, 64),
+            2,
+        );
+        world.players[0].race = Race::Zerg;
+        world.spawn_px(0, uid::HATCHERY, 320, 320).unwrap();
+        for k in 0..10 {
+            world.spawn_px(0, uid::ZERGLING, 420 + k * 20, 420).unwrap();
+        }
+        world.spawn_px(0, uid::DRONE, 300, 420).unwrap();
+        world.spawn_px(0, uid::OVERLORD, 300, 460).unwrap();
+        let attacking = |w: &World| {
+            w.units
+                .iter()
+                .filter(|u| u.alive && u.owner == 0 && matches!(u.order, Order::AttackMove { .. }))
+                .map(|u| u.type_id)
+                .collect::<Vec<_>>()
+        };
+        // start_town; wait 600; stop: nothing may attack on its own.
+        let idle = AiScript {
+            id: *b"Idle",
+            label: 1,
+            flags: 0,
+            code: vec![3, 2, 0x58, 0x02, 36],
+            external: false,
+        };
+        let mut ai = CampaignAi::new(0, &idle);
+        for _ in 0..600 {
+            ai.update(&mut world, Some((1800, 1800)));
+            world.step();
+        }
+        assert!(attacking(&world).is_empty(), "no attack without attack_do");
+        // attack_add 2 Zergling; attack_do; stop.
+        let wave = AiScript {
+            id: *b"Wave",
+            label: 1,
+            flags: 0,
+            code: vec![12, 2, 37, 0, 14, 36],
+            external: false,
+        };
+        let mut ai = CampaignAi::new(0, &wave);
+        ai.update(&mut world, Some((1800, 1800)));
+        assert_eq!(attacking(&world), vec![uid::ZERGLING; 2]);
     }
 
     #[test]

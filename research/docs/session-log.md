@@ -5397,3 +5397,38 @@ simulation bugs, all FACT from `dump-units` traces:
 `tests/reconstruction.rs`); clippy / fmt clean; `game_input_gate.py` 0
 failures; `ui_visual_diff` 51/51 with no screen moving by more than 0.05;
 walkthrough PASS; `mission_gate.py` 0 failures.
+
+## 2026-11-06 (108) — All four Episode I missions won through input; depletion, campaign AI waves
+
+- **Boot Camp** (victory trigger 6: 3 Supply Depots, a Refinery, 100 gas):
+  scripted through the card, hotkeys and a new `look:x:y` step (a minimap
+  click on a world point).  Victory at tick 6,542.
+- **Backwater Station** (trigger 14: the Infested Command Center destroyed;
+  trigger 6: Raynor's death is defeat).  FACT: income froze at tick ~3,500
+  because a mined-out field stayed on the map (`res=0`) and its workers went
+  idle.  Now a field mined to 0 dies and a worker whose field is gone takes
+  the nearest field within 8 tiles (`nearest_mineral_near`; test
+  `a_mined_out_field_disappears_and_its_worker_moves_to_the_next`, fails
+  without the fix).  Marines attack-move to the Infested CC: victory at tick
+  9,728 with Raynor alive.
+- **Desperate Alliance** (trigger 6: the 30-minute countdown ends).  FACT:
+  the whole Zerg army (96 units, Drones and Overlords included) attacked at
+  tick 480 and the base fell by tick ~6,000, while the recording is calm
+  from 29:59 to 27:28.  Two causes in `aiscript.rs`: `maintain_army` sent
+  every idle fighter at the enemy each 480 ticks (no such opcode; removed),
+  and `attack_do` took every unit of a listed type (`attack_add 2 Zergling`
+  sent 75).  `military_ids` now takes the requested count per type, nearest
+  the town, never workers / Overlords / Larvae / Eggs.  Test
+  `attack_do_sends_the_requested_count_and_no_periodic_attack` fails on the
+  old code.  Result: no attack on the base for ~8,000 ticks, escalating
+  waves after; a Marine-training player wins at tick 29,025.
+- **Gate.**  `scripts/mission_gate.py` plays all four missions; 0 failures at
+  1280x720, 1920x1080 and 3440x1440 (`docs/gates/mission-gate.txt`, same
+  ticks at every size).  Open: compare the timeline and wave strength with
+  the recordings (the retail player won Desperate Alliance at 20:20 real
+  time, i.e. the full countdown).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` 0 failures; `ui_visual_diff` 51/51
+(no screen moved by more than 0.05); walkthrough PASS; in-game draw at
+3440x1440 6.8 ms (`GC_BENCH=60`).

@@ -1,0 +1,19 @@
+PASS boot camp: three Supply Depots
+PASS boot camp: a Refinery on the geyser
+PASS boot camp: 100 gas
+PASS boot camp: victory
+  end: tick=6542 units=[Terran Command Center=1 Terran Marine=16 Terran Refinery=1 Terran SCV=2 Terran Supply Depot=3]
+PASS backwater station: the Barracks trains Marines (4 at start)
+PASS backwater station: Jim Raynor survives
+PASS backwater station: victory (Infested CC)
+  end: tick=9668 units=[Jim Raynor=1 Terran Barracks=1 Terran Bunker=2 Terran Command Center=1 Terran Firebat=3 Terran Marine=10 Terran SCV=12 Terran Supply Depot=2]
+PASS wasteland: Jim Raynor is rescued by the group
+PASS wasteland: the Barracks is built
+PASS wasteland: 10 Marines
+PASS wasteland: victory
+  end: tick=7320 units=[Jim Raynor=1 Terran Barracks=1 Terran Command Center=1 Terran Marine=10 Terran SCV=5 Terran Supply Depot=1]
+PASS desperate alliance: no attack on the base in the first 2.5 minutes (recording)
+PASS desperate alliance: Marines trained
+PASS desperate alliance: victory when the countdown ends
+  end: tick=29025 units=[Map Revealer=1 Terran Academy=1 Terran Barracks=1 Terran Bunker=1 Terran Engineering Bay=1 Terran Marine=20 Terran Supply Depot=3 Terran Vulture=2]
+mission gate: 0 failure(s) at 3440x1440

@@ -6,10 +6,23 @@ card, hotkeys) fed to the same `App::handle_game_input` the window uses.
 The gate checks the `game.tsv` state lines: the expected structures and
 units appear and the mission ends in victory.
 
+Boot Camp (map 0): a second SCV mines, two more Supply Depots, a Refinery
+on the geyser and 100 gas (trigger 6).
+
+Backwater Station (map 2): SCVs and Marines from the base (workers move
+to the next field as the small ones run out), then Marines attack-move to
+the Infested Command Center (trigger 14); Raynor stays home (his death is
+defeat, trigger 6).
+
 Wasteland (map 1): gather the group, move it to the base on the minimap,
 put the SCVs on minerals, build a Barracks, train five Marines; the map's
 victory trigger needs 10 Marines, a Barracks and Jim Raynor (rescued on the
 way).
+
+Desperate Alliance (map 3): SCVs mine, the Barracks trains Marines, and
+the base holds until the 30-minute countdown ends (trigger 6); the
+`Ter3` waves start small (`attack_add 2 Zergling`), so the first 2.5
+minutes are calm as on the recording.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -29,6 +42,23 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "engine-rust/target/release/sc_view"
 
 MISSIONS = {
+    "boot-camp": (0, [
+        "ticks:1",
+        "click-unit:Command Center", "key:S",   # a second SCV
+        "click-unit:SCV", "rclick-unit:Mineral",
+        "ticks:400",
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",
+        "ticks:500",
+        "click-unit:SCV", "key:B", "key:S", "click-view:60:60",   # depot 2
+        "ticks:1500",
+        "click-unit:SCV", "key:B", "key:S", "click-view:40:60",   # depot 3
+        "ticks:1800",
+        "look:1792:416",                                          # the geyser
+        "click-unit:SCV", "key:B", "key:R", "click-world:1792:416",
+        "ticks:1500",
+        "ctrl-click-unit:SCV", "rclick-unit:Refinery",            # 100 gas
+        "ticks:2000",
+    ]),
     "wasteland": (1, [
         "ticks:1",
         "minimap-click:8:6",          # look at the start
@@ -47,6 +77,34 @@ MISSIONS = {
         "key:M", "key:M", "key:M", "key:M", "key:M",
         "ticks:3500",
     ]),
+    "backwater-station": (2, [
+        "ticks:1",
+        "look:300:1700",                            # the base
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",
+        "click-unit:Command Center", "key:S", "key:S",
+        "click-unit:Barracks", "key:M", "key:M",
+        "ticks:800",
+    ] + [step for _ in range(6) for step in [
+        "click-unit:Command Center", "key:S",
+        "click-unit:Barracks", "key:M", "key:M",
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",
+        "ticks:900",
+    ]] + [
+        "look:400:1736",
+        "ctrl-click-unit:Marine",                   # Raynor stays home
+        "key:A", "look:1824:80", "click-world:1824:80",   # the Infested CC
+        "ticks:6000",
+    ]),
+    "desperate-alliance": (3, [
+        "ticks:1",
+        "look:400:2700",
+        "ctrl-click-unit:SCV", "rclick-unit:Mineral",
+        "click-unit:Command Center", "key:S", "key:S",
+        "ticks:600",
+    ] + [step for _ in range(32) for step in [
+        "look:500:2800", "click-unit:Barracks", "key:M", "key:M",
+        "ticks:900",
+    ]]),
 }
 
 
@@ -84,6 +142,21 @@ def main() -> int:
         if not ok:
             failures.append(what)
 
+    idx, steps = MISSIONS["boot-camp"]
+    st = run(args.install, args.size, idx, steps)
+    check(any(count(l, "Terran Supply Depot") >= 3 for l in st), "boot camp: three Supply Depots")
+    check(any(count(l, "Terran Refinery") for l in st), "boot camp: a Refinery on the geyser")
+    check(any(int(field(l, "gas") or 0) >= 100 for l in st), "boot camp: 100 gas")
+    check(field(st[-1], "result") == "Some(true)", "boot camp: victory")
+    print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
+
+    idx, steps = MISSIONS["backwater-station"]
+    st = run(args.install, args.size, idx, steps)
+    check(any(count(l, "Terran Marine") >= 10 for l in st), "backwater station: the Barracks trains Marines (4 at start)")
+    check(all(count(l, "Jim Raynor") for l in st), "backwater station: Jim Raynor survives")
+    check(field(st[-1], "result") == "Some(true)", "backwater station: victory (Infested CC)")
+    print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
+
     idx, steps = MISSIONS["wasteland"]
     st = run(args.install, args.size, idx, steps)
     first_raynor = next((i for i, l in enumerate(st) if count(l, "Jim Raynor")), None)
@@ -93,6 +166,15 @@ def main() -> int:
     end = st[-1]
     check(field(end, "result") == "Some(true)", "wasteland: victory")
     print(f"  end: tick={field(end, 'tick')} units={field(end, 'units')}")
+    idx, steps = MISSIONS["desperate-alliance"]
+    st = run(args.install, args.size, idx, steps)
+    calm = [l for l in st if 0 < int(field(l, "tick") or 0) <= 3600]
+    check(all(count(l, "Terran Command Center") for l in calm)
+          and max(count(l, "Terran Marine") for l in calm) >= 16,
+          "desperate alliance: no attack on the base in the first 2.5 minutes (recording)")
+    check(any(count(l, "Terran Marine") >= 20 for l in st), "desperate alliance: Marines trained")
+    check(field(st[-1], "result") == "Some(true)", "desperate alliance: victory when the countdown ends")
+    print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
     print(f"\nmission gate: {len(failures)} failure(s) at {args.size}")
     return 1 if failures else 0
 
