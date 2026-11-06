@@ -74,7 +74,7 @@ MISSIONS = {
         "ticks:1500",
         "click-unit:SCV",
         "key:B", "key:B",             # Build > Barracks
-        "click-view:30:45",           # place it
+        "click-view:50:30",           # place it (buildable ground)
         "ticks:2500",
         "click-unit:Barracks",
         "key:M", "key:M", "key:M", "key:M", "key:M",

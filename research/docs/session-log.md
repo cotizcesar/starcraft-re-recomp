@@ -5499,3 +5499,45 @@ moved by more than 0.05.
 clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720 and
 3440x1440 (two new checks); `mission_gate.py` 0 failures; `ui_visual_diff`
 51/51, no screen moved by more than 0.05.
+
+## 2026-11-06 (111) — Cancel construction, targeted spells, retail placement
+
+- **Cancel construction.**  `World::cancel_construction` (recorded,
+  `RecAct::CancelBuild`, save tag 10): 75 % refund, structure removed
+  without counting a loss, the SCV freed, a Drone given back for Zerg.  An
+  unfinished building shows card 231, whose only button is the
+  `0x74d440` cancel; card hotkeys now include Esc (`\x1b` tooltips), so Esc
+  on a selected unfinished building cancels it.  Test
+  `cancelling_a_building_under_construction_refunds_75_percent_and_frees_the_scv`.
+- **Clicking units (FACT, bug).**  `unit_at` used `(right - left) / 2` of
+  the units.dat box as a radius; left/right are both positive distances,
+  so the radius was ~0 (clamped to 10 px) and a building could only be
+  clicked at its exact centre.  It now tests the box.
+- **Placement (FACT, bug).**  The player's placement went through the AI's
+  `find_build_spot`, which moved a depot ~96 px from the click; unfinished
+  buildings did not block placement either.  `World::placement_spot` snaps
+  the units.dat placement box to the tile grid at the cursor and accepts
+  or refuses (`Can't build there`); every alive structure blocks.  The
+  retail preview (Boot Camp 169-170 s) is drawn: the building half blended
+  at the snapped spot and the placement box tinted x0.62 / x1.6 / x0.62
+  (measured on one ground patch; red mirrored, INFERENCE).  The "PLACE ..."
+  debug text is gone.  Gate scripts now place on buildable ground
+  (probed: Boot Camp 40:60, Wasteland 50:30).
+- **Targeted spells.**  `Act::TargetTech` waits for a click and sends one
+  caster an `Order::Cast` (point spells at the spot, unit spells at the
+  clicked unit).  The order walks into range every tick (it ran on the
+  8-tick cadence, 0.7 px/tick); `order_cast` and the `castspell` path now
+  apply the spell unrecorded, since the order is the logged command (the
+  recorded `cast` would have logged it twice).  Spider Mines: one mine per
+  order from the Vulture's three (`hangar`; it laid all three), range
+  1 tile; Jim Raynor's Vulture (19) carries mines and, as a hero (flag
+  `0x40`), needs no research (INFERENCE from BW); condition `0x780840` is
+  use-tech.  Tests `a_spider_mine_order_walks_the_vulture_there_and_lays_one_mine`,
+  `spider_mines_arm_and_detonate` (one mine).
+- **Gate.**  `game_input_gate.py`: Esc cancels an unfinished depot with a
+  75 % refund; on Backwater Station I on Raynor then a click lays one mine.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` and `mission_gate.py` 0 failures
+at 1280x720 and 3440x1440; `ui_visual_diff` 51/51, no screen moved by more
+than 0.05.
