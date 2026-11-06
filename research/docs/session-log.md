@@ -6432,3 +6432,41 @@ walkthrough PASS.
 
 **Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
 clippy / fmt clean; `mission_gate.py` 0 failures at 1280x720.
+
+## 2026-11-06 (142) — Contour lookups ported; the per-node step is a four-ray cast
+
+- **Lookups ported (`contour::Mover`, `Contours::up/right/down/left`).**
+  `FUN_007601c0`: the context extents are the `units.dat` box (table
+  `0xf90fe0`: left, up, right, down) stored as `[up, -right, -down, left]`
+  (plus `+1` / `~` copies at `+0x30`).  Each lookup binary-searches its list
+  for walls at or beyond the query coordinate less its extent, scans toward
+  the limit, and returns the first whose span, widened at each end by the
+  extent its flag bits select, meets the query range.  Test
+  `lookups_find_the_nearest_wall_in_mover_centre_space` (SCV-sized mover:
+  the obstacle at 160..=191 widens to 149..=202).
+- **`FUN_0075f290` corrected (FACT).**  It is not a growing box (session log
+  135's reading): from node (x, y) it sets limits 64 px each way (clamped to
+  the map; a side is kept at the node when its direction bits
+  0x19 / 0x23 / 0x46 / 0x8c are off), builds local wall lists for that
+  window (`FUN_0075f5b0`: terrain segments, merged by `FUN_0075ff00`;
+  `FUN_0075f8e0`: unit box edges from the client's sorted unit-edge tables
+  `0xfa3570` / `0xfa357c`, byte 7 `0x3d` / `0x32`), then casts four rays
+  along the node's own row and column (up / right / down / left lookups) and
+  stores the hit distances; each open direction (bits 0x10 / 0x20 / 0x40 /
+  0x80) emits a successor at the ray's end through `FUN_0075f1a0` (candidate
+  list of at most 32 points at `+0x74`, duplicates merged by and-ing their
+  masks; a point on the target box marks the target reached, `+0x72`).
+- **Which units are walls (FACT for the structure).**  `FUN_0075f8e0` keeps
+  a unit only if it is the excluded target (`+0x44`) or `FUN_005c1380`
+  accepts it: `FUN_005bb740` = the unit stands at its own move target
+  (stationary; 2 if flag 0x80000 at `+0xdc`), unit types 0xcd-0xd0 are
+  excluded (`FUN_005b5b00`), and `FUN_005c1b40` drops the mover itself and
+  a gas-worker case on order bytes 0x52 / 0x54 (WaitForGas / ReturnGas).
+  The decompile loses the return values there; polarity INFERENCE
+  (falsifier: disassembly of `0x5c1380`-`0x5c13e0`).  So Boot Camp's
+  standing Marines are walls for the SCVs' searches; moving units are not.
+- **Next.**  Corner generation `FUN_0075f0f0` (calls `FUN_0075f1a0` with
+  mask 0x29), then the search loop, then wiring.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (3 contour tests);
+clippy / fmt clean; movement unchanged.

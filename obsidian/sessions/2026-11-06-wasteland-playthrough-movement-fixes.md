@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)", "2026-11-06 (132)", "2026-11-06 (133)", "2026-11-06 (134)", "2026-11-06 (135)", "2026-11-06 (136)", "2026-11-06 (137)", "2026-11-06 (138)", "2026-11-06 (139)", "2026-11-06 (140)", "2026-11-06 (141)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)", "2026-11-06 (132)", "2026-11-06 (133)", "2026-11-06 (134)", "2026-11-06 (135)", "2026-11-06 (136)", "2026-11-06 (137)", "2026-11-06 (138)", "2026-11-06 (139)", "2026-11-06 (140)", "2026-11-06 (141)", "2026-11-06 (142)"]
 open: 2
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (142) Contour lookups ported; per-node step is a four-ray cast (not a box); stationary units are walls (FUN_005c1380).
 - (141) Contour builder ported (src/contour.rs, literal FUN_00760350 with the dump's tables); not wired into movement yet.
 - (140) Contour builder found (FUN_00760350, called by the allocator at map load): boundary trace of the walk grid into four sorted segment lists; whole short-range chain now located.
 - (139) Contour fill not in the initialiser chain (thunk, allocator, walk grid checked); lazy fill during queries is the next lead.

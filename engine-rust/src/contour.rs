@@ -37,6 +37,29 @@ pub struct Contours {
     pub lists: [Vec<Segment>; 4],
 }
 
+/// The search context's mover extents (`FUN_007601c0`, context `+0x20`):
+/// from the `units.dat` box (left, up, right, down) as
+/// `[up, -right, -down, left]`.  A segment's span ends are widened by the
+/// extents its flags select, which moves the walls into mover-centre space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mover {
+    pub ext: [i16; 4],
+}
+
+impl Mover {
+    pub fn from_box(left: i16, up: i16, right: i16, down: i16) -> Self {
+        Self {
+            ext: [up, -right, -down, left],
+        }
+    }
+
+    fn overlaps(&self, s: &Segment, lo: i32, hi: i32) -> bool {
+        let a = (self.ext[(s.flags & 3) as usize] as i32 + s.start as i32).max(lo);
+        let b = (self.ext[(s.flags >> 2 & 3) as usize] as i32 + s.end as i32).min(hi);
+        a <= b
+    }
+}
+
 const UNWALKABLE: u8 = 0x80;
 const STRIDE: usize = 0x400;
 
@@ -251,6 +274,57 @@ impl Contours {
         Self { lists }
     }
 
+    /// `FUN_007620f0`: the nearest up-facing wall at or above `y` (in
+    /// mover-centre space), not above `limit`, whose widened span meets
+    /// `x0..=x1`.
+    pub fn up(&self, m: &Mover, y: i32, x0: i32, x1: i32, limit: i32) -> Option<&Segment> {
+        let l = &self.lists[0];
+        let a = y - m.ext[0] as i32;
+        let n = l.partition_point(|s| s.pos as i32 <= a);
+        l[..n]
+            .iter()
+            .rev()
+            .take_while(|s| s.pos as i32 >= limit - m.ext[0] as i32)
+            .find(|s| m.overlaps(s, x0, x1))
+    }
+
+    /// `FUN_00762000`: the nearest right-facing wall at or right of `x`, not
+    /// beyond `limit`, meeting `y0..=y1`.
+    pub fn right(&self, m: &Mover, x: i32, y0: i32, y1: i32, limit: i32) -> Option<&Segment> {
+        let l = &self.lists[1];
+        let a = x - m.ext[1] as i32;
+        let n = l.partition_point(|s| (s.pos as i32) < a);
+        l[n..]
+            .iter()
+            .take_while(|s| s.pos as i32 <= limit - m.ext[1] as i32)
+            .find(|s| m.overlaps(s, y0, y1))
+    }
+
+    /// `FUN_00761e30`: the nearest down-facing wall at or below `y`, not
+    /// beyond `limit`, meeting `x0..=x1`.
+    pub fn down(&self, m: &Mover, y: i32, x0: i32, x1: i32, limit: i32) -> Option<&Segment> {
+        let l = &self.lists[2];
+        let a = y - m.ext[2] as i32;
+        let n = l.partition_point(|s| (s.pos as i32) < a);
+        l[n..]
+            .iter()
+            .take_while(|s| s.pos as i32 <= limit - m.ext[2] as i32)
+            .find(|s| m.overlaps(s, x0, x1))
+    }
+
+    /// `FUN_00761f20`: the nearest left-facing wall at or left of `x`, not
+    /// beyond `limit`, meeting `y0..=y1`.
+    pub fn left(&self, m: &Mover, x: i32, y0: i32, y1: i32, limit: i32) -> Option<&Segment> {
+        let l = &self.lists[3];
+        let a = x - m.ext[3] as i32;
+        let n = l.partition_point(|s| s.pos as i32 <= a);
+        l[..n]
+            .iter()
+            .rev()
+            .take_while(|s| s.pos as i32 >= limit - m.ext[3] as i32)
+            .find(|s| m.overlaps(s, y0, y1))
+    }
+
     pub fn len(&self) -> usize {
         self.lists.iter().map(Vec::len).sum()
     }
@@ -294,6 +368,27 @@ mod tests {
                     .all(|w| (w[0].pos, w[0].start) <= (w[1].pos, w[1].start))
             );
         }
+    }
+
+    #[test]
+    fn lookups_find_the_nearest_wall_in_mover_centre_space() {
+        // Obstacle at pixels 160..=191; an SCV-sized mover (11 px each way).
+        let mut t = Terrain::open(16, 16);
+        block(&mut t, 20, 20, 24, 24);
+        let c = Contours::from_terrain(&t);
+        let m = Mover::from_box(11, 11, 11, 11);
+        // Straight below the obstacle, looking up: its bottom (y 191).
+        assert_eq!(c.up(&m, 300, 176, 176, 0).map(|s| s.pos), Some(191));
+        // Beyond the widened span (149..=202) only the map border is found.
+        assert_eq!(c.up(&m, 300, 140, 140, 0).map(|s| s.pos), Some(-1));
+        assert_eq!(c.up(&m, 300, 150, 150, 0).map(|s| s.pos), Some(191));
+        // The limit stops the scan before the border.
+        assert!(c.up(&m, 300, 140, 140, 100).is_none());
+        // From the left, looking right: the obstacle's left side (x 160).
+        assert_eq!(c.right(&m, 100, 176, 176, 400).map(|s| s.pos), Some(160));
+        // From above looking down, and from the right looking left.
+        assert_eq!(c.down(&m, 100, 176, 176, 400).map(|s| s.pos), Some(160));
+        assert_eq!(c.left(&m, 300, 176, 176, 0).map(|s| s.pos), Some(191));
     }
 
     #[test]
