@@ -5185,3 +5185,36 @@ attached capture, reference 131005).
 `scripts/ui_visual_diff.py` 51/51, `scripts/glue_swish_check.py` PASS.
 Gate outputs refreshed: `menu-hover-text.txt`, `menu-walkthrough.txt`,
 `menu-walkthrough-run.txt`, `ui-visual-diff.txt`.
+
+## 2026-11-05 (103) — SingleOn hover: retail screencast shows one continuous clock (falsifies the restart in (102))
+
+The user recorded the retail main menu (`Screencast_20261105_204138.webm`,
+3440x1440, 60 fps, 45.9 s, six Single Player hovers) and asked for it to be
+replicated.
+
+- **Method.**  Hover frames are detected by the red triangle of the SingleOn
+  targeting circle (screen x 840..1020, y 340..500).  Each hovered frame
+  (15 fps sample) is matched to `singleon.webm` by normalised correlation of
+  the alpha-weighted green in the circle / gauge / panel row, which the fleet
+  never covers (scores 0.56-0.75), and each frame to `single.webm` the same way
+  (luminance, median 0.78).
+- **FACT.**  One continuous clock fits every hovered frame within 2 frames
+  (324 frames, mean error 0.66): `idx = 111.4 + 13.83 t (mod 151)`.  A
+  clock that only advances while hovered (the "pauses" model) misses by up
+  to 22 frames (mean 6.1).  The hovers open on frames 125, 128, 149, 71, 96
+  and 117, never on frame 0 or the grow-in frame 31.  The idle fleet clip
+  runs at 13.72 fps with offset 109-111: **the hover clip shows the same
+  frame index as the idle clip**.  So the 2026-11-04 design (all clips on
+  one clock, hidden hover clips still pulled) was right, and the (102)
+  restart at frame 31 plus rewind on leave is **falsified** and reverted.
+  `menu_clip_visibility` keeps the rule: every clip pulled every frame, a
+  hover clip drawn only while hovered.  Test
+  `hidden_mouse_over_clips_keep_running_and_only_show_on_hover`.
+- **Rate (FACT, not adopted).**  Both clips play at ~13.7 fps in this
+  recording, against `MENU_CLIP_FPS = 10.5` (2026-10-31 (59), "live capture
+  14.4 s").  The user chose to keep 10.5 fps.  Open question: what makes the
+  retail rate differ (render rate, FPS cap)?  Retail rendered about 35 unique
+  frames/s in this capture.
+
+**Verification.**  `cargo test` 35 result lines, 0 failed; clippy and
+`fmt --check` clean.  Measurement scripts were local (`/var/tmp/svtools/clip_rate.py`).

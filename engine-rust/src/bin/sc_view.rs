@@ -497,27 +497,22 @@ const MENU_CLIP_CHUNK: f32 = 0.5;
 /// The old 2.5 s offset skipped the fleet entrance and made the seam visible.
 const MENU_CLIP_START: f32 = 0.0;
 
-/// `glue/mainmenu/singleon.webm` (151 frames at 15 fps) repeats one
-/// 76-frame cycle: the targeting grid vanishes after frame 17 (and 93) and
-/// grows back from 63 % of its width at frame 31 to full size at frame 36
-/// (107..112 in the second cycle).  Frame 0 is mid-cycle, with the grid
-/// already full size.  Measured with `ffmpeg -c:v libvpx-vp9` alpha
-/// coverage on the 1.23.10.13515 cache, 2026-11-05.  `multion` and `exiton`
-/// have no such intro.
-const SINGLE_ON_GROW_FRAME: usize = 31;
-const SINGLE_ON_CYCLE_FRAMES: usize = 76;
+/// Whether a main-menu clip is drawn this frame.  It is always pulled:
+/// retail runs the mouse-over clip on the same clock as its idle clip
+/// whether or not it is shown.  Screencast 2026-11-05 20:41:38: matched
+/// against `singleon.webm` and `single.webm`, SingleOn shows the same frame
+/// index as the fleet clip within 2 frames across six hovers and 9 s of
+/// unhovered time.  A clock that paused while unhovered misses by up to 22
+/// frames, and a restart would open on frame 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MenuClipVisibility {
+    drawn: bool,
+}
 
-/// Loop window `(start second, authored frames)` of a mouse-over clip.  The
-/// hover must always begin with the small grid (user report on the retail
-/// client, 2026-11-05), so SingleOn plays from its grow-in frame and loops
-/// one whole cycle, which lands back on the grow-in seamlessly.
-fn hover_clip_window(name: &str) -> Option<(f32, usize)> {
-    (name == "singleon").then(|| {
-        (
-            SINGLE_ON_GROW_FRAME as f32 / MENU_CLIP_SOURCE_FPS,
-            SINGLE_ON_CYCLE_FRAMES,
-        )
-    })
+fn menu_clip_visibility(idx: usize, is_hover: bool, hover: Option<usize>) -> MenuClipVisibility {
+    MenuClipVisibility {
+        drawn: !is_hover || hover == Some(idx),
+    }
 }
 
 /// The shipped cursor GRP (80x84) is 4x the 640x480 UI art, i.e. authored
@@ -647,12 +642,6 @@ impl MenuClip {
     /// Open the clip at an explicit second.  `--menu-at` uses this to take
     /// deterministic captures of the otherwise wall-clock animation.
     fn open_at(path: PathBuf, start: f32, frozen: bool) -> Option<Self> {
-        Self::open_window(path, start, None, frozen)
-    }
-
-    /// [`Self::open_at`] looping only `frames` authored frames from `start`
-    /// (the whole remaining timeline when `None`).
-    fn open_window(path: PathBuf, start: f32, frames: Option<usize>, frozen: bool) -> Option<Self> {
         let info = galaxycraft::video::probe_info(&path)?;
         let full = info.duration_ms? as f32 / 1000.0;
         if full <= 0.0 || info.pixel_width == 0 {
@@ -662,8 +651,7 @@ impl MenuClip {
         // instead of drifting by the rounding of a seconds-based duration.
         // Retail holds each authored frame for 1/10.5 s, so a 151-frame
         // layer loops in 14.38 s (not the WebM's 10.07 s).
-        let (start, rest, _duration) = menu_clip_timeline(full, start);
-        let frames = frames.map_or(rest, |n| n.clamp(1, rest));
+        let (start, frames, _duration) = menu_clip_timeline(full, start);
         let mut clip = Self {
             path,
             info,
@@ -746,21 +734,6 @@ impl MenuClip {
             })
             .ok();
         self.rx = Some(rx);
-    }
-
-    /// Back to the first frame of the loop, with nothing on screen until it
-    /// is decoded: a mouse-over clip restarts from its beginning on every
-    /// hover instead of resuming (or running hidden) where it left off.
-    /// The worker pre-decodes the first chunk while the clip is not shown,
-    /// so the next hover starts without a gap.  Pinned captures keep their
-    /// frame.
-    fn rewind(&mut self) {
-        if self.frozen {
-            return;
-        }
-        self.restart();
-        self.current = None;
-        self.last_pull = None;
     }
 
     /// Frame to draw for this instant.
@@ -1264,9 +1237,6 @@ struct App {
     /// Entry currently under the pointer (or keyboard-highlighted); `None`
     /// is the retail idle state (no hover animation, no highlighted label).
     main_cursor: Option<usize>,
-    /// Hovered entry when the menu clips were last drawn (rewinds the
-    /// mouse-over clip it leaves).
-    menu_clip_hover: Option<usize>,
     /// Original (0) / Expansion (1) under the pointer in the `Select Game
     /// Type` popup; `None` keeps the keyboard selection.
     gametype_hover: Option<usize>,
@@ -5266,14 +5236,7 @@ fn main() {
     let frozen = menu_at.is_some() || !menu_phases.is_empty();
     let load_clip = |name: &str| {
         let start = menu_phases.get(name).copied().unwrap_or(clip_start);
-        // Live hover clips use their loop window; pinned captures keep the
-        // phase they were measured at.
-        match hover_clip_window(name).filter(|_| !frozen) {
-            Some((start, frames)) => {
-                MenuClip::open_window(clip_path(name), start, Some(frames), false)
-            }
-            None => MenuClip::open_at(clip_path(name), start, frozen),
-        }
+        MenuClip::open_at(clip_path(name), start, frozen)
     };
     let menu_layers = {
         let layers = MenuLayers {
@@ -5381,7 +5344,6 @@ fn main() {
         persist_profiles,
         profile_sel: 0,
         main_cursor: None,
-        menu_clip_hover: None,
         gametype_hover: None,
         gametype_origin: galaxycraft::menu::GameTypeOrigin::SinglePlayer,
         registry_after_gametype: false,
@@ -14366,25 +14328,19 @@ impl App {
             let r = galaxycraft::menu::FLC_RECTS[slot + usize::from(is_hover)].1;
             (base.0 + r.0, base.1 + r.1, r.2, r.3)
         };
-        let left = std::mem::replace(&mut self.menu_clip_hover, hover);
         let Some(layers) = &mut self.menu_layers else {
             return;
         };
-        // A mouse-over clip starts from its beginning on every hover and is
-        // rewound (not paused) when the pointer leaves: the user reported
-        // the SingleOn grid appearing full size on the retail client
-        // (2026-11-05).  This supersedes the 2026-11-04 reading of the
-        // recording (frame-40 marker 0.12 s after the hover), which assumed
-        // one continuous clock.  Hidden mouse-over clips are not pulled.
-        if left != hover
-            && let Some(old) = left
-            && let Some(clip) = layers.clip(old, true)
-        {
-            clip.rewind();
-        }
+        // Every clip runs on one continuous clock, hovered or not
+        // (`menu_clip_visibility`).  Hidden mouse-over clips are still
+        // pulled each frame, so a hover shows whatever frame that clock has
+        // reached.
         for (idx, is_hover) in MENU_CLIP_ORDER {
             let (x, y, w, h) = rect(idx, is_hover);
-            if is_hover && hover != Some(idx) {
+            if !menu_clip_visibility(idx, is_hover, hover).drawn {
+                if let Some(clip) = layers.clip(idx, is_hover) {
+                    let _ = clip.frame();
+                }
                 continue;
             }
             if let Some(clip) = layers.clip(idx, is_hover) {
@@ -20190,90 +20146,26 @@ mod hud_font_tests {
 #[cfg(test)]
 mod main_menu_hover_tests {
     use super::{
-        MENU_CLIP_SOURCE_FPS, MenuClip, Rgb, SINGLE_ON_CYCLE_FRAMES, SINGLE_ON_GROW_FRAME,
-        hover_clip_window, label_drop_shadow, main_label_hover_colors, menu_clip_timeline,
+        MENU_CLIP_ORDER, Rgb, label_drop_shadow, main_label_hover_colors, menu_clip_visibility,
     };
-    use std::sync::Arc;
 
     #[test]
-    fn single_on_hover_starts_at_the_small_grid_and_loops_one_cycle() {
-        let (start, frames) = hover_clip_window("singleon").expect("SingleOn window");
-        assert_eq!(
-            (start * MENU_CLIP_SOURCE_FPS).round() as usize,
-            SINGLE_ON_GROW_FRAME
-        );
-        assert_eq!(frames, SINGLE_ON_CYCLE_FRAMES);
-        // The 151-frame clip holds the whole cycle after the grow-in frame,
-        // and the next cycle starts on the same grow-in frame (107).
-        let (aligned, rest, _) = menu_clip_timeline(151.0 / MENU_CLIP_SOURCE_FPS, start);
-        assert_eq!((aligned * MENU_CLIP_SOURCE_FPS).round() as usize, 31);
-        assert!(rest >= frames);
-        assert_eq!(SINGLE_ON_GROW_FRAME + SINGLE_ON_CYCLE_FRAMES, 107);
-        // The other mouse-over clips have no intro and keep the full loop.
-        assert_eq!(hover_clip_window("multion"), None);
-        assert_eq!(hover_clip_window("exiton"), None);
-    }
-
-    fn fake_clip(frozen: bool) -> MenuClip {
-        let info = galaxycraft::video::VideoInfo {
-            codec: "V_VP9".into(),
-            pixel_width: 4,
-            pixel_height: 4,
-            display_width: 4,
-            display_height: 4,
-            duration_ms: Some(10_000),
-            timecode_scale: 1_000_000,
-            has_audio: false,
-            video_tracks: 1,
-            audio_tracks: 0,
-            clusters: 1,
-            bytes: 0,
-        };
-        let mut clip = MenuClip {
-            path: "/nonexistent/singleon.webm".into(),
-            info,
-            rx: None,
-            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            buffer: Default::default(),
-            current: None,
-            decoded: 0,
-            started: std::time::Instant::now(),
-            fps: 10.5,
-            source_fps: 15.0,
-            chunk: 8,
-            width: 4,
-            frames: 76,
-            start: 31.0 / 15.0,
-            frozen,
-            last_pull: None,
-            has_alpha: false,
-            alpha_known: false,
-        };
-        clip.current = Some(Arc::new(galaxycraft::video::RgbaFrame {
-            width: 1,
-            height: 1,
-            rgba: vec![0; 4],
-        }));
-        clip.decoded = 40;
-        clip.last_pull = Some(std::time::Instant::now());
-        clip
-    }
-
-    #[test]
-    fn leaving_the_hover_rewinds_the_clip_instead_of_pausing_it() {
-        let mut clip = fake_clip(false);
-        clip.rewind();
-        assert!(
-            clip.current.is_none(),
-            "no stale full-size frame on re-hover"
-        );
-        assert_eq!(clip.decoded, 0, "the next hover plays from frame 0");
-        assert!(clip.last_pull.is_none());
-        // Pinned captures keep their frame.
-        let mut pinned = fake_clip(true);
-        pinned.rewind();
-        assert_eq!(pinned.decoded, 40);
-        assert!(pinned.current.is_some());
+    fn hidden_mouse_over_clips_keep_running_and_only_show_on_hover() {
+        // Retail screencast 2026-11-05 20:41:38: SingleOn never pauses or
+        // restarts; it is only hidden.  Every clip is pulled every frame.
+        for (idx, is_hover) in MENU_CLIP_ORDER {
+            for hover in [None, Some(0), Some(1), Some(7)] {
+                let v = menu_clip_visibility(idx, is_hover, hover);
+                assert_eq!(
+                    v.drawn,
+                    !is_hover || hover == Some(idx),
+                    "{idx} {is_hover} {hover:?}"
+                );
+            }
+        }
+        // The idle layers stay drawn under every hover.
+        assert!(menu_clip_visibility(0, false, Some(0)).drawn);
+        assert!(!menu_clip_visibility(0, true, Some(1)).drawn);
     }
 
     #[test]

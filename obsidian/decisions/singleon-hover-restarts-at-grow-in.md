@@ -1,11 +1,13 @@
 ---
 title: "SingleOn hover clip restarts at the small grid"
 date: 2026-11-05
-status: accepted
+status: superseded
 type: decision
 tags: [decision, main-menu, clips, inference]
 source: opencode
 ---
+
+> Superseded 2026-11-05 by [[menu-hover-clips-share-the-idle-clock]]: the retail screencast falsified the restart.
 
 ## Context
 
