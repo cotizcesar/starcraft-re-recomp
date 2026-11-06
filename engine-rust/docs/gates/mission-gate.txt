@@ -5,6 +5,7 @@ PASS boot camp: victory
 PASS boot camp: the Victory box follows the result by ~24 frames (24)
 PASS boot camp: the world runs on under the box, Elapsed Time stays at the result
   end: tick=8701 units=[Terran Command Center=1 Terran Marine=16 Terran Refinery=1 Terran SCV=2 Terran Supply Depot=3]
+PASS boot camp: 3 SCVs deliver gas every 2.05 s (recording 1.97 s)
 PASS backwater station: the Barracks trains Marines (4 at start)
 PASS backwater station: Jim Raynor survives
 PASS backwater station: victory (Infested CC)
@@ -17,5 +18,5 @@ PASS wasteland: victory
 PASS desperate alliance: no attack on the base in the first 2.5 minutes (recording)
 PASS desperate alliance: Marines trained
 PASS desperate alliance: victory when the countdown ends
-  end: tick=29401 units=[Map Revealer=1 Terran Academy=1 Terran Barracks=1 Terran Bunker=1 Terran Engineering Bay=1 Terran Marine=20 Terran Supply Depot=3 Terran Vulture=2]
+  end: tick=29401 units=[Map Revealer=1 Terran Academy=1 Terran Barracks=1 Terran Marine=21 Terran Supply Depot=3 Terran Vulture=1]
 mission gate: 0 failure(s) at 3440x1440

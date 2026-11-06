@@ -5610,3 +5610,41 @@ clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
 (no screen moved by more than 0.05); walkthrough PASS (the win fixture
 shows the dialog at once); hover text 14/14.
+
+## 2026-11-06 (114) — Gas rate against Boot Camp; flingy acceleration; grpwire and scaffold findings
+
+- **Recording (FACT).**  Boot Camp 354-378 s, gas counter changes at 10 fps:
+  357.5, 359.0, 363.4, 365.0, 366.5, 369.3, 370.9, 372.4, 375.2, 376.9 s,
+  a 1.5 / 1.6 / 2.8 s rhythm = three SCVs, the 1.55 s gaps being the
+  one-at-a-time Refinery (37 frames inside); 1.97 s per delivery.  (The
+  player opened the Game Menu at 352 s, so earlier windows include a pause.)
+- **Ours.**  Same map, three SCVs: 1.80 s per delivery (9 % fast).  Probe:
+  an SCV covered 5.00 px/tick from a standstill, i.e. no acceleration,
+  while flingy.dat gives it top speed 1280, acceleration 67, halt distance
+  12227 (= 1280^2 / (2 x 67)).  Flingy-controlled units (move control 0:
+  SCV, Vulture, Drone, Overlord, lifted buildings) now accelerate by
+  `acceleration` per frame and brake when their stopping distance at the
+  current speed reaches the goal (`SimUnit::speed`, `moved_tick`, hashed;
+  INFERENCE for the exact braking rule; the halt-distance identity is the
+  evidence).  Iscript walkers (Marine, Zergling) are unchanged.  Result:
+  2.05 s per delivery (4 % slow; the recording's frames run ~1.4 % long).
+  Mission gate checks it within 0.2 s.
+- **grpwire (FACT).**  `grpwire.dds.grp` (in the install, 131 frames,
+  80 x 128) is the SD pixel art upscaled in blocky cells with palette-index
+  colours; the recording's group slots show smooth line art, as the HD
+  `wirefram` we draw.  The open item is closed: Remastered's group panel
+  uses the HD wireframes.
+- **Scaffold brightness (measured, not changed).**  Grey-surface luminance
+  percentiles (50 / 75 / 90): scaffold retail 97 / 114 / 127, ours
+  101 / 145 / 156; AlmostBuilt retail 102 / 142 / 174, ours 91 / 110 / 132;
+  finished depot retail 105 / 138 / 192, ours 97 / 118 / 139.  Our
+  scaffold highlights are brighter and the depot's dimmer than retail, but
+  every pair sits at a different screen position and the HD lighting is
+  view dependent; an unlit scaffold is as bright (149 at p75).  Needs a
+  capture at a matched camera before changing the shader.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed
+(new `flingy_units_accelerate_from_rest_and_walkers_do_not`); clippy / fmt
+clean; `game_input_gate.py`, `mission_gate.py` 0 failures at 1280x720 /
+1920x1080 / 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51,
+no screen moved by more than 0.05.

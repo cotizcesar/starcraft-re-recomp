@@ -164,6 +164,25 @@ def main() -> int:
         check(False, "boot camp: the Victory box shows")
     print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
 
+    # Gas rate with three SCVs on Boot Camp's Refinery against the
+    # recording (357.5-376.9 s: a delivery every 1.97 s, the 1.55 s gaps
+    # being the one-at-a-time Refinery queue).
+    base = steps[:steps.index("ctrl-click-unit:SCV", len(steps) - 4)]
+    gas_steps = base + ["ticks:600", "look:1800:330", "click-unit:Command Center", "key:S",
+                        "ticks:330", "ctrl-click-unit:SCV", "rclick-unit:Refinery",
+                        "ticks:500"] + ["ticks:1"] * 900
+    gs = run(args.install, args.size, 0, gas_steps)
+    times, last = [], None
+    for l in gs:
+        g = int(field(l, "gas") or 0)
+        if last is not None and g != last:
+            times.append(int(field(l, "tick")) * 0.042)
+        last = g
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    mean = sum(gaps) / len(gaps) if gaps else 0.0
+    check(gaps and abs(mean - 1.97) <= 0.2,
+          f"boot camp: 3 SCVs deliver gas every {mean:.2f} s (recording 1.97 s)")
+
     idx, steps = MISSIONS["backwater-station"]
     st = run(args.install, args.size, idx, steps)
     check(any(count(l, "Terran Marine") >= 10 for l in st), "backwater station: the Barracks trains Marines (4 at start)")
