@@ -6205,3 +6205,37 @@ clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720 and
 3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440 (gas
 1.89 s, minerals 0.1667); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51;
 walkthrough PASS.
+
+## 2026-11-06 (134) — Unit path routine located: region A* then a contour short-path search
+
+- **RE (FACT, 32-bit dump, `DecompileAt.java noreturn=all [redo]`;
+  decompiles in `research/analysis/pathx*`, local).**
+  `FUN_007654a0` (path init, the earlier dump's `0x7a3054a0`): resolves the
+  start / goal regions (`FUN_0075d720`), stores the unit box extents
+  (`FUN_005b6a60/80/90/a0`), runs the region A* (`FUN_00765590`) when the
+  regions differ, then `FUN_00765e90`.
+  `FUN_00765e90` (next waypoint): targets a point in the region about two
+  steps ahead on the route (`FUN_0075d660`), or the goal on the last stretch
+  (`FUN_00766ec0`, "error in GetClosestReachable"); if a unit stands at the
+  goal (`FUN_005a5110` unit finder, `FUN_005c1380`) the path aims at it;
+  `FUN_00767050` adjusts the target, then `FUN_007661b0` builds the
+  waypoints.
+  `FUN_007661b0` (short path, 521 lines with `redo=0xd00`): marks the
+  neighbour regions of the next region (`FUN_0075d6b0`), builds obstacle
+  contours from nearby units and terrain (`FUN_0075fe10` on
+  `DAT_011a6478 + 0x97a1c`, `FUN_005b4cd0`, `FUN_007601c0`,
+  `FUN_00760300`), then runs a node-limited best-first search over contour
+  corners: open list at `0x11a85c0`, node table at `0x11a66a0` (32-byte
+  nodes), cost `FUN_00604060` (distance) doubled for nodes outside the next
+  region and its neighbours, expansion `FUN_00766e50`, early stop when the
+  node count passes 0x12bf / 0x18ff bytes.
+- **What this means for Boot Camp.**  The retail field-18 dogleg (session
+  log 131) is this contour search routing round the Marine groups; ours runs
+  an octile grid A* that ignores units (they are only pushed apart).
+- **Not ported this session.**  The contour builders still need
+  decompiling, and the search affects every ground unit's movement; a
+  partial port risks the passing gates.  Next: decompile `FUN_0075fe10`,
+  `FUN_007601c0`, `FUN_00760300`, `FUN_00766e50`, then port behind a test
+  of the Boot Camp field-18 track.
+
+**Verification.**  No code change this session; the gates are as in (133).
