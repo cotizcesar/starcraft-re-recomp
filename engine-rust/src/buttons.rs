@@ -64,7 +64,9 @@ impl Cond {
             }
             0x780820 => Cond::Research,
             0x780890 => Cond::Upgrade,
-            0x780830 => Cond::UseTech,
+            // 0x780840: the Vulture's Spider Mines (tech 3); the hero
+            // Vulture's copy uses 0x780830.  Both: researched, or a hero.
+            0x780830 | 0x780840 => Cond::UseTech,
             0x780b50 => Cond::WhenLifted,
             0x780b70 => Cond::Land,
             0x780ba0 => Cond::LiftOff,
@@ -215,7 +217,9 @@ pub fn state(world: &World, unit: &SimUnit, b: &Button) -> Option<ButtonState> {
         }),
         Cond::Cancel => on(busy),
         Cond::Research => on(!player.has_tech(b.cond_var as u8)),
-        Cond::UseTech => on(player.has_tech(b.cond_var as u8)),
+        Cond::UseTech => on(
+            player.has_tech(b.cond_var as u8) || world.data.unit(unit.type_id).flags & 0x40 != 0
+        ),
         Cond::WhenLifted | Cond::Land => on(unit.lifted),
         Cond::LiftOff => on(!unit.lifted),
         Cond::Burrow => on(player.has_tech(b.cond_var as u8) && !unit.status.burrowed),

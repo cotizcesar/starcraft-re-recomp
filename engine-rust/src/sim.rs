@@ -225,6 +225,48 @@ impl Order {
 }
 
 impl Spell {
+    /// Every spell, for [`Self::from_tech`].
+    pub const ALL: [Spell; 33] = [
+        Spell::StimPacks,
+        Spell::Lockdown,
+        Spell::EmpShockwave,
+        Spell::SpiderMines,
+        Spell::ScannerSweep,
+        Spell::TankSiegeMode,
+        Spell::DefensiveMatrix,
+        Spell::Irradiate,
+        Spell::YamatoGun,
+        Spell::CloakingField,
+        Spell::PersonnelCloaking,
+        Spell::Burrowing,
+        Spell::SpawnBroodlings,
+        Spell::DarkSwarm,
+        Spell::Plague,
+        Spell::Consume,
+        Spell::Ensnare,
+        Spell::Parasite,
+        Spell::Infestation,
+        Spell::PsionicStorm,
+        Spell::Hallucination,
+        Spell::Recall,
+        Spell::StasisField,
+        Spell::ArchonWarp,
+        Spell::Restoration,
+        Spell::DisruptionWeb,
+        Spell::MindControl,
+        Spell::DarkArchonMeld,
+        Spell::Feedback,
+        Spell::OpticalFlare,
+        Spell::Maelstrom,
+        Spell::LurkerAspect,
+        Spell::Healing,
+    ];
+
+    /// The spell a `techdata.dat` id casts (a card button's `act_var`).
+    pub fn from_tech(tech: u8) -> Option<Spell> {
+        Self::ALL.into_iter().find(|s| s.tech_id() == tech)
+    }
+
     pub fn tech_id(self) -> u8 {
         match self {
             Spell::StimPacks => tech_id::STIM_PACKS,
@@ -1687,6 +1729,50 @@ impl World {
             .collect()
     }
 
+    /// A player's placement: the building goes exactly where the cursor
+    /// puts it or nowhere.  The units.dat placement box (`placement`, px) is
+    /// snapped to the 32 px tile grid around `cursor` (retail placement
+    /// preview), then checked like [`Self::find_build_spot`] without
+    /// searching further.  Gas buildings need the cursor on a free geyser.
+    /// FACT (2026-11-06): the client used `find_build_spot` for the player
+    /// too, which moved a depot ~96 px away from the click.
+    pub fn placement_spot(&mut self, type_id: u16, cursor: (i32, i32)) -> Option<(i32, i32)> {
+        if is_gas_building(type_id) {
+            let on_geyser = self.units.iter().any(|u| {
+                u.alive
+                    && u.type_id == uid::VESPENE_GEYSER
+                    && (u.x / fp(1) - cursor.0).abs() <= 64
+                    && (u.y / fp(1) - cursor.1).abs() <= 32
+            });
+            return on_geyser
+                .then(|| self.find_build_spot(type_id, cursor))
+                .flatten()
+                .filter(|g| (g.0 - cursor.0).abs() <= 64 && (g.1 - cursor.1).abs() <= 32);
+        }
+        let ty = self.data.unit(type_id);
+        let (pw, ph) = (ty.placement.x.max(32) as i32, ty.placement.y.max(32) as i32);
+        let left = ((cursor.0 - pw / 2) as f32 / 32.0).round() as i32 * 32;
+        let top = ((cursor.1 - ph / 2) as f32 / 32.0).round() as i32 * 32;
+        let centre = (left + pw / 2, top + ph / 2);
+        self.build_spot_search(type_id, centre, 1)
+    }
+
+    /// Placement preview at `cursor`: (snapped centre, placement box size
+    /// in px, valid).  Same snapping as [`Self::placement_spot`].
+    pub fn placement_preview(
+        &mut self,
+        type_id: u16,
+        cursor: (i32, i32),
+    ) -> ((i32, i32), (i32, i32), bool) {
+        let ty = self.data.unit(type_id);
+        let (pw, ph) = (ty.placement.x.max(32) as i32, ty.placement.y.max(32) as i32);
+        let left = ((cursor.0 - pw / 2) as f32 / 32.0).round() as i32 * 32;
+        let top = ((cursor.1 - ph / 2) as f32 / 32.0).round() as i32 * 32;
+        let centre = (left + pw / 2, top + ph / 2);
+        let spot = self.placement_spot(type_id, cursor);
+        (spot.unwrap_or(centre), (pw, ph), spot.is_some())
+    }
+
     /// Find a buildable spot near `near` (pixel coordinates).
     pub fn find_build_spot(&mut self, type_id: u16, near: (i32, i32)) -> Option<(i32, i32)> {
         self.rebuild_creep();
@@ -1721,6 +1807,18 @@ impl World {
             }
             return None;
         }
+        self.build_spot_search(type_id, near, 20)
+    }
+
+    /// Spiral search for a valid footprint around `near` over `rings`
+    /// rings of 32 px (1 = only `near` itself).
+    fn build_spot_search(
+        &mut self,
+        type_id: u16,
+        near: (i32, i32),
+        rings: i32,
+    ) -> Option<(i32, i32)> {
+        self.rebuild_creep();
         let ty = self.data.unit(type_id).clone();
         let half_w = ty.dimensions.right.max(0).max(ty.dimensions.left.max(0)) as i32;
         let half_h = ty.dimensions.bottom.max(0).max(ty.dimensions.top.max(0)) as i32;
@@ -1741,7 +1839,8 @@ impl World {
         let blockers: Vec<Rect> = self
             .units
             .iter()
-            .filter(|u| u.alive && u.completed && !u.lifted)
+            // Unfinished structures block too (two depots could overlap).
+            .filter(|u| u.alive && !u.lifted)
             .filter_map(|u| {
                 let ut = self.data.unit(u.type_id);
                 if !(ut.is_building() || is_resource_type(u.type_id)) {
@@ -1755,7 +1854,7 @@ impl World {
             })
             .collect();
         let step = 16;
-        for ring in 0..20i32 {
+        for ring in 0..rings {
             for dy in -ring..=ring {
                 for dx in -ring..=ring {
                     if ring > 0 && dx.abs() != ring && dy.abs() != ring {
@@ -2111,6 +2210,57 @@ impl World {
                     building: building_id,
                 },
             );
+        }
+        Ok(())
+    }
+
+    /// Cancel an unfinished building (the Cancel button of a structure
+    /// under construction, `0x74d440`).  Recorded (`RecAct::CancelBuild`).
+    /// Retail refunds 75 % of the cost (FACT: `stat_txt` / OpenBW
+    /// `cancel_building_unit`), removes the structure without counting a
+    /// loss, frees the Terran SCV and gives a Zerg Drone back.
+    pub fn cancel_construction(&mut self, building_id: u32) -> Result<(), SimError> {
+        self.cancel_construction_unrecorded(building_id)?;
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::CancelBuild {
+                    building: building_id,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn cancel_construction_unrecorded(&mut self, building_id: u32) -> Result<(), SimError> {
+        let i = self.index_of(building_id).ok_or(SimError::BadUnit)?;
+        let u = &self.units[i];
+        if !u.alive || u.completed || u.morph_to.is_some() {
+            return Err(SimError::Unsupported);
+        }
+        let type_id = u.type_id;
+        let ty = self.data.unit(type_id).clone();
+        if !ty.is_building() {
+            return Err(SimError::Unsupported);
+        }
+        let owner = u.owner as usize;
+        let (x, y) = (u.x / fp(1), u.y / fp(1));
+        let builder = u.builder;
+        if owner < self.players.len() {
+            self.players[owner].minerals += ty.mineral_cost as i32 * 3 / 4;
+            self.players[owner].gas += ty.gas_cost as i32 * 3 / 4;
+        }
+        self.units[i].alive = false;
+        self.units[i].order = Order::Die;
+        if let Some(b) = self.index_of(builder)
+            && matches!(self.units[b].order, Order::Construct { building } if building == building_id)
+        {
+            self.units[b].order = Order::Idle;
+            self.units[b].order_row = 0;
+        }
+        if is_zerg_building(type_id) {
+            let _ = self.spawn_px(owner, uid::DRONE, x, y);
         }
         Ok(())
     }
@@ -3017,6 +3167,21 @@ impl World {
             Order::Cast { spell, target } => {
                 if think {
                     self.order_cast(i, spell, target);
+                } else {
+                    // The walk into casting range advances every tick (it
+                    // ran at 1/8 speed on the order cadence, like the build
+                    // walk).
+                    let range = spell_range(spell);
+                    let pos = match target {
+                        SpellTarget::Unit(id) => self.unit(id).map(|u| (u.x, u.y)),
+                        SpellTarget::Point(x, y) => Some((x * fp(1), y * fp(1))),
+                        SpellTarget::None => None,
+                    };
+                    if let Some(p) = pos
+                        && self.distance_to_point(i, p) > range
+                    {
+                        self.move_towards(i, (p.0 / fp(1), p.1 / fp(1)), range / fp(1));
+                    }
                 }
             }
             Order::EnterTransport { transport } => self.order_enter_transport(i, transport),
@@ -4725,7 +4890,8 @@ impl World {
         let order = self.units[i].order.clone();
         if let Order::Cast { spell, target } = order {
             let id = self.units[i].id;
-            let _ = self.cast(id, spell, target);
+            // Unrecorded: the `Order::Cast` that led here is the logged act.
+            let _ = self.cast_unrecorded(id, spell, target);
             self.order_done(i);
         }
     }
@@ -5420,8 +5586,15 @@ impl World {
             return Err(SimError::InvalidTarget);
         }
         let tech_id = spell.tech_id();
-        if !self.players[owner].has_tech(tech_id) && tech_id != tech_id::HEALING {
+        // Heroes (units.dat flag 0x40, Jim Raynor) use their abilities
+        // without the research (INFERENCE from BW; falsifier: a hero card
+        // without the button before the research).
+        let hero = self.data.unit(self.units[i].type_id).flags & 0x40 != 0;
+        if !self.players[owner].has_tech(tech_id) && tech_id != tech_id::HEALING && !hero {
             return Err(SimError::MissingTech);
+        }
+        if spell == Spell::SpiderMines && self.units[i].hangar == 0 {
+            return Err(SimError::QueueFull);
         }
         if !caster_can_cast(self.units[i].type_id, spell) {
             return Err(SimError::Unsupported);
@@ -5469,7 +5642,8 @@ impl World {
         if has_anim {
             self.start_animation(i, ANIM_CAST_SPELL);
         } else {
-            let _ = self.cast(self.units[i].id, spell, target);
+            // Unrecorded: the order itself is the logged command.
+            let _ = self.cast_unrecorded(self.units[i].id, spell, target);
             self.order_done(i);
         }
     }
@@ -5768,19 +5942,15 @@ impl World {
                     SpellTarget::Point(x, y) => Some((x * fp(1), y * fp(1))),
                     SpellTarget::None => None,
                 };
-                if let Some((tx, ty)) = point {
-                    for k in 0..3 {
-                        if let Some(idx) = self.spawn_temporary(
-                            c_owner,
-                            uid::SPIDER_MINE,
-                            (tx + k * 16 * fp(1), ty + k * 8 * fp(1)),
-                            0,
-                        ) {
-                            self.units[idx].status.burrowed = true;
-                            self.units[idx].mine_armed_at =
-                                self.tick as i64 + SPIDER_MINE_ARM_TICKS;
-                        }
-                    }
+                // One mine per order from the Vulture's three (`hangar`),
+                // as `place_spider_mine`; the old version laid all three.
+                if let Some((tx, ty)) = point
+                    && self.units[caster].hangar > 0
+                    && let Some(idx) = self.spawn_temporary(c_owner, uid::SPIDER_MINE, (tx, ty), 0)
+                {
+                    self.units[idx].status.burrowed = true;
+                    self.units[idx].mine_armed_at = self.tick as i64 + SPIDER_MINE_ARM_TICKS;
+                    self.units[caster].hangar -= 1;
                 }
             }
             Spell::LurkerAspect => {
@@ -6168,7 +6338,8 @@ fn caster_can_cast(type_id: u16, spell: Spell) -> bool {
         Spell::EmpShockwave | Spell::DefensiveMatrix | Spell::Irradiate => {
             type_id == uid::SCIENCE_VESSEL
         }
-        Spell::SpiderMines => type_id == uid::VULTURE,
+        // 19 = Jim Raynor's Vulture (Wasteland, Backwater Station).
+        Spell::SpiderMines => matches!(type_id, uid::VULTURE | 19),
         Spell::ScannerSweep => type_id == uid::COMSAT_STATION,
         Spell::TankSiegeMode => matches!(type_id, uid::SIEGE_TANK | uid::SIEGE_MODE),
         Spell::YamatoGun => type_id == uid::BATTLECRUISER,
@@ -6203,14 +6374,20 @@ fn default_hangar_capacity(type_id: u16) -> u8 {
     match type_id {
         uid::CARRIER => CARRIER_HANGAR,
         uid::REAVER => REAVER_HANGAR,
-        // The Vulture's three Spider Mines reuse the hangar counter.
-        uid::VULTURE => 3,
+        // The Vulture's three Spider Mines reuse the hangar counter (19 =
+        // Jim Raynor's Vulture).
+        uid::VULTURE | 19 => 3,
         _ => 0,
     }
 }
 
 fn default_hangar(type_id: u16) -> u8 {
-    if type_id == uid::VULTURE { 3 } else { 0 }
+    // 19 = Jim Raynor's Vulture.
+    if matches!(type_id, uid::VULTURE | 19) {
+        3
+    } else {
+        0
+    }
 }
 
 fn weapon_can_target(weapon: &WeaponType, target: &UnitType) -> bool {
@@ -6393,7 +6570,7 @@ fn spell_range(spell: Spell) -> i32 {
         | Spell::YamatoGun
         | Spell::Lockdown
         | Spell::Hallucination => 9,
-        Spell::ScannerSweep | Spell::DarkSwarm | Spell::SpiderMines => 12,
+        Spell::ScannerSweep | Spell::DarkSwarm => 12,
         _ => 1,
     };
     tiles * 32 * fp(1)
@@ -6910,7 +7087,8 @@ mod tests {
                 .iter()
                 .filter(|u| u.type_id == uid::SPIDER_MINE)
                 .count()
-                >= 3
+                == 1,
+            "one mine per order (the Vulture carries three)"
         );
         // Let the mines arm, then walk an enemy onto them.
         for _ in 0..SPIDER_MINE_ARM_TICKS as usize + 2 {

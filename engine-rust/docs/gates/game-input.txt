@@ -13,4 +13,8 @@ PASS M waits for a target
 PASS the world click moves the SCV
 PASS Shift+click on a group slot drops that unit
 PASS a click on a group slot keeps only that unit
+PASS an unfinished depot is placed and selected
+PASS Esc cancels the construction with a 75 % refund
+PASS I on Raynor's Vulture waits for a target
+PASS the click lays one Spider Mine
 game input gate: 0 failure(s) at 3440x1440 (minerals 150 -> 50)

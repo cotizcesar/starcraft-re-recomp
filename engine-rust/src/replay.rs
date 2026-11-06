@@ -22,7 +22,8 @@ use crate::sim::{CarryKind, Order, Race, SimUnit, Spell, SpellTarget, World};
 
 pub const MAGIC: u32 = 0x4743_5331; // "GCS1"
 pub const VERSION: u16 = 3; // v2: commands carry Issue or economy acts;
-// v3 adds research, upgrade, cancel, rally, add-on and spell acts (tags 4-9).
+// v3 adds research, upgrade, cancel, rally, add-on and spell acts (tags 4-9)
+// and the building cancel (tag 10).
 // A v2 file only has tags 0-3 and decodes unchanged.
 
 /// One recorded action: a player/AI order or a direct economy call
@@ -77,6 +78,10 @@ pub enum RecAct {
         caster: u32,
         spell: Spell,
         target: SpellTarget,
+    },
+    /// Cancel an unfinished building (tag 10).
+    CancelBuild {
+        building: u32,
     },
 }
 
@@ -936,6 +941,9 @@ pub fn apply_act(world: &mut World, act: &RecAct) {
         RecAct::Cancel { building } => {
             let _ = world.cancel_production(*building);
         }
+        RecAct::CancelBuild { building } => {
+            let _ = world.cancel_construction(*building);
+        }
         RecAct::Rally { building, pos } => {
             let _ = world.set_rally(*building, *pos);
         }
@@ -986,6 +994,10 @@ pub fn encode_act(out: &mut Vec<u8>, act: &RecAct) {
         }
         RecAct::Cancel { building } => {
             w_u8(out, 6);
+            w_u32(out, *building);
+        }
+        RecAct::CancelBuild { building } => {
+            w_u8(out, 10);
             w_u32(out, *building);
         }
         RecAct::Rally { building, pos } => {
@@ -1045,6 +1057,7 @@ pub fn decode_act(c: &mut Cursor<'_>) -> Option<RecAct> {
             upgrade: c.u8()?,
         },
         6 => RecAct::Cancel { building: c.u32()? },
+        10 => RecAct::CancelBuild { building: c.u32()? },
         7 => RecAct::Rally {
             building: c.u32()?,
             pos: (c.u32()? as i32, c.u32()? as i32),
@@ -1097,6 +1110,7 @@ mod tests {
                 upgrade: 7,
             },
             RecAct::Cancel { building: 8 },
+            RecAct::CancelBuild { building: 12 },
             RecAct::Rally {
                 building: 9,
                 pos: (-10, 2000),

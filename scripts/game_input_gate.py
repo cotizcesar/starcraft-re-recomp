@@ -12,7 +12,9 @@ each step's state line (`game.tsv`) is checked:
 4. a box over units and the Command Center keeps only the units;
 5. a right click on minerals never attacks them, and M (Move) waits for a
    target that a world click then gives;
-6. in the group panel Shift+click drops a unit and a click keeps only it.
+6. in the group panel Shift+click drops a unit and a click keeps only it;
+7. Esc on a selected unfinished building cancels it with a 75 % refund;
+8. Backwater Station: I on Raynor's Vulture then a click lays one Spider Mine.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -50,6 +52,12 @@ SCRIPT = [
     "drag:10:5:1910:700",      # 15 a group again
     "shift-click-slot:0",      # 16 Shift+click drops slot 0
     "click-slot:1",            # 17 a click keeps only that unit
+    "ctrl-click-unit:SCV", "rclick-unit:Mineral",             # 18-19 mine
+    "ticks:2500",              # 20 income for a depot
+    "click-unit:SCV", "key:B", "key:S", "click-view:40:60",   # 21-24 place it
+    "ticks:200",               # 25 under construction
+    "click-view:40:60",        # 26 select the unfinished depot
+    "key:Escape",              # 27 Esc = Cancel construction
 ]
 
 
@@ -107,6 +115,27 @@ def main() -> int:
     check(len(group(16)) == len(group(15)) - 1 and len(group(15)) > 2,
           "Shift+click on a group slot drops that unit")
     check(len(group(17)) == 1, "a click on a group slot keeps only that unit")
+    depots = lambda i: count(st[i], "Terran Supply Depot")  # noqa: E731
+    check(depots(25) == depots(20) + 1 and "Supply Depot" in field(st[26], "selected"),
+          "an unfinished depot is placed and selected")
+    check(depots(27) == depots(20) and minerals(27) >= minerals(26) + 75,
+          "Esc cancels the construction with a 75 % refund")
+    # Targeted spell (Backwater Station, map 2): Raynor's Vulture, I, a
+    # click on the ground -> one Spider Mine, as a hero without research.
+    out2 = Path(tempfile.mkdtemp(prefix="gc-game-"))
+    env2 = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(out2))
+    subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", w, "--height", h,
+         "--shot-map", "2", "--game-script",
+         "ticks:1,look:290:1796,click-unit:Jim Raynor,key:I,click-view:60:40,ticks:150"],
+        check=True, env=env2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    mine_rows = [l.split("\t")[2] for l in (out2 / "game.tsv").read_text().splitlines()[1:]]
+    check(count(mine_rows[2], "Vulture Spider Mine") == 0
+          and field(mine_rows[3], "target").startswith("Some((TargetTech"),
+          "I on Raynor's Vulture waits for a target")
+    check(count(mine_rows[-1], "Vulture Spider Mine") == 1,
+          "the click lays one Spider Mine")
     print(f"\ngame input gate: {len(failures)} failure(s) at {args.size} (minerals {minerals(4)} -> {minerals(5)})")
     return 1 if failures else 0
 

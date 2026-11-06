@@ -3255,6 +3255,8 @@ const NO_WEAPON: u8 = 130;
 
 /// Ticks between minimap terrain/fog recompositions.
 const MINIMAP_REFRESH_TICKS: u64 = 8;
+/// Card of a structure under construction (Cancel only).
+const CONSTRUCTION_CARD: u16 = 231;
 /// Retail Esc-only card shown while a target or a building spot is pending.
 const TARGET_CARD: u16 = 229;
 
@@ -12571,10 +12573,21 @@ impl App {
             }
             let (ux, uy) = self.screen_of(u);
             let ty = self.data.unit(u.type_id);
-            let r = ((ty.dimensions.right - ty.dimensions.left) as i32 / 2).max(10);
+            // units.dat box: left/up/right/down are distances from the
+            // centre (the old `(right - left) / 2` was ~0 for symmetric
+            // units, so only a 10 px circle was clickable and a building
+            // could not be clicked away from its exact centre).  Small units
+            // keep at least a 10 px reach.
+            let d = &ty.dimensions;
+            let (l, t, r, b) = (
+                (d.left as i32).max(10),
+                (d.top as i32).max(10),
+                (d.right as i32).max(10),
+                (d.bottom as i32).max(10),
+            );
             let dx = sx - ux;
             let dy = sy - uy;
-            if dx * dx + dy * dy <= r * r {
+            if dx >= -l && dx <= r && dy >= -t && dy <= b {
                 let score = dy.abs() - uy / 1000;
                 if best.is_none_or(|(b, _)| score < b) {
                     best = Some((score, u.id));
@@ -12682,6 +12695,10 @@ impl App {
         // Esc-only card (229).
         let set = if self.target_act.is_some() || self.build_mode.is_some() {
             Some(TARGET_CARD)
+        } else if self.data.unit(u.type_id).is_building() && !u.completed && u.morph_to.is_none() {
+            // A structure under construction shows only Cancel (set 231,
+            // whose single button is the 0x74d440 construction cancel).
+            Some(CONSTRUCTION_CARD)
         } else {
             self.card_set
         };
@@ -12694,7 +12711,8 @@ impl App {
     fn button_hotkey(&self, b: &galaxycraft::button_sets::Button) -> Option<char> {
         let text = self.data.strings.get(b.enabled_string.checked_sub(1)?)?;
         let c = text.chars().next()?;
-        c.is_ascii_alphanumeric().then(|| c.to_ascii_uppercase())
+        // `\x1b` = Esc (the Cancel buttons).
+        (c.is_ascii_alphanumeric() || c == '\x1b').then(|| c.to_ascii_uppercase())
     }
 
     /// Selected own units that take movement orders (not grounded
@@ -12740,7 +12758,8 @@ impl App {
         self.actions = self.actions.saturating_add(1);
         let var = b.act_var;
         match Act::of(b.act) {
-            act @ (Act::Move
+            act @ (Act::TargetTech
+            | Act::Move
             | Act::Attack
             | Act::Patrol
             | Act::Repair
@@ -12803,6 +12822,11 @@ impl App {
                     self.send_order(id, Order::Lift);
                 }
             }
+            Act::CancelConstruction => {
+                if let Err(e) = self.world.cancel_construction(u.id) {
+                    self.show_sim_error(e);
+                }
+            }
             Act::CancelLast | Act::CancelAddon | Act::CancelMorph => {
                 if let Err(e) = self.world.cancel_production(u.id) {
                     self.show_sim_error(e);
@@ -12839,6 +12863,59 @@ impl App {
         self.refresh_commands();
     }
 
+    /// A targeted spell from the card (`Act::TargetTech`, tech `act_var`):
+    /// the first selected own unit that can cast it does (retail sends one
+    /// caster), at the clicked unit when there is one, else at the point.
+    fn cast_targeted(&mut self, tech: u16, pos: (i32, i32), target: Option<u32>) {
+        use galaxycraft::sim::{Spell, SpellTarget};
+        let Some(spell) = Spell::from_tech(tech as u8) else {
+            self.status(format!("tech {tech}: no spell"));
+            return;
+        };
+        // Point spells (Spider Mines, Scanner Sweep, ...) take the clicked
+        // spot; unit spells the clicked unit.
+        let point_spell = matches!(
+            spell,
+            Spell::SpiderMines
+                | Spell::ScannerSweep
+                | Spell::DarkSwarm
+                | Spell::PsionicStorm
+                | Spell::Recall
+                | Spell::StasisField
+                | Spell::DisruptionWeb
+                | Spell::Plague
+                | Spell::Ensnare
+                | Spell::EmpShockwave
+                | Spell::Maelstrom
+        );
+        let t = match target {
+            Some(id) if !point_spell => SpellTarget::Unit(id),
+            _ => SpellTarget::Point(pos.0, pos.1),
+        };
+        // One caster: the first selected own unit whose card has it (an
+        // `Order::Cast` walks it into range; the order is the logged act).
+        let caster = self.selected.iter().copied().find(|id| {
+            self.world.unit(*id).is_some_and(|u| {
+                u.owner as usize == self.local_player
+                    && galaxycraft::buttons::card(&self.world, u)
+                        .iter()
+                        .flatten()
+                        .any(|(b, _)| {
+                            galaxycraft::buttons::Act::of(b.act)
+                                == galaxycraft::buttons::Act::TargetTech
+                                && b.act_var == tech
+                        })
+            })
+        });
+        match caster {
+            Some(id) => {
+                self.send_order(id, Order::Cast { spell, target: t });
+                self.play_ack();
+            }
+            None => self.status("No unit can cast that"),
+        }
+    }
+
     /// Left click in the world while a card button waits for a target.
     fn execute_target(&mut self, px: i32, py: i32) {
         let (lx, ly) = self.to_logical(px, py);
@@ -12850,10 +12927,15 @@ impl App {
     /// [`Self::execute_target`] at a world position (minimap clicks).
     fn execute_target_world(&mut self, pos: (i32, i32), target: Option<u32>) {
         use galaxycraft::buttons::Act;
-        let Some((act, _var)) = self.target_act.take() else {
+        let Some((act, var)) = self.target_act.take() else {
             return;
         };
         let mobile = self.selected_mobile();
+        if act == Act::TargetTech {
+            self.cast_targeted(var, pos, target);
+            self.refresh_commands();
+            return;
+        }
         match act {
             Act::Move => match target {
                 Some(t) => {
@@ -13072,7 +13154,7 @@ impl App {
         // Mouse is in window pixels; the world view is logical (scaled).
         let (lx, ly) = self.to_logical(sx, sy);
         let (wx, wy) = self.world_of(lx, ly);
-        let Some(spot) = self.world.find_build_spot(unit_type, (wx, wy)) else {
+        let Some(spot) = self.world.placement_spot(unit_type, (wx, wy)) else {
             self.show_game_error(STAT_CANT_BUILD_THERE);
             return;
         };
@@ -13259,7 +13341,12 @@ impl App {
             // Retail card hotkeys first (the tooltip's leading letter): M
             // Move, S Stop, A Attack, B Build, ... on the card on screen.
             if !input.ctrl
-                && let Some(letter) = key_letter(key)
+                && let Some(letter) = key_letter(key).or_else(|| {
+                    // Esc runs a card Cancel when nothing is pending (the
+                    // Esc-only target card is handled below).
+                    (key == Key::Escape && self.target_act.is_none() && self.build_mode.is_none())
+                        .then_some('\x1b')
+                })
                 && let Some((_, card)) = self.current_card()
                 && let Some(slot) = card
                     .iter()
@@ -13912,6 +13999,7 @@ impl App {
             for &i in &hd_units {
                 self.draw_unit_hd(fb_full, i, (cx, cy, cw, ch), scale, &env);
             }
+            self.draw_placement_preview(fb_full, (cx, cy, cw, ch), scale);
             marks.push(("units", Instant::now()));
             if prof {
                 let t = Instant::now();
@@ -13989,6 +14077,97 @@ impl App {
         let install = self.install.as_ref();
         self.hd_sprites
             .image(self.data.hd_anim_id(image), |path| install?.read(path))
+    }
+
+    /// Building placement preview (Boot Camp recording 169-170 s): the
+    /// building's image half blended at the grid-snapped spot under the
+    /// pointer, and its placement box tinted green (x0.62, x1.6, x0.62
+    /// over the ground, measured) or red where it cannot be built
+    /// (INFERENCE: the mirrored tint).
+    fn draw_placement_preview(
+        &mut self,
+        fb: &mut Framebuffer,
+        content: (i32, i32, i32, i32),
+        s: f32,
+    ) {
+        let Some(t) = self.build_mode else {
+            return;
+        };
+        let (mx, my) = self.drag_now;
+        if my >= self.playfield_bottom() || mx < content.0 || mx >= content.0 + content.2 {
+            return;
+        }
+        let (lx, ly) = self.to_logical(mx, my);
+        let cursor = self.world_of(lx, ly);
+        let (centre, (pw, ph), valid) = self.world.placement_preview(t, cursor);
+        let (cx, cy, cw, ch) = content;
+        let sx = cx as f32 + (centre.0 - self.camera.0) as f32 * s;
+        let sy = cy as f32 + (centre.1 - self.camera.1) as f32 * s;
+        let x0 = (sx - pw as f32 * s / 2.0).round() as i32;
+        let y0 = (sy - ph as f32 * s / 2.0).round() as i32;
+        let (w, h) = (
+            (pw as f32 * s).round() as i32,
+            (ph as f32 * s).round() as i32,
+        );
+        // Ghost: draw the building, then average with what was under it.
+        let ty = self.data.unit(t).clone();
+        let install = self.install.as_ref();
+        let image = self
+            .data
+            .flingy(ty.flingy)
+            .and_then(|f| self.data.sprite(f.sprite))
+            .map(|sp| sp.image);
+        if let Some(img) = image.and_then(|id| {
+            self.hd_sprites
+                .image(self.data.hd_anim_id(id), |path| install?.read(path))
+        }) {
+            let (gx0, gy0, gx1, gy1) = (
+                (x0 - w).max(cx),
+                (y0 - h).max(cy),
+                (x0 + 2 * w).min(cx + cw),
+                (y0 + 2 * h).min(cy + ch),
+            );
+            let before: Vec<u32> = (gy0..gy1)
+                .flat_map(|y| (gx0..gx1).map(move |x| (x, y)))
+                .map(|(x, y)| fb.get(x, y).0)
+                .collect();
+            galaxycraft::hd_sprites::draw_frame(
+                fb,
+                &img,
+                0,
+                sx,
+                sy,
+                s,
+                false,
+                None,
+                (cx, cy, cx + cw, cy + ch),
+            );
+            let mut k = 0;
+            for y in gy0..gy1 {
+                for x in gx0..gx1 {
+                    let (a, b) = (before[k], fb.get(x, y).0);
+                    k += 1;
+                    if a != b {
+                        fb.put(x, y, Rgb(a).blend(Rgb(b), 128));
+                    }
+                }
+            }
+        }
+        let (fr, fg, fb_) = if valid {
+            (0.62, 1.6, 0.62)
+        } else {
+            (1.6, 0.62, 0.62)
+        };
+        for y in y0.max(cy)..(y0 + h).min(cy + ch) {
+            for x in x0.max(cx)..(x0 + w).min(cx + cw) {
+                let p = fb.get(x, y).0;
+                let ch = |v: u32, f: f32| ((v as f32 * f).round() as u32).min(255);
+                let out = ch((p >> 16) & 0xff, fr) << 16
+                    | ch((p >> 8) & 0xff, fg) << 8
+                    | ch(p & 0xff, fb_);
+                fb.put(x, y, Rgb(out));
+            }
+        }
     }
 
     /// Pose of an SCV constructing a Terran building next to it: facing the
@@ -14566,15 +14745,6 @@ impl App {
                 self.view.1 - 48,
                 "PATROL: right click",
                 Rgb::new(140, 200, 255),
-                1,
-            );
-        }
-        if let Some(t) = self.build_mode {
-            fb.text_centered(
-                self.view.0 / 2,
-                self.view.1 - 68,
-                &format!("PLACE {} - left click, Esc cancel", self.data.unit_name(t)),
-                Rgb::new(255, 220, 120),
                 1,
             );
         }

@@ -6,7 +6,7 @@ type: session
 source: opencode
 area: in-game
 log: ["2026-11-05 (105)", "2026-11-05 (106)"]
-open: 2
+open: 1
 ---
 
 ## Goal
@@ -28,7 +28,7 @@ Make Boot Camp playable: frame rate, selection, orders, building (user report). 
 - [x] Multi-selection panel. Closed 2026-11-06: session log (110). Cargo slots stay open in PROGRESS.md.
 - [x] SCV stays on its Terran building until it completes. Closed 2026-11-05: `a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`.
 - [x] Mineral delivery distance (~320 px from the CC on Boot Camp). Closed 2026-11-05: falsified, session log (106) (the mineral line is ~330 px away).
-- [ ] Cancel construction, targeted spells, Land preview on the card.
+- [x] Cancel construction, targeted spells on the card. Closed 2026-11-06: session log (111). Land preview stays open in PROGRESS.md.
 - [ ] Boot Camp, Wasteland, Backwater Station, Desperate Alliance step by step against the recordings.
 
 ## FACT vs INFERENCE

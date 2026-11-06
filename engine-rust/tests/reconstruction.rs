@@ -2165,3 +2165,93 @@ fn a_mined_out_field_disappears_and_its_worker_moves_to_the_next() {
     );
     assert!(world.players[0].minerals_gathered > 8);
 }
+
+#[test]
+fn cancelling_a_building_under_construction_refunds_75_percent_and_frees_the_scv() {
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    world.players[0].minerals = 500;
+    world.recorder = Some(galaxycraft::replay::Recorder::new());
+    let scv = world.spawn_px(0, uid::SCV, 10 * 32, 10 * 32).unwrap();
+    let scv_id = world.units[scv].id;
+    let spot = world
+        .find_build_spot(uid::SUPPLY_DEPOT, (14 * 32, 10 * 32))
+        .unwrap();
+    world
+        .issue(
+            scv_id,
+            Order::Build {
+                unit_type: uid::SUPPLY_DEPOT,
+                pos: spot,
+            },
+        )
+        .unwrap();
+    let mut depot = None;
+    for _ in 0..400 {
+        world.step();
+        depot = world
+            .units
+            .iter()
+            .position(|u| u.alive && u.type_id == uid::SUPPLY_DEPOT);
+        if depot.is_some() {
+            break;
+        }
+    }
+    let d = depot.expect("placed");
+    let depot_id = world.units[d].id;
+    assert_eq!(world.players[0].minerals, 400);
+    let deaths = world.players[0].deaths;
+    world.cancel_construction(depot_id).unwrap();
+    assert!(!world.units[d].alive, "the structure is gone");
+    assert_eq!(world.players[0].minerals, 475, "75 % of 100 back");
+    assert_eq!(world.players[0].deaths, deaths, "not counted as a loss");
+    world.step();
+    assert!(
+        matches!(world.units[scv].order, Order::Idle),
+        "the SCV is free"
+    );
+    // A finished building cannot be cancelled; the act is in the log.
+    assert!(world.cancel_construction(depot_id).is_err());
+    let log = &world.recorder.as_ref().unwrap().cmds;
+    assert!(log.iter().any(|c| matches!(c.act, galaxycraft::replay::RecAct::CancelBuild { building } if building == depot_id)));
+}
+
+#[test]
+fn a_spider_mine_order_walks_the_vulture_there_and_lays_one_mine() {
+    // Card flow: `Order::Cast { SpiderMines, Point }`; the Vulture moves in
+    // range, lays one of its three mines; the hero Vulture needs no research.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let v = world.spawn_px(0, 19, 200, 200).unwrap();
+    let id = world.units[v].id;
+    assert_eq!(world.units[v].hangar, 3);
+    world
+        .issue(
+            id,
+            Order::Cast {
+                spell: galaxycraft::sim::Spell::SpiderMines,
+                target: galaxycraft::sim::SpellTarget::Point(700, 200),
+            },
+        )
+        .unwrap();
+    for _ in 0..200 {
+        world.step();
+    }
+    let mines: Vec<_> = world
+        .units
+        .iter()
+        .filter(|u| u.alive && u.type_id == uid::SPIDER_MINE)
+        .collect();
+    assert_eq!(mines.len(), 1, "one mine");
+    assert!((mines[0].x / 256 - 700).abs() <= 40, "at the clicked spot");
+    assert_eq!(world.units[v].hangar, 2);
+    assert!(world.units[v].x / 256 > 600, "the Vulture went there");
+    // A plain Vulture without the research cannot.
+    let p = world.spawn_px(0, uid::VULTURE, 300, 300).unwrap();
+    assert_eq!(
+        world.cast(
+            world.units[p].id,
+            galaxycraft::sim::Spell::SpiderMines,
+            galaxycraft::sim::SpellTarget::Point(400, 300)
+        ),
+        Err(SimError::MissingTech)
+    );
+}
