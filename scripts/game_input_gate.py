@@ -58,7 +58,7 @@ SCRIPT = [
     "ticks:2500",              # 20 income for a depot
     "click-unit:SCV", "key:B", "key:S", "click-view:40:60",   # 21-24 place it
     "ticks:200",               # 25 under construction
-    "click-view:40:60",        # 26 select the unfinished depot
+    "click-newest:Supply Depot",   # 26 select the unfinished depot
     "key:Escape",              # 27 Esc = Cancel construction
 ]
 

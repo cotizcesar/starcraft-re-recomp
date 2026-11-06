@@ -61,7 +61,7 @@ pub const PATH_STALL_TICKS: u8 = 8;
 pub const CONSTRUCT_HOP_TICKS: u64 = 48;
 /// Gap between a worker's and a resource's / depot's units.dat boxes at
 /// which mining or the hand-in happens (INFERENCE: contact, as transports).
-pub const HARVEST_CONTACT_PX: i32 = 8;
+pub const HARVEST_CONTACT_PX: i32 = 4;
 /// A unit stalled within this distance of its final destination counts as
 /// arrived (INFERENCE: 3 tiles; falsifier: a retail group move whose outer
 /// units keep walking).
@@ -4664,6 +4664,29 @@ impl World {
             }
             _ => top,
         };
+        // Flingy units turn at flingy.dat `turn_rate` (256 = a full turn)
+        // per frame and do not advance until they face their waypoint
+        // within one step (INFERENCE from BW's flingy model; FACT: Boot Camp
+        // gas with instant turning ran 1.82 s per delivery against the
+        // recording's 1.97 s, two reversals per trip).
+        let turn_rate = self
+            .data
+            .flingy(ty.flingy)
+            .filter(|f| f.movement_type == crate::data::MovementType::Flingy && f.turn_rate > 0)
+            .map(|f| f.turn_rate as i32);
+        if let (Some(rate), Some(&(wx, wy))) = (turn_rate, self.units[i].path.front()) {
+            let (dx, dy) = (wx - self.units[i].x, wy - self.units[i].y);
+            if dx != 0 || dy != 0 {
+                let want = direction_byte(dx, dy) as i32;
+                let cur = self.units[i].facing as i32;
+                let diff = (want - cur + 128).rem_euclid(256) - 128;
+                if diff.abs() > rate {
+                    self.units[i].facing = (cur + rate * diff.signum()).rem_euclid(256) as u8;
+                    self.units[i].speed = 0;
+                    return false;
+                }
+            }
+        }
         let mut remaining = speed;
         // Intermediate waypoints are reached within twice the unit's half
         // size, and given up after `PATH_STALL_TICKS` ticks without getting
@@ -5126,14 +5149,14 @@ impl World {
         // Mining starts on contact: the units.dat boxes within
         // `HARVEST_CONTACT_PX` (the 80 px centre distance shortened every
         // trip; Wasteland recording: 5 SCVs bring 3.98 minerals/s, ours 4.6).
-        let gas_target = is_gas_resource(self.units[ridx].type_id);
-        let far = if gas_target {
-            self.distance(i, ridx) > fp(80)
-        } else {
-            self.box_gap_px(i, ridx) > HARVEST_CONTACT_PX
-        };
-        if far {
-            self.units[i].gather_timer = 0;
+        // Refineries too: an 80 px centre range left a queued SCV standing
+        // 81.6 px away, held off by the footprint, idle until nudged (Boot
+        // Camp: deliveries every 35 / 71 frames instead of the recording's
+        // three-SCV rhythm).
+        // Once mining has started it runs to the end: a worker nudged off
+        // contact by another one (it is inside the Refinery, or busy at its
+        // field) restarted its 37 / 75 frames and the queue stalled.
+        if self.units[i].gather_timer == 0 && self.box_gap_px(i, ridx) > HARVEST_CONTACT_PX {
             let (rx, ry) = (self.units[ridx].x, self.units[ridx].y);
             // Walk on until the boxes touch (a 64 px stop left workers
             // short of contact).
@@ -5213,7 +5236,7 @@ impl World {
         };
         // Cargo is handed in on contact with the depot's box (it was a
         // 96 px centre distance; see `HARVEST_CONTACT_PX`).
-        if self.distance(i, didx) > fp(96) {
+        if self.box_gap_px(i, didx) > HARVEST_CONTACT_PX {
             let (dx, dy) = (self.units[didx].x, self.units[didx].y);
             self.move_towards(i, (dx / fp(1), dy / fp(1)), fp(4));
             return;

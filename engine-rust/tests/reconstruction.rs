@@ -2355,3 +2355,41 @@ fn a_worker_starts_mining_only_when_it_touches_the_field() {
     let gap = mined_at_gap.expect("the SCV starts mining");
     assert!(gap <= 10, "mining starts on contact, not {gap} px away");
 }
+
+#[test]
+fn a_worker_nudged_while_harvesting_gas_does_not_start_over() {
+    // Boot Camp: an SCV inside the Refinery bumped off contact by the one
+    // leaving restarted its 37 frames, so three SCVs delivered every 35 / 71
+    // frames instead of the recording's 1.5 / 1.6 / 2.8 s rhythm.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let cc = world.spawn_px(0, uid::COMMAND_CENTER, 600, 200).unwrap();
+    world.units[cc].completed = true;
+    let r = world.spawn_px(0, uid::REFINERY, 600, 450).unwrap();
+    world.units[r].completed = true;
+    world.units[r].resource_amount = 5000;
+    let rid = world.units[r].id;
+    let scv = world.spawn_px(0, uid::SCV, 600, 380).unwrap();
+    let id = world.units[scv].id;
+    world.issue(id, Order::Gather { resource: rid }).unwrap();
+    let mut started = None;
+    for t in 0..200 {
+        world.step();
+        if world.units[scv].gather_timer > 0 {
+            started = Some(t);
+            break;
+        }
+    }
+    let t0 = started.expect("the SCV starts harvesting");
+    // Push it 40 px off contact, as another SCV leaving does.
+    world.units[scv].y -= 40 * 256;
+    let mut carried = None;
+    for t in t0 + 1..t0 + 120 {
+        world.step();
+        if world.units[scv].carry > 0 {
+            carried = Some(t);
+            break;
+        }
+    }
+    let t1 = carried.expect("the SCV comes out with gas");
+    assert!(t1 - t0 <= 40, "the harvest ran on: {} frames", t1 - t0);
+}
