@@ -6301,3 +6301,30 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures at 3440x1440.
+
+## 2026-11-06 (137) — Boot Camp field-18 time is a slow final approach; braking retried and reverted; gate fix
+
+- **Speed (FACT, recorded track 115.4-117.5 s).**  The field-18 SCV
+  averages 4.20 px / frame over its first 49 frames from rest; ours, with
+  the flingy acceleration, 4.04.  It is not slower on the move.
+- **Two-blob track (FACT, 117.3-120.4 s, moving pixels split by x).**  The
+  stationary blobs at (1617-1629, 250-259) and (1722-1728, 308-311) are
+  fidgeting Marines.  Field 18's SCV reaches ~(1712, 250) at 117.7 s, then
+  creeps to the drop-off: (1735, 250) 118.0, (1742, 250) 118.3, (1754, 239)
+  118.5, (1760, 240) 118.8, i.e. 48 px in ~26 frames slowing from ~3 to
+  ~1-1.5 px / frame, and leaves after handing in at ~118.8 s (leg ~80
+  frames).  Field 14's SCV leaves at 117.3 s and arrives at ~120.0 s
+  (~70 frames).  The extra time is a braked final approach.
+- **Braking retried (reverted).**  Worker legs brake toward the contact
+  point with a floor (`GC_CRAWL`): 1 px / frame gives field 14 / 18 cycles
+  246 / 233-235 (retail ~251 / ~253) but return legs 77 / 71 (retail ~70 /
+  ~80), Wasteland 0.1600 (-5.7 %), gas 2.07 s, Backwater lost; with mining
+  80 frames Boot Camp 233 / 222 and Wasteland still 0.1600 (insensitive to
+  the mining time: workers stall near contact).  Not sound; reverted.
+- **Gate fix.**  The end-dialog check rejected a result that lands exactly
+  on a 46-frame check frame (result 7774, box 7774); the box shows at once
+  there, so the condition is now `0 <= box - result < 46 + 4` (4-frame
+  sampling).
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures at 1280x720 and 3440x1440 (Boot Camp result 7713, box 7729).

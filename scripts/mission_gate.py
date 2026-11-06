@@ -191,7 +191,9 @@ def main() -> int:
     if won and shown:
         result_tick, dialog_tick = int(field(won[0], "elapsed")), int(field(shown[0], "tick"))
         # FUN_007ab9a0: the client checks the game end every 46 frames.
-        check(0 <= dialog_tick - result_tick < 46 + 4 and dialog_tick // 4 * 4 >= result_tick,
+        # The run samples every 4 frames, so the box is seen up to 3 frames
+        # after the check frame; a result on a check frame shows at once.
+        check(0 <= dialog_tick - result_tick < 46 + 4,
               f"boot camp: the Victory box shows at the next 46-frame end check "
               f"(result {result_tick}, box at {dialog_tick})")
         check(int(field(st[-1], "tick")) > dialog_tick and int(field(st[-1], "elapsed")) == result_tick,
