@@ -2,7 +2,7 @@ PASS boot camp: three Supply Depots
 PASS boot camp: a Refinery on the geyser
 PASS boot camp: 100 gas
 PASS boot camp: victory
-PASS boot camp: the Victory box follows the result by ~24 frames (24)
+PASS boot camp: the Victory box shows at the next 46-frame end check (result 7745, box at 7777)
 PASS boot camp: the world runs on under the box, Elapsed Time stays at the result
   end: tick=8561 units=[Terran Command Center=1 Terran Marine=16 Terran Refinery=1 Terran SCV=2 Terran Supply Depot=3]
 PASS boot camp: 3 SCVs deliver gas every 1.88 s (recording 1.97 s)

@@ -6035,3 +6035,31 @@ than 0.05); walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures (gas 1.88 s, minerals 0.1667).
+
+## 2026-11-06 (127) — End dialog: the client's 46-frame game-end check
+
+- **RE (FACT, 32-bit dump, `DecompileAt.java noreturn=all redo=`).**
+  `wmission.ui.json` / `lmission.ui.json` are used by `FUN_0066d520`
+  (Victory) and `FUN_0066d330` (Defeat; body at `0x66d331`, guarded by
+  `0xfe594c` / `0xfe5944`).  Both are called only from `FUN_007ab9a0`
+  (calls at `0x7aba31`, `0x7aba60`, jump `0x7aba67`), the per-frame
+  game-end routine: a countdown at `DAT_011b86fc` is decremented each
+  call and, when it runs out, reset to `0x2d`; only then is the local
+  player's end state read (`+0xe610`: 2 = Defeat, 3 / 5 = Victory; a
+  multiplayer branch checks all eight players).  So the dialog appears at
+  the first check after the result: 0-45 frames later.
+- **Against the recordings.**  Desperate Alliance 1.0 s, Boot Camp
+  1.4-1.85 s, Wasteland 1.6-2.9 s after Victory (each including up to one
+  trigger cycle): all compatible with "up to 46 frames" (1.93 s at 42 ms),
+  which is why no single delay fitted (session logs 113, 117).
+- **Change.**  `END_DIALOG_DELAY_TICKS` (24) replaced by `END_CHECK_PERIOD`
+  46 and `frames_to_end_check`: the hold lasts until the next frame with
+  `tick % 46 == 0` (INFERENCE: the countdown starts at 0x2d, so checks fall
+  on frames 46, 92, ...; falsifier: the initialiser of `DAT_011b86fc`).
+  Test `the_end_dialog_waits_for_the_46_frame_game_end_check`; mission
+  gate: Boot Camp result 7173, box at the 7176 check.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
+1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51;
+walkthrough PASS.

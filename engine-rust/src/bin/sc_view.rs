@@ -1347,7 +1347,7 @@ struct App {
     /// the score screen (retail Wasteland recording: dialog at 3.5 s, the
     /// score screen after its Victory button).
     end_dialog: bool,
-    /// Frames left before the end dialog shows (`END_DIALOG_DELAY_TICKS`).
+    /// Frames left before the end dialog shows (the next game-end check, `END_CHECK_PERIOD`).
     end_dialog_hold: u32,
     /// Game tick of the result: the score's Elapsed Time (retail Boot Camp
     /// 05:12 = the gas condition, not the dialog) while the world runs on.
@@ -3191,16 +3191,21 @@ type Card = [Option<(
     galaxycraft::buttons::ButtonState,
 )>; 9];
 
-/// Frames between the game result and its Victory / Defeat dialog.
-/// INFERENCE (2026-11-06, three recordings): Desperate Alliance shows the box
-/// 10.4 s after "Sons of Korhal" where its trigger needs 9.4 s; Boot Camp
-/// 8.3 s after the closing line where the trigger needs 6.4 s (1.4-1.85 s
-/// after Victory); Wasteland 2.9 s after the tenth Marine finished (299.6 s,
-/// read from the supply counter; its trigger has no wait, so 1.6-2.9 s after
-/// Victory; the earlier 0.6 s reading was wrong).  The three disagree (1.0
-/// to ~1.8 s); 24 frames is the lower end.  Falsifier: the client's
-/// end-of-game timer, recovered with REA.
-const END_DIALOG_DELAY_TICKS: u32 = 24;
+/// Period of the client's game-end check.  FACT (`FUN_007ab9a0`, 32-bit
+/// dump, 2026-11-06): a countdown at `DAT_011b86fc` reset to 0x2d each time it
+/// runs out, so the players' end state is looked at once every 46 frames;
+/// state 2 opens Defeat (`FUN_0066d330`), 3 / 5 Victory (`FUN_0066d520`).
+/// The dialog therefore follows the result by 0-45 frames, consistent with
+/// the three recordings (1.0, 1.4-1.85 and 1.6-2.9 s with the trigger cycle).
+/// INFERENCE: the countdown starts at 0x2d, so the checks fall on frames
+/// 46, 92, ... (`tick % 46 == 0`); falsifier: the initialiser of
+/// `DAT_011b86fc`.
+const END_CHECK_PERIOD: u64 = 46;
+
+/// Frames from `tick` to the next game-end check (0 on a check frame).
+fn frames_to_end_check(tick: u64) -> u32 {
+    ((END_CHECK_PERIOD - tick % END_CHECK_PERIOD) % END_CHECK_PERIOD) as u32
+}
 
 /// `scvspark` (Fusion Cutter hit) image.
 const SCV_SPARK_IMAGE: u16 = 526;
@@ -13882,7 +13887,7 @@ impl App {
             self.next_map = self.resolve_next_map();
         }
         // After the result the world runs on under the end dialog (and the
-        // `END_DIALOG_DELAY_TICKS` before it); the score screen stops it.
+        // wait for the next game-end check); the score screen stops it.
         if self.paused || (self.game_result.is_some() && !self.end_dialog) {
             self.last_step = Instant::now();
             return;
@@ -13911,7 +13916,7 @@ impl App {
     /// One simulation tick with the AIs, as the frame loop runs it (shared
     /// with `--game-script` `ticks:N`).
     fn step_once(&mut self) {
-        // The end dialog waits `END_DIALOG_DELAY_TICKS` frames after the
+        // The end dialog waits for the next game-end check after the
         // result.
         if self.game_result.is_some() {
             self.end_dialog_hold = self.end_dialog_hold.saturating_sub(1);
@@ -13988,7 +13993,7 @@ impl App {
                 let won = !defeat && victory;
                 self.game_result = Some(won);
                 self.end_dialog = true;
-                self.end_dialog_hold = END_DIALOG_DELAY_TICKS;
+                self.end_dialog_hold = frames_to_end_check(self.world.tick);
                 self.result_tick = self.world.tick;
                 self.score_tab = 0;
                 self.score_epoch = None;
@@ -22465,5 +22470,22 @@ mod construction_look_tests {
         w.units[i].completed = false;
         let pool = data.unit(uid::SPAWNING_POOL).clone();
         assert_eq!(terran_construction_stage(&w.units[i], &pool), None);
+    }
+}
+
+#[cfg(test)]
+mod end_check_tests {
+    use super::{END_CHECK_PERIOD, frames_to_end_check};
+
+    #[test]
+    fn the_end_dialog_waits_for_the_46_frame_game_end_check() {
+        assert_eq!(END_CHECK_PERIOD, 46);
+        assert_eq!(frames_to_end_check(46), 0);
+        assert_eq!(frames_to_end_check(47), 45);
+        assert_eq!(frames_to_end_check(91), 1);
+        for t in 1..500u64 {
+            let h = frames_to_end_check(t) as u64;
+            assert!(h < 46 && (t + h).is_multiple_of(46));
+        }
     }
 }
