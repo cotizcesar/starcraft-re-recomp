@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 15 | 20 | 75 % |
+| [In-game client](#in-game-client) | 10 | 17 | 22 | 77 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **81** | **101** | **80 %** |
+| **Overall (weighted)** | **100** | **83** | **103** | **81 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -120,14 +120,16 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] In-game frame under 8 ms at 3440x1440 (was 181 ms): baked sprite shading, row-sliced terrain / fog / stretch on parallel bands, cached console plates and minimap — `engine-rust/docs/gates/ingame-draw-time.txt`, `hd_sprites::tests::baked_frames_match_the_per_pixel_shader`
 - [x] Selection panel as retail: rank (`units.dat` sublabel), kills, armour / weapon upgrade boxes, the production queue with its progress bar (`pbrempt` / `pbrfull`), Under Construction, research and upgrade progress — `statdata.ui.json` controls, Backwater Station 126 s
 - [x] Multi-selection panel as on the Wasteland recording: `statdata` 33-44 (6 x 2, column-major), `cmdbtns` box 13 (19 for heroes), wireframes; box selection ordered left to right; click keeps one unit, Shift+click drops it — `scripts/game_input_gate.py`, session log 2026-11-06 (110)
-- [ ] Transport / Bunker cargo slots in the selection panel
+- [x] Bunker cargo in the selection panel (`statdata` 27-30, as the recording at 272 s) and loading by right click on an own Bunker / transport — `scripts/game_input_gate.py`
+- [ ] Unloading one unit by clicking its cargo slot; two- and four-space cargo slots (18-24)
 - [x] Cancel construction (Esc / card, 75 % refund, recorded tag 10), targeted spells through `Order::Cast` (Spider Mines: one mine per order from the Vulture's three, heroes without research), placement exactly where clicked with the retail preview (green / red box over a half-blended building) — `tests/reconstruction.rs`, `scripts/game_input_gate.py`, session log 2026-11-06 (111)
 - [ ] Land placement preview for lifted buildings (no lift-off in the four Episode I recordings)
 - [x] The four Episode I missions are won through input alone at 720p / 1080p / 3440x1440: Boot Camp (depots, Refinery, 100 gas; tick 6,542), Wasteland (Raynor, Barracks, 10 Marines; 7,320), Backwater Station (Infested CC destroyed; 9,728), Desperate Alliance (countdown survived, calm opening as recorded; 29,025) — `scripts/mission_gate.py`, `engine-rust/docs/gates/mission-gate.txt`
 - [x] Units no longer leave the map while chasing, idle units fight back, groups arrive through shared path corners, SCVs walk to build sites at full speed — `tests/reconstruction.rs` (`a_chasing_unit_walks_to_its_target_and_stays_on_the_map`, `an_idle_unit_that_is_shot_fights_back`, `a_group_move_through_one_corner_arrives_and_goes_idle`, `an_scv_walks_to_its_build_site_at_full_speed`)
 - [x] Mined-out fields disappear and their workers move to the next field — `tests/reconstruction.rs::a_mined_out_field_disappears_and_its_worker_moves_to_the_next`
 - [x] Campaign AI attacks are the script's waves: `attack_do` takes the requested count per type, no invented periodic all-in — `aiscript::tests::attack_do_sends_the_requested_count_and_no_periodic_attack`
-- [ ] Mission timing against the recordings (the scripted runs win; the retail player's timeline and the AI waves' strength are not yet compared)
+- [x] Trigger timelines of the four mission openings match the recordings within 0.5 s (10 transmissions / objectives, onsets measured after each recording's first game frame) — `scripts/timeline_gate.py`, `engine-rust/docs/gates/timeline.txt`
+- [ ] Player-driven event times (each recording's own build / attack order replayed) against the recordings
 - [ ] Single-player cheat codes (retail feature)
 - [ ] Save Replay from the score screen (button shown disabled; F6 saves during play)
 

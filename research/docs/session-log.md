@@ -5541,3 +5541,35 @@ clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720 and
 clippy / fmt clean; `game_input_gate.py` and `mission_gate.py` 0 failures
 at 1280x720 and 3440x1440; `ui_visual_diff` 51/51, no screen moved by more
 than 0.05.
+
+## 2026-11-06 (112) — Trigger timelines against the recordings; Bunker cargo
+
+- **Method.**  `--game-script` now writes `cues.tsv` (every trigger cue with
+  its tick).  On each recording (`text_onsets` analysis, kept outside the
+  repo): the first game frame is the console appearing after the black fade
+  (Boot Camp 62.20 s, Wasteland 80.50 s, Backwater Station 68.90 s,
+  Desperate Alliance 127.30 s); text onsets are new blocks of lavender
+  trigger text above the console at 10 fps.
+- **Result (FACT).**  Boot Camp 1.6 / 9.1 / 10.2 / 14.8 / 18.0 s recorded
+  against 1.6 / 9.0 / 10.0 / 14.6 / 17.7 s ours; Wasteland TIP 0.0 / 0.0 and
+  the SCV line between +6 and +7 s / 6.3 s; Backwater Station Raynor 0.0 /
+  0.0; Desperate Alliance VULTURE 1.4 / 1.1 and MARINE 23.7 / 23.3 s.  All
+  within 0.4 s.  Boot Camp's small drift fits a 42.6 ms frame in that
+  recording exactly (37 / 215 / 239 / 347 / 422 ticks); Desperate Alliance
+  measured 42.0 ms over 20 minutes, so `TICK_MS` is unchanged (INFERENCE:
+  recording-side jitter).  Later onsets depend on the player's own actions
+  (Raynor's rescue, hints, errors) and are not compared yet.  New
+  `scripts/timeline_gate.py` (10 cues, tolerance 0.5 s).
+- **Bunker cargo (FACT, Desperate Alliance 272 s).**  A selected Bunker
+  shows name, wireframe, HP and its Marines in a 2 x 2 block of `cmdbtns`
+  boxes whose top-left is `statdata` control 27 (the middle two columns of
+  cargo slots 25-32).  `draw_hud_cargo`: capacity <= 4 uses 27-30, larger
+  transports 25-32, one-space units, fill column-major by id (INFERENCE).
+  Retail's smart right click on an own Bunker / transport loads the units
+  that fit; `--game-script` `rclick-unit-at:NAME:x:y`.  The Bunker's HP
+  248/350 matches the recording's 249/350 (damaged by the map).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` (two new Bunker checks),
+`mission_gate.py` 0 failures at 1280x720 and 3440x1440; `timeline_gate.py`
+10/10; `ui_visual_diff` 51/51, no screen moved by more than 0.05.
