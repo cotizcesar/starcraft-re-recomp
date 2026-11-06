@@ -773,6 +773,7 @@ fn hash_unit(h: &mut DefaultHasher, u: &SimUnit) {
     u.completed.hash(h);
     u.kills.hash(h);
     u.builder.hash(h);
+    (u.path_stall, u.path_last_dist).hash(h);
     u.credited.hash(h);
     u.cooldown.hash(h);
     hash_order(h, &u.order);

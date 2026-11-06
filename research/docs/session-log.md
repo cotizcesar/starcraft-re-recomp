@@ -5353,3 +5353,47 @@ clippy and `fmt --check` clean; `game_input_gate.py` 0 failures at 1280x720,
 `a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`);
 clippy / fmt clean; `game_input_gate.py` 0 failures at 3440x1440;
 `ui_visual_diff` 51/51 with no screen moving by more than 0.05.
+
+## 2026-11-06 (107) — Wasteland won through input; chase, retaliation, crowd movement, walk animation fixes
+
+A scripted Wasteland playthrough (`--game-script`, input only) exposed
+simulation bugs, all FACT from `dump-units` traces:
+
+- **Chase off the map.**  `attack_target` and `advance_attack` passed the
+  target's 1/256 px position to `move_towards`, which takes pixels: every
+  chase headed 256x too far (Marines at x 3700-5600 on a 2048 px map).
+- **No retaliation.**  Zerglings (3-tile acquisition) shot by Marines
+  (4-tile range) stayed idle until dead.  `World::retaliate`: an idle or
+  stopped unit that can hit its attacker attacks it; idle units of a
+  computer player within 8 tiles join (INFERENCE for the radius and the
+  computer-only help; falsifier: a retail recording of a human player's
+  idle unit beside an attacked one).
+- **Group jam.**  Nine units sharing a path corner froze for 1,500+ ticks
+  because each had to stand on it.  Intermediate waypoints are reached
+  within 2x the unit's half extent (min 16 px); a unit not approaching its
+  waypoint for `PATH_STALL_TICKS` (8) skips it, or counts as arrived within
+  `ARRIVAL_CROWD_PX` (96, INFERENCE) of the final goal.  `path_stall` /
+  `path_last_dist` hashed.
+- **Walk animation.**  `ensure_walking_animation` only replaced Init-less /
+  *ToIdle states, so units in Init (map-placed) or IsWorking (an SCV back
+  from mining) kept `move_speed` 0.  Any non-busy state now starts Walking.
+- **Build walk at 1/8 speed.**  `Order::Build` only ran on the 8-tick order
+  cadence, so the SCV walked one tick in eight (0.62 px/tick).  The walk now
+  advances every tick; the placement decision keeps the cadence.  Test
+  `an_scv_walks_to_its_build_site_at_full_speed` fails without the fix
+  (0.62 px/tick).
+- **Client.**  Minimap right click = smart command, left click gives a
+  pending card target (`command_world` / `execute_target_world`); Ctrl+click
+  selects every own unit of that type on screen; script steps
+  `minimap-click`, `minimap-rclick`, `ctrl-click-unit`, `dump-units`
+  (path / anim columns); `players=` and `ais=` on the state line.
+- **Result.**  `scripts/mission_gate.py`: Wasteland victory at tick 7,320
+  (10 Marines, Barracks, Raynor) at 1280x720, 1920x1080 and 3440x1440.
+  Map triggers seen with `/var/tmp` tooling: Backwater Station has no AI
+  script trigger; Desperate Alliance runs `Ter3` then `Suic` after the
+  countdown.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (four new tests in
+`tests/reconstruction.rs`); clippy / fmt clean; `game_input_gate.py` 0
+failures; `ui_visual_diff` 51/51 with no screen moving by more than 0.05;
+walkthrough PASS; `mission_gate.py` 0 failures.

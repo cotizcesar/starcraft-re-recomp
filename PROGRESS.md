@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 9 | 14 | 64 % |
+| [In-game client](#in-game-client) | 10 | 11 | 16 | 69 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **74** | **95** | **78 %** |
+| **Overall (weighted)** | **100** | **76** | **97** | **79 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -121,7 +121,9 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Selection panel as retail: rank (`units.dat` sublabel), kills, armour / weapon upgrade boxes, the production queue with its progress bar (`pbrempt` / `pbrfull`), Under Construction, research and upgrade progress — `statdata.ui.json` controls, Backwater Station 126 s
 - [ ] Multi-selection panel (12 wireframes in `statdata` 33-44) and transport cargo slots
 - [ ] Remaining command-card actions: Cancel construction, spells with a target (only Stim Packs and siege are wired), the Land placement preview
-- [ ] The four Episode I missions step by step against their recordings (Boot Camp, Wasteland, Backwater Station, Desperate Alliance)
+- [x] Wasteland is won through input alone (minimap group move, Raynor rescued, mining, Barracks, five Marines, victory at tick 7,320 at 720p / 1080p / 3440x1440) — `scripts/mission_gate.py`, `engine-rust/docs/gates/mission-wasteland.txt`
+- [x] Units no longer leave the map while chasing, idle units fight back, groups arrive through shared path corners, SCVs walk to build sites at full speed — `tests/reconstruction.rs` (`a_chasing_unit_walks_to_its_target_and_stays_on_the_map`, `an_idle_unit_that_is_shot_fights_back`, `a_group_move_through_one_corner_arrives_and_goes_idle`, `an_scv_walks_to_its_build_site_at_full_speed`)
+- [ ] Boot Camp, Backwater Station and Desperate Alliance as scripted playthroughs in `scripts/mission_gate.py`
 - [ ] Single-player cheat codes (retail feature)
 - [ ] Save Replay from the score screen (button shown disabled; F6 saves during play)
 

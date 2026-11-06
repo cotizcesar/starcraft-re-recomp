@@ -1423,6 +1423,8 @@ struct App {
     /// Card a [`galaxycraft::buttons::Act::Card`] button switched to (build
     /// menus); `None` = the selected unit's own card.
     card_set: Option<u16>,
+    /// Right button held over the minimap last frame (edge detection).
+    rmb_minimap: bool,
     /// Card button waiting for a world click (Move, Attack, Gather, Rally...).
     target_act: Option<(galaxycraft::buttons::Act, u16)>,
     /// First selected unit the card belongs to (a new selection resets it).
@@ -4781,7 +4783,8 @@ fn script_key(name: &str) -> Key {
 /// `click-unit:NAME` / `rclick-unit:NAME` (the nearest on-screen unit whose
 /// name contains NAME), `click-cmd:N` (command-card slot N, 1..9),
 /// `click-world:x:y` (world game px), `click-view:px:py` / `rclick-view`
-/// (percent of the visible playfield), `shot:NAME`.  Writes `game.tsv` (one
+/// (percent of the visible playfield), `minimap-click:px:py` /
+/// `minimap-rclick` (percent of the minimap), `dump-units:NAME`, `shot:NAME`.  Writes `game.tsv` (one
 /// state line per step) to `GC_WALK_DIR`.
 fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
     let dir = std::env::var("GC_WALK_DIR").unwrap_or_else(|_| "/tmp/opencode/game".into());
@@ -4813,18 +4816,35 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
             mouse,
             ..GameInput::default()
         };
+        let click_mod = |app: &mut App,
+                         fb: &mut Framebuffer,
+                         at: (i32, i32),
+                         right: bool,
+                         shift: bool,
+                         ctrl: bool| {
+            let p = Some(surface_point(app.present_offset, at.0, at.1));
+            let held = GameInput {
+                lmb: !right,
+                rmb: right,
+                shift,
+                ctrl,
+                ..base(p)
+            };
+            frame(app, fb, held);
+            frame(
+                app,
+                fb,
+                GameInput {
+                    shift,
+                    ctrl,
+                    ..base(p)
+                },
+            );
+            p
+        };
         let click =
             |app: &mut App, fb: &mut Framebuffer, at: (i32, i32), right: bool, shift: bool| {
-                let p = Some(surface_point(app.present_offset, at.0, at.1));
-                let held = GameInput {
-                    lmb: !right,
-                    rmb: right,
-                    shift,
-                    ..base(p)
-                };
-                frame(app, fb, held);
-                frame(app, fb, GameInput { shift, ..base(p) });
-                p
+                click_mod(app, fb, at, right, shift, false)
             };
         match parts[0] {
             "move" => {
@@ -4877,6 +4897,14 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                 app.after_steps();
                 app.draw(fb);
             }
+            "ctrl-click-unit" => {
+                let name = parts.get(1).copied().unwrap_or("");
+                if let Some(at) = app.screen_point_of_unit(name) {
+                    mouse = click_mod(app, fb, at, false, false, true);
+                } else {
+                    eprintln!("game script: no on-screen unit named {name:?}");
+                }
+            }
             "click-unit" | "rclick-unit" => {
                 let name = parts.get(1).copied().unwrap_or("");
                 if let Some(at) = app.screen_point_of_unit(name) {
@@ -4893,6 +4921,44 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     app.playfield_bottom() * num(2) / 100,
                 );
                 mouse = click(app, fb, at, parts[0] == "rclick-view", false);
+            }
+            "dump-units" => {
+                // Every live unit: id, owner, type, position, hp, order.
+                let mut out = String::from("id\towner\ttype\tx\ty\thp\torder\tpath\tnext\n");
+                for u in app.world.units.iter().filter(|u| u.alive) {
+                    out.push_str(&format!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{:?}\t{}\t{:?}\n",
+                        u.id,
+                        u.owner,
+                        app.data.unit_name(u.type_id),
+                        u.x / 256,
+                        u.y / 256,
+                        u.hp / 256,
+                        u.order,
+                        u.path.len(),
+                        u.path.front().map(|p| (p.0 / 256, p.1 / 256))
+                    ));
+                    if let Some(a) = &u.anim {
+                        out.pop();
+                        out.push_str(&format!(
+                            "\tanim={} move={} fling={} ended={} ignore={} tick={}\n",
+                            a.anim,
+                            a.move_speed,
+                            a.fling_speed,
+                            a.ended,
+                            a.ignore_rest,
+                            u.anim_tick
+                        ));
+                    }
+                }
+                let name = parts.get(1).copied().unwrap_or("units");
+                let _ = std::fs::write(format!("{dir}/{name}.tsv"), out);
+            }
+            "minimap-click" | "minimap-rclick" => {
+                // Percent of the minimap (0..100).
+                let (rx, ry, rw, rh) = app.minimap_rect();
+                let at = (rx + rw * num(1) / 100, ry + rh * num(2) / 100);
+                mouse = click(app, fb, at, parts[0] == "minimap-rclick", false);
             }
             "click-world" => {
                 let at = app.screen_point_of_world(num(1), num(2));
@@ -5815,6 +5881,7 @@ fn main() {
         command_list: Vec::new(),
         card_set: None,
         target_act: None,
+        rmb_minimap: false,
         card_owner: None,
         status: String::new(),
         status_until: Instant::now(),
@@ -7370,7 +7437,7 @@ impl App {
             "camera={:?} card={:?} target={:?} first=[{first}{target}] ",
             self.camera, self.card_set, self.target_act
         ) + &format!(
-            "tick={} minerals={} gas={} supply={}/{} selected=[{}] commands=[{}] build={} units=[{}] status={:?} result={:?}",
+            "tick={} minerals={} gas={} supply={}/{} selected=[{}] commands=[{}] build={} units=[{}] status={:?} result={:?} players=[{}]",
             self.world.tick,
             p.minerals,
             p.gas,
@@ -7383,7 +7450,32 @@ impl App {
                 .unwrap_or_default(),
             counts.join(" "),
             self.status,
-            self.game_result
+            self.game_result,
+            (0..12u8)
+                .filter_map(|p| {
+                    let n = self
+                        .world
+                        .units
+                        .iter()
+                        .filter(|u| u.alive && u.owner == p && !u.is_resource())
+                        .count();
+                    (n > 0).then(|| format!("p{p}:{n}"))
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        ) + &format!(
+            " ais=[{}]",
+            self.campaign_ais
+                .iter()
+                .map(|a| format!(
+                    "p{}:{}@{}{}",
+                    a.player,
+                    String::from_utf8_lossy(&a.id),
+                    a.pc,
+                    if a.finished { "!" } else { "" }
+                ))
+                .collect::<Vec<_>>()
+                .join(" ")
         )
     }
 
@@ -12664,13 +12756,18 @@ impl App {
 
     /// Left click in the world while a card button waits for a target.
     fn execute_target(&mut self, px: i32, py: i32) {
+        let (lx, ly) = self.to_logical(px, py);
+        let pos = self.world_of(lx, ly);
+        let target = self.unit_at(px, py);
+        self.execute_target_world(pos, target);
+    }
+
+    /// [`Self::execute_target`] at a world position (minimap clicks).
+    fn execute_target_world(&mut self, pos: (i32, i32), target: Option<u32>) {
         use galaxycraft::buttons::Act;
         let Some((act, _var)) = self.target_act.take() else {
             return;
         };
-        let (lx, ly) = self.to_logical(px, py);
-        let pos = self.world_of(lx, ly);
-        let target = self.unit_at(px, py);
         let mobile = self.selected_mobile();
         match act {
             Act::Move => match target {
@@ -12742,13 +12839,26 @@ impl App {
     /// and empty ground are moved to.  Grounded buildings take no orders;
     /// producing buildings set their rally point instead.
     fn command_at(&mut self, sx: i32, sy: i32, attack_move: bool, patrol: bool) {
+        let (lx, ly) = self.to_logical(sx, sy);
+        let pos = self.world_of(lx, ly);
+        let target = self.unit_at(sx, sy);
+        self.command_world(pos, target, attack_move, patrol);
+    }
+
+    /// [`Self::command_at`] at a world position (also the minimap's right
+    /// click, which has no unit target).
+    fn command_world(
+        &mut self,
+        (wx, wy): (i32, i32),
+        target: Option<u32>,
+        attack_move: bool,
+        patrol: bool,
+    ) {
         if self.selected.is_empty() {
             return;
         }
         self.actions = self.actions.saturating_add(1);
         let me = self.local_player as u8;
-        let (lx, ly) = self.to_logical(sx, sy);
-        let (wx, wy) = self.world_of(lx, ly);
         let mobile = self.selected_mobile();
         for id in self.selected_own_buildings() {
             if self.world.unit(id).is_some_and(|u| !u.lifted) {
@@ -12758,17 +12868,14 @@ impl App {
         if mobile.is_empty() {
             return;
         }
-        let target = self
-            .unit_at(sx, sy)
-            .and_then(|id| self.world.unit(id))
-            .map(|t| {
-                (
-                    t.id,
-                    t.owner,
-                    t.is_resource() || galaxycraft::sim::is_gas_building(t.type_id),
-                    (t.x / 256, t.y / 256),
-                )
-            });
+        let target = target.and_then(|id| self.world.unit(id)).map(|t| {
+            (
+                t.id,
+                t.owner,
+                t.is_resource() || galaxycraft::sim::is_gas_building(t.type_id),
+                (t.x / 256, t.y / 256),
+            )
+        });
         if let Some((tid, towner, resource, tpos)) = target {
             if towner != me && self.world.hostile(me, towner) && !resource {
                 for id in mobile {
@@ -13247,7 +13354,29 @@ impl App {
                 if std::env::var("SC_VIEW_DEBUG").is_ok() {
                     eprintln!("select click at {} {} -> {:?}", mx, my, id);
                 }
-                if input.shift {
+                if input.ctrl
+                    && let Some(id) = id
+                    && let Some(t) = self.world.unit(id).map(|u| u.type_id)
+                {
+                    // Retail Ctrl+click: every own unit of that type on the
+                    // screen (12 at most).
+                    let (vw, vh) = self.view;
+                    let picked: Vec<u32> = self
+                        .world
+                        .units
+                        .iter()
+                        .filter(|u| {
+                            u.alive && u.owner as usize == self.local_player && u.type_id == t
+                        })
+                        .filter(|u| {
+                            let (x, y) = self.screen_of(u);
+                            x >= 0 && y >= 0 && x < vw && y < vh
+                        })
+                        .map(|u| u.id)
+                        .take(12)
+                        .collect();
+                    self.selected = picked;
+                } else if input.shift {
                     if let Some(id) = id {
                         if let Some(pos) = self.selected.iter().position(|&x| x == id) {
                             self.selected.remove(pos);
@@ -13331,17 +13460,34 @@ impl App {
             });
             self.play("ui_click");
             self.drag_start = None;
-        } else if input.lmb && mx >= rx && mx < rx + rw && my >= ry && my < ry + rh {
-            self.drag_start = None;
-            let (rx, ry, rw, rh) = self.minimap_rect();
+        } else if mx >= rx && mx < rx + rw && my >= ry && my < ry + rh {
             let (mw, mh) = self.tileset.minimap_size;
-            let wx = (mx - rx) as i64 * mw as i64 / rw as i64;
-            let wy = (my - ry) as i64 * mh as i64 / rh as i64;
-            self.camera = (
-                wx as i32 * TILE_PX - self.view.0 / 2,
-                wy as i32 * TILE_PX - self.view.1 / 2,
+            let tx = (mx - rx) as i64 * mw as i64 / rw as i64;
+            let ty = (my - ry) as i64 * mh as i64 / rh as i64;
+            let world = (
+                tx as i32 * TILE_PX + TILE_PX / 2,
+                ty as i32 * TILE_PX + TILE_PX / 2,
             );
-            self.clamp_camera();
+            let rmb_pressed = input.rmb && !self.rmb_minimap;
+            self.rmb_minimap = input.rmb;
+            if lmb_pressed && self.target_act.is_some() {
+                // A pending card target can be given on the minimap.
+                self.drag_start = None;
+                self.execute_target_world(world, None);
+            } else if rmb_pressed {
+                // Retail: a right click on the minimap is a smart command to
+                // that spot.
+                self.command_world(world, None, false, false);
+            } else if input.lmb {
+                self.drag_start = None;
+                self.camera = (
+                    tx as i32 * TILE_PX - self.view.0 / 2,
+                    ty as i32 * TILE_PX - self.view.1 / 2,
+                );
+                self.clamp_camera();
+            }
+        } else {
+            self.rmb_minimap = input.rmb;
         }
     }
 

@@ -1,0 +1,6 @@
+PASS wasteland: Jim Raynor is rescued by the group
+PASS wasteland: the Barracks is built
+PASS wasteland: 10 Marines
+PASS wasteland: victory
+  end: tick=7320 units=[Jim Raynor=1 Terran Barracks=1 Terran Command Center=1 Terran Marine=10 Terran SCV=5 Terran Supply Depot=1]
+mission gate: 0 failure(s) at 1920x1080

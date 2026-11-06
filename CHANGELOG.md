@@ -4,6 +4,15 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-06 — Wasteland playable to victory
+
+### Fixed
+- Units chasing a target no longer run off the map; idle units fight back.
+- Groups no longer freeze on a shared path corner; crowded arrivals end.
+- SCVs walk to their build site at full speed; units start walking from any
+  resting animation.
+- Minimap right click gives orders; Ctrl+click selects all units of a type.
+
 ## 2026-11-05 — In game: selection, orders, building and frame rate
 
 ### Fixed
