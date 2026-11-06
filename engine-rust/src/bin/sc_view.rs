@@ -3194,10 +3194,12 @@ type Card = [Option<(
 /// Frames between the game result and its Victory / Defeat dialog.
 /// INFERENCE (2026-11-06, three recordings): Desperate Alliance shows the box
 /// 10.4 s after "Sons of Korhal" where its trigger needs 9.4 s; Boot Camp
-/// 8.3 s after the closing line where the trigger needs 6.4 s; Wasteland
-/// ~0.6 s after the tenth Marine.  About 1 s fits all three (the remaining
-/// Boot Camp excess fits a trigger-cycle wait).  Falsifier: a capture where
-/// the box appears less than 1 s after the triggering event.
+/// 8.3 s after the closing line where the trigger needs 6.4 s (1.4-1.85 s
+/// after Victory); Wasteland 2.9 s after the tenth Marine finished (299.6 s,
+/// read from the supply counter; its trigger has no wait, so 1.6-2.9 s after
+/// Victory; the earlier 0.6 s reading was wrong).  The three disagree (1.0
+/// to ~1.8 s); 24 frames is the lower end.  Falsifier: the client's
+/// end-of-game timer, recovered with REA.
 const END_DIALOG_DELAY_TICKS: u32 = 24;
 
 /// `scvspark` (Fusion Cutter hit) image.

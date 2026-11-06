@@ -5727,3 +5727,41 @@ failures at 3440x1440.
 old rule with "53 px away"); clippy / fmt clean; `game_input_gate.py`,
 `mission_gate.py` 0 failures at 1280x720 and 3440x1440; `timeline_gate.py`
 10/10.
+
+## 2026-11-06 (117) — Retail shader port retried (linear space, eye sweep); Wasteland Marine timeline; end-delay falsification
+
+- **RE.**  New `research/tools/FindScalarFunctions.java` (functions using
+  given immediate operands).  No function combines 1.0f / -1.0f / the
+  `data` index 0xa as immediates (floats come from constant memory);
+  `FUN_00a8e010` (1.0f x2, -1.0f) decompiles to sprite-quad corner /
+  rotation set-up, not the uniform writer.  The `data` writer is still not
+  found.
+- **Shader experiment (reverted).**  On the matched Boot Camp depot
+  (camera (1131, 192), retail box mean 58.0), `DirectionalLighting` +
+  the `deferred_blit` mix, with the mix at 1: gamma space mean 41.1
+  (corr 0.893), linear space (sRGB decode / encode) 50.4 (corr 0.867),
+  normal y negated 40.1 / 50.7, eye z 150-3000: 38.0-41.9 gamma,
+  47.7-49.2 linear; RMS never below the fitted model (24.7 / 27.2 / 28.0).
+  Retail's highlights (p90 186) exceed even the unlit texture (158), so
+  the missing ~15-30 % is additive: the client-filled point-light buffer
+  and bloom (INFERENCE; falsifier: the light buffer contents for that
+  frame).  The fitted model stays (decision
+  `retail-shader-port-pending-uniforms`).
+- **Wasteland timeline (FACT, HUD supply counter read with
+  `hud_read_number.py`).**  Supply 10 -> 11 at 223.5 s, 12 at 239.0, 13 at
+  254.0, 14 at 269.0, 15 at 284.5: Marines every 15.0-15.5 s = 352-364
+  frames at 42.6 ms, ours 360 (`units.dat` 360).  Minerals drop by ~150 at
+  167.2 s (the Barracks paid when its SCV arrives, as ours does); first
+  Marine 56.3 s later = the 1,200-frame build (51.1 s) + ~5 s for the
+  player.
+- **Falsification.**  The tenth Marine finished at 284.5 + 15.1 = 299.6 s
+  (its progress bar vanished at 299.5 s), not ~301.9 s as assumed in
+  (113); Wasteland's victory trigger has no wait, so its box (302.5 s)
+  came 1.6-2.9 s after Victory, not 0.6 s.  The three endings now give 1.0
+  (Desperate Alliance), 1.4-1.85 (Boot Camp) and 1.6-2.9 s (Wasteland):
+  no single delay fits; `END_DIALOG_DELAY_TICKS` stays 24 with the comment
+  corrected.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `mission_gate.py` 0 failures (1920x1080);
+`ui_visual_diff` 51/51 (shader experiment reverted).
