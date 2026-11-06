@@ -6063,3 +6063,23 @@ than 0.05); walkthrough PASS.
 clippy / fmt clean; `game_input_gate.py`, `mission_gate.py` 0 failures at
 1280x720 and 3440x1440; `timeline_gate.py` 10/10; `ui_visual_diff` 51/51;
 walkthrough PASS.
+
+## 2026-11-06 (128) — Boot Camp two-SCV rhythm: fields confirmed, serialized hand-in falsified
+
+- **Fields (FACT).**  The recorded mining spots convert to world
+  (1453, 249) and (1482, 313); ours mine fields 14 and 18 from (1452, 236-238)
+  and (1485, 297): the same fields, with a consistent 13-16 px y offset (the
+  sprite's visual centre below the unit position).  So the recorded SCVs
+  are on fields 14 and 18, whose solo cycles in ours are 239 and 227 frames,
+  and retail runs both at ~251-253 with the field-18 SCV delivering a steady
+  31-40 frames after the field-14 one: an interaction locks them.
+- **Hypothesis tested and falsified.**  Hand-in taking H frames at the
+  depot, one worker at a time (reusing `gather_timer`): H = 10 gives cycles
+  drifting 249 -> 277 -> 296 with gaps 50-70; H = 20 gives ~300 / 300, gaps
+  ~80; H = 30 ~317.  The waits compound instead of locking at 31-40 frames.
+  Reverted.  Remaining candidates: physical blocking at the drop-off corner
+  (retail workers occupy it 20-33 frames), or a different return path.
+  Anchors unchanged: Wasteland -1.7 %, gas -4.5 %.
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures (1920x1080).
