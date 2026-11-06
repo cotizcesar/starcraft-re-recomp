@@ -5,8 +5,8 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)", "2026-11-06 (132)", "2026-11-06 (133)"]
-open: 1
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)", "2026-11-06 (122)", "2026-11-06 (123)", "2026-11-06 (124)", "2026-11-06 (125)", "2026-11-06 (126)", "2026-11-06 (127)", "2026-11-06 (128)", "2026-11-06 (129)", "2026-11-06 (130)", "2026-11-06 (131)", "2026-11-06 (132)", "2026-11-06 (133)", "2026-11-06 (134)"]
+open: 2
 ---
 
 ## Goal
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (134) Unit path routine located: region A* then a contour short-path search (FUN_007661b0); port pending.
 - (133) Region creation recovered (rectangles <= 8 x 7, FUN_00763840) and ported: Boot Camp 82 regions (was 1); DA late-wave check split out at +-20 s.
 - (132) Uniform path margin around standing units falsified (step response; cannot speed field 14 while slowing field 18).
 - (131) Retail field-18 SCV route tracked: dogleg through the gap between Marine groups; our planner grazes them (0 px margin); BW-style path margin open.
@@ -44,6 +45,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - (108) All four missions won through input; mined-out fields; campaign AI waves as scripted.
 
 ## Pending
+- [ ] Port the retail contour short-path search (`FUN_007661b0` and its contour builders, session log 134) and check the Boot Camp field-18 route.
 - [x] Building lighting: fitted model vs the retail shader decided on the in-game references per lit pixel. Closed 2026-11-06: session log (121), the fitted model wins (18.8 vs 22.5).
 - [x] Compare each mission's opening timeline with the recordings. Closed 2026-11-06: `timeline_gate.py` 10/10 (session log 112).
 - [ ] Player-driven event times (replay each recording's own build order).
