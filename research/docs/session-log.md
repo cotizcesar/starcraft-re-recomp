@@ -6353,3 +6353,20 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures at 3440x1440.
+
+## 2026-11-06 (139) — Contour fill: not in the pathing initialiser chain
+
+- **Checked (FACT, `research/analysis/contour`, local).**
+  `FUN_00764f50`'s only caller is a thunk at `0x75db1b` (calls it, then
+  `FUN_00765340` frees on the next path); `func_0x0075fdf0` (called by the
+  allocator `FUN_00760a80`) only sets four direction constants (1, -1, -1,
+  1 at `+0x28..+0x2e`); `FUN_00760c20` builds the 1 MB walkability grid
+  (`DAT_011a6470`) from the tileset's minitile flags.  None of them fills the
+  four 5000-entry contour lists.
+- **Next candidates.**  The routines `FUN_0075f0f0` calls (`FUN_0075db50`,
+  `FUN_0075ddbb`, `0x75e0e0`, `0x75e650`, `0x75eb90`, `FUN_00760080`,
+  `FUN_007600f0`): the contours may be built lazily during queries
+  (INFERENCE; falsifier: a writer to the list counts at `+0x10..+0x16` of
+  the `+0x97a1c` struct).
+
+**Verification.**  No code change; gates as in (138).
