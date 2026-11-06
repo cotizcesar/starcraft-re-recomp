@@ -2425,3 +2425,37 @@ fn queued_units_take_supply_when_they_start_training() {
         "the second starts after the first"
     );
 }
+
+#[test]
+fn a_lifted_barracks_flies_to_the_snapped_spot_and_lands_there() {
+    // Desperate Alliance recording 58-66 s: Lift Off, Land, a green box at
+    // the pointer, the Barracks flies over and sets down in it.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let b = world.spawn_px(0, uid::BARRACKS, 400, 400).unwrap();
+    world.units[b].completed = true;
+    let id = world.units[b].id;
+    world.lift_building(id).unwrap();
+    for _ in 0..60 {
+        world.step();
+    }
+    assert!(world.units[b].lifted, "lifted");
+    let ((cx, cy), _, tiles) = world.placement_tiles(uid::BARRACKS, (700, 500), Some(id));
+    assert!(tiles.iter().all(|t| *t), "free ground");
+    world.issue(id, Order::Land { pos: (700, 500) }).unwrap();
+    world.step();
+    assert!(world.units[b].lifted, "it flies first, no teleport");
+    for _ in 0..600 {
+        world.step();
+    }
+    let u = &world.units[b];
+    assert!(!u.lifted, "landed");
+    assert_eq!((u.x / 256, u.y / 256), (cx, cy), "on the snapped spot");
+    // Blocked tiles refuse the landing.
+    let d = world.spawn_px(0, uid::SUPPLY_DEPOT, 1100, 500).unwrap();
+    world.units[d].completed = true;
+    let (_, _, t2) = world.placement_tiles(uid::BARRACKS, (1100, 500), Some(id));
+    assert!(
+        t2.iter().any(|t| !*t) && t2.iter().any(|t| *t),
+        "only the depot's tiles are red"
+    );
+}
