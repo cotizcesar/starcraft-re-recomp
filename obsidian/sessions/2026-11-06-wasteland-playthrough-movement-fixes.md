@@ -5,8 +5,8 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)"]
-open: 2
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)", "2026-11-06 (114)", "2026-11-06 (115)", "2026-11-06 (116)", "2026-11-06 (117)", "2026-11-06 (118)", "2026-11-06 (119)", "2026-11-06 (120)", "2026-11-06 (121)"]
+open: 1
 ---
 
 ## Goal
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (121) Lighting decided on the references (fitted model kept); training-slot "1" and arrow as recorded.
 - (120) Decompiler unblocked (noreturn=all, redo); Gamma option found (100 likely neutral); retail shader without AO beats the fitted model on the matched depot but not on the references.
 - (119) Light buffer / gamma traced (no depot lights; decompiler blocked by bad no-return flags); queued units take supply as they start (Backwater Station).
 - (118) Gas queue stalls fixed (harvest restart, 80 px range), contact hand-in, flingy turning: Boot Camp gas 1.89 s vs 1.97 s with the recorded rhythm.
@@ -31,7 +32,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - (108) All four missions won through input; mined-out fields; campaign AI waves as scripted.
 
 ## Pending
-- [ ] Building lighting: matched-camera comparison done (session log 115); recover the client's `lighting` uniform / exposure with REA to port `shadersglsl/util_lighting.glsl` exactly.
+- [x] Building lighting: fitted model vs the retail shader decided on the in-game references per lit pixel. Closed 2026-11-06: session log (121), the fitted model wins (18.8 vs 22.5).
 - [x] Compare each mission's opening timeline with the recordings. Closed 2026-11-06: `timeline_gate.py` 10/10 (session log 112).
 - [ ] Player-driven event times (replay each recording's own build order).
 - [x] Boot Camp playthrough in `mission_gate.py`. Closed 2026-11-06: `mission-gate.txt` (tick 6,542).
