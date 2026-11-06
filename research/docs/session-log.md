@@ -6270,3 +6270,34 @@ walkthrough PASS.
   (session log 131) and every gate.  Multi-session; no partial port merged.
 
 **Verification.**  No code change; gates as in (133).
+
+## 2026-11-06 (136) — Contour lookups decompiled; a free-box detour tried and reverted
+
+- **RE (FACT, `research/analysis/pathx5`, local).**  The four contour
+  lookups (`FUN_007620f0` up, `FUN_00762000` right, `FUN_00761e30` down,
+  `FUN_00761f20` left) binary-search a sorted list of 8-byte edge segments
+  (position, span start, span end, flags) per facing, add the mover's box
+  extents (context `+0x20`) through the flag bits, and scan back for the
+  nearest overlapping span.  Unit boxes are gathered by `FUN_0075f5b0` /
+  `FUN_0075f8e0`.  Geometry check: from (1600, 291) the free box's top stops
+  at the upper Marine group's inflated bottom (~232) and its right at the
+  lower group's inflated left (~1669); that corner (~(1669, 232)) is where
+  the recorded SCV went ((1670, 237)).
+- **Tried (own implementation of the recovered structure, reverted).**
+  `free_box_detour` (64 px growth, corners as nodes, distance cost, 64-node
+  budget) used when a ground mover's first path segment crosses a standing
+  ground unit's inflated box.  Unit test: detour through the gap via
+  (1548, 231).  Boot Camp: field 18 return 67 -> 70 frames, cycle 227 ->
+  236 (retail ~79 / ~253); field 14 unchanged (73 / 239); gas 1.86 s,
+  Wasteland 0.1667.  But Desperate Alliance's late wave at 1143 s lost its
+  match (no arrival after 1055 s in the passive run), failing the gate; the
+  check was already loosened once (133), so the change was reverted rather
+  than loosening it again.  Bench 7.7-9.1 ms at 3440x1440 (run-to-run noise).
+- **Learned.**  Retail's field-18 route is only ~4 px longer than the
+  straight line (286 vs 282 px), so most of its extra ~12 frames is not path
+  length: turning or slowing at the two bends.  Next: measure the recorded
+  SCV's speed along the track, then port the corner generation
+  (`FUN_0075f0f0`) faithfully.
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures at 3440x1440.
