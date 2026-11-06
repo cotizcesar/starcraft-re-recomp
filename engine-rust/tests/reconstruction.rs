@@ -2255,3 +2255,38 @@ fn a_spider_mine_order_walks_the_vulture_there_and_lays_one_mine() {
         Err(SimError::MissingTech)
     );
 }
+
+#[test]
+fn one_marine_leaves_the_bunker_and_the_act_is_logged() {
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    world.recorder = Some(galaxycraft::replay::Recorder::new());
+    let b = world.spawn_px(0, uid::BUNKER, 500, 500).unwrap();
+    world.units[b].completed = true;
+    let bunker = world.units[b].id;
+    let mut marines = Vec::new();
+    for k in 0..2 {
+        let m = world.spawn_px(0, uid::MARINE, 440 + k * 20, 440).unwrap();
+        let id = world.units[m].id;
+        world
+            .issue(id, Order::EnterTransport { transport: bunker })
+            .unwrap();
+        marines.push(id);
+    }
+    for _ in 0..200 {
+        world.step();
+    }
+    assert_eq!(world.units[b].cargo.len(), 2, "both Marines are inside");
+    world.unload_unit(bunker, marines[1]).unwrap();
+    assert_eq!(world.units[b].cargo, vec![marines[0]]);
+    assert!(
+        world
+            .unit(marines[1])
+            .is_some_and(|u| u.alive && u.in_transport.is_none())
+    );
+    assert_eq!(
+        world.unload_unit(bunker, marines[1]),
+        Err(SimError::InvalidTarget)
+    );
+    let log = &world.recorder.as_ref().unwrap().cmds;
+    assert!(log.iter().any(|c| matches!(c.act, galaxycraft::replay::RecAct::UnloadOne { unit, .. } if unit == marines[1])));
+}

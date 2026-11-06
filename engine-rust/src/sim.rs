@@ -2754,9 +2754,9 @@ impl World {
     // ------------------------------------------------------------------
 
     pub fn step(&mut self) {
-        if self.winner.is_some() {
-            return;
-        }
+        // The world keeps running after Victory / Defeat: retail units move
+        // behind the end dialog (Wasteland recording 302.5-307.5 s) until
+        // the player leaves for the score screen.
         self.tick += 1;
         let n = self.units.len();
         for i in 0..n {
@@ -5388,6 +5388,26 @@ impl World {
     // Transports
     // ------------------------------------------------------------------
 
+    /// Gap in px between the units.dat boxes of units `a` and `b` (0 when
+    /// they touch or overlap): the larger of the x and y separations.
+    fn box_gap_px(&self, a: usize, b: usize) -> i32 {
+        let bx = |i: usize| {
+            let u = &self.units[i];
+            let d = &self.data.unit(u.type_id).dimensions;
+            let (x, y) = (u.x / fp(1), u.y / fp(1));
+            (
+                x - d.left as i32,
+                y - d.top as i32,
+                x + d.right as i32,
+                y + d.bottom as i32,
+            )
+        };
+        let (a0, b0) = (bx(a), bx(b));
+        let dx = (b0.0 - a0.2).max(a0.0 - b0.2).max(0);
+        let dy = (b0.1 - a0.3).max(a0.1 - b0.3).max(0);
+        dx.max(dy)
+    }
+
     fn order_enter_transport(&mut self, i: usize, transport: u32) {
         let Some(tidx) = self.index_of(transport) else {
             self.order_done(i);
@@ -5397,8 +5417,10 @@ impl World {
             self.order_done(i);
             return;
         }
-        let dist = self.distance(i, tidx);
-        if dist > fp(48) {
+        // Close enough when the two units.dat boxes are within 8 px of each
+        // other (a centre distance of 48 px left a Marine stuck on the
+        // corner of a Bunker it approached diagonally).
+        if self.box_gap_px(i, tidx) > 8 {
             let (tx, ty) = (self.units[tidx].x, self.units[tidx].y);
             self.move_towards(i, (tx / fp(1), ty / fp(1)), fp(24));
             return;
@@ -5464,6 +5486,36 @@ impl World {
             self.units[i].y = self.units[tidx].y;
         }
         self.units[i].order = Order::Idle;
+    }
+
+    /// Unload one unit from a Bunker / transport (retail: a click on its
+    /// cargo slot).  Recorded (`RecAct::UnloadOne`, save tag 11).
+    pub fn unload_unit(&mut self, transport_id: u32, unit_id: u32) -> Result<(), SimError> {
+        let i = self.index_of(transport_id).ok_or(SimError::BadUnit)?;
+        let k = self.units[i]
+            .cargo
+            .iter()
+            .position(|&c| c == unit_id)
+            .ok_or(SimError::InvalidTarget)?;
+        self.units[i].cargo.remove(k);
+        let (x, y) = self.exit_position(i);
+        if let Some(j) = self.index_of(unit_id) {
+            self.units[j].alive = true;
+            self.units[j].in_transport = None;
+            self.units[j].x = x;
+            self.units[j].y = y;
+        }
+        let tick = self.tick;
+        if let Some(r) = self.recorder.as_mut() {
+            r.record_econ(
+                tick,
+                crate::replay::RecAct::UnloadOne {
+                    transport: transport_id,
+                    unit: unit_id,
+                },
+            );
+        }
+        Ok(())
     }
 
     fn order_unload(&mut self, i: usize) {

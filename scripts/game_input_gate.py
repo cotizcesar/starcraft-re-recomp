@@ -15,7 +15,8 @@ each step's state line (`game.tsv`) is checked:
 6. in the group panel Shift+click drops a unit and a click keeps only it;
 7. Esc on a selected unfinished building cancels it with a 75 % refund;
 8. Backwater Station: I on Raynor's Vulture then a click lays one Spider Mine;
-9. Desperate Alliance: a right click on a Bunker loads the selected Marines.
+9. Desperate Alliance: a right click on a Bunker loads the selected Marines,
+   and a click on a cargo slot unloads that one.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -146,14 +147,16 @@ def main() -> int:
         [str(BIN), "--install", args.install, "--no-intro", "--width", w, "--height", h,
          "--shot-map", "3", "--game-script",
          "ticks:1,look:1072:2752,dump-units:a,ctrl-click-unit:Marine,"
-         "rclick-unit-at:Bunker:1072:2752,ticks:200,dump-units:b,click-world:1072:2752"],
+         "rclick-unit-at:Bunker:1072:2752,ticks:200,dump-units:b,click-world:1072:2752,"
+         "click-cargo:0,ticks:2,dump-units:c"],
         check=True, env=env3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     marines = lambda f: sum(1 for l in (out3 / f).read_text().splitlines()[1:]  # noqa: E731
                             if l.split("\t")[2] == "Terran Marine")
     bunker_rows = [l.split("\t")[2] for l in (out3 / "game.tsv").read_text().splitlines()[1:]]
     check(marines("b.tsv") < marines("a.tsv"), "a right click on the Bunker loads the Marines")
-    check(field(bunker_rows[-1], "selected") == "[Terran Bunker]", "the loaded Bunker can be selected")
+    check(field(bunker_rows[-3], "selected") == "[Terran Bunker]", "the loaded Bunker can be selected")
+    check(marines("c.tsv") == marines("b.tsv") + 1, "a click on a cargo slot unloads that Marine")
     print(f"\ngame input gate: {len(failures)} failure(s) at {args.size} (minerals {minerals(4)} -> {minerals(5)})")
     return 1 if failures else 0
 

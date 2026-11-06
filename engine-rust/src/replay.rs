@@ -23,7 +23,7 @@ use crate::sim::{CarryKind, Order, Race, SimUnit, Spell, SpellTarget, World};
 pub const MAGIC: u32 = 0x4743_5331; // "GCS1"
 pub const VERSION: u16 = 3; // v2: commands carry Issue or economy acts;
 // v3 adds research, upgrade, cancel, rally, add-on and spell acts (tags 4-9)
-// and the building cancel (tag 10).
+// the building cancel (tag 10) and the single unload (tag 11).
 // A v2 file only has tags 0-3 and decodes unchanged.
 
 /// One recorded action: a player/AI order or a direct economy call
@@ -82,6 +82,11 @@ pub enum RecAct {
     /// Cancel an unfinished building (tag 10).
     CancelBuild {
         building: u32,
+    },
+    /// Unload one unit from a transport / Bunker (tag 11).
+    UnloadOne {
+        transport: u32,
+        unit: u32,
     },
 }
 
@@ -944,6 +949,9 @@ pub fn apply_act(world: &mut World, act: &RecAct) {
         RecAct::CancelBuild { building } => {
             let _ = world.cancel_construction(*building);
         }
+        RecAct::UnloadOne { transport, unit } => {
+            let _ = world.unload_unit(*transport, *unit);
+        }
         RecAct::Rally { building, pos } => {
             let _ = world.set_rally(*building, *pos);
         }
@@ -999,6 +1007,11 @@ pub fn encode_act(out: &mut Vec<u8>, act: &RecAct) {
         RecAct::CancelBuild { building } => {
             w_u8(out, 10);
             w_u32(out, *building);
+        }
+        RecAct::UnloadOne { transport, unit } => {
+            w_u8(out, 11);
+            w_u32(out, *transport);
+            w_u32(out, *unit);
         }
         RecAct::Rally { building, pos } => {
             w_u8(out, 7);
@@ -1058,6 +1071,10 @@ pub fn decode_act(c: &mut Cursor<'_>) -> Option<RecAct> {
         },
         6 => RecAct::Cancel { building: c.u32()? },
         10 => RecAct::CancelBuild { building: c.u32()? },
+        11 => RecAct::UnloadOne {
+            transport: c.u32()?,
+            unit: c.u32()?,
+        },
         7 => RecAct::Rally {
             building: c.u32()?,
             pos: (c.u32()? as i32, c.u32()? as i32),
@@ -1111,6 +1128,10 @@ mod tests {
             },
             RecAct::Cancel { building: 8 },
             RecAct::CancelBuild { building: 12 },
+            RecAct::UnloadOne {
+                transport: 13,
+                unit: 14,
+            },
             RecAct::Rally {
                 building: 9,
                 pos: (-10, 2000),

@@ -19,13 +19,13 @@ restating status.
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 17 | 22 | 77 % |
+| [In-game client](#in-game-client) | 10 | 19 | 24 | 79 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **83** | **103** | **81 %** |
+| **Overall (weighted)** | **100** | **85** | **105** | **81 %** |
 
 _Last updated: 2026-11-06_
 <!-- progress:summary:end -->
@@ -121,7 +121,9 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Selection panel as retail: rank (`units.dat` sublabel), kills, armour / weapon upgrade boxes, the production queue with its progress bar (`pbrempt` / `pbrfull`), Under Construction, research and upgrade progress — `statdata.ui.json` controls, Backwater Station 126 s
 - [x] Multi-selection panel as on the Wasteland recording: `statdata` 33-44 (6 x 2, column-major), `cmdbtns` box 13 (19 for heroes), wireframes; box selection ordered left to right; click keeps one unit, Shift+click drops it — `scripts/game_input_gate.py`, session log 2026-11-06 (110)
 - [x] Bunker cargo in the selection panel (`statdata` 27-30, as the recording at 272 s) and loading by right click on an own Bunker / transport — `scripts/game_input_gate.py`
-- [ ] Unloading one unit by clicking its cargo slot; two- and four-space cargo slots (18-24)
+- [x] Unloading one unit by clicking its cargo slot (recorded, tag 11); units enter a Bunker / transport from any side (box gap) — `tests/reconstruction.rs::one_marine_leaves_the_bunker_and_the_act_is_logged`, `scripts/game_input_gate.py`
+- [x] Mission end as recorded: the world runs on after Victory / Defeat, the box shows ~1 s (24 frames) after the result, Elapsed Time stays at the result (Boot Camp 05:12) — `scripts/mission_gate.py`, session log 2026-11-06 (113)
+- [ ] Two- and four-space cargo slots (18-24)
 - [x] Cancel construction (Esc / card, 75 % refund, recorded tag 10), targeted spells through `Order::Cast` (Spider Mines: one mine per order from the Vulture's three, heroes without research), placement exactly where clicked with the retail preview (green / red box over a half-blended building) — `tests/reconstruction.rs`, `scripts/game_input_gate.py`, session log 2026-11-06 (111)
 - [ ] Land placement preview for lifted buildings (no lift-off in the four Episode I recordings)
 - [x] The four Episode I missions are won through input alone at 720p / 1080p / 3440x1440: Boot Camp (depots, Refinery, 100 gas; tick 6,542), Wasteland (Raynor, Barracks, 10 Marines; 7,320), Backwater Station (Infested CC destroyed; 9,728), Desperate Alliance (countdown survived, calm opening as recorded; 29,025) — `scripts/mission_gate.py`, `engine-rust/docs/gates/mission-gate.txt`

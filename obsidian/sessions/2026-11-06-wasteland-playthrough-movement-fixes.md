@@ -5,7 +5,7 @@ tags: [session, in-game, campaign, simulation]
 type: session
 source: opencode
 area: campaign
-log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)"]
+log: ["2026-11-06 (107)", "2026-11-06 (108)", "2026-11-06 (109)", "2026-11-06 (110)", "2026-11-06 (111)", "2026-11-06 (112)", "2026-11-06 (113)"]
 open: 1
 ---
 
@@ -17,6 +17,7 @@ Play the Episode I missions through input only, as on the recordings, and fix wh
 - Wasteland: victory through `--game-script` input (`scripts/mission_gate.py`, 0 failures at 720p / 1080p / 3440x1440).
 - Simulation fixes: chase in pixels, retaliation, waypoint reach / stall / crowd arrival, walk animation from any resting state, the build walk every tick. Each has a test in `tests/reconstruction.rs`.
 - Minimap right click / target clicks, Ctrl+click type selection.
+- (113) Endings as recorded (world runs on, box ~1 s after the result, Elapsed Time frozen); single-unit unload.
 - (112) Trigger timelines within 0.4 s of the recordings; Bunker cargo slots and right-click loading.
 - (111) Cancel construction, targeted spells (Spider Mines), placement where clicked with the retail preview, box hit test for clicks.
 - (109) Desperate Alliance waves checked against the recording minimap; Terran scaffold / AlmostBuilt stages and SCV welding as on Boot Camp.
