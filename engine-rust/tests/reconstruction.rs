@@ -2329,3 +2329,29 @@ fn flingy_units_accelerate_from_rest_and_walkers_do_not() {
         "the Marine walks by its animation"
     );
 }
+
+#[test]
+fn a_worker_starts_mining_only_when_it_touches_the_field() {
+    // Wasteland recording: five SCVs bring 3.98 minerals/s; mining from an
+    // 80 px centre distance made ours 14 % faster.  An SCV stopped 40 px
+    // short of a field's box does not mine.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let cc = world.spawn_px(0, uid::COMMAND_CENTER, 400, 300).unwrap();
+    world.units[cc].completed = true;
+    let field = world.spawn_px(0, uid::MINERAL_FIELD, 400, 600).unwrap();
+    world.units[field].resource_amount = 1500;
+    let fid = world.units[field].id;
+    let scv = world.spawn_px(0, uid::SCV, 400, 500).unwrap();
+    let id = world.units[scv].id;
+    world.issue(id, Order::Gather { resource: fid }).unwrap();
+    let mut mined_at_gap = None;
+    for _ in 0..200 {
+        world.step();
+        if world.units[scv].gather_timer > 0 && mined_at_gap.is_none() {
+            let gap = (world.units[field].y / 256 - 16) - (world.units[scv].y / 256 + 11);
+            mined_at_gap = Some(gap);
+        }
+    }
+    let gap = mined_at_gap.expect("the SCV starts mining");
+    assert!(gap <= 10, "mining starts on contact, not {gap} px away");
+}
