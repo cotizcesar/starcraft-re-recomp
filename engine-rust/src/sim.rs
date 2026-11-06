@@ -1795,6 +1795,53 @@ impl World {
         (spot.unwrap_or(centre), (pw, ph), spot.is_some())
     }
 
+    /// Per-tile validity of a placement box at `cursor` (the build and Land
+    /// previews): (snapped centre, box size px, row-major tiles, true =
+    /// free).  A tile is free when its terrain is buildable and no structure
+    /// or resource other than `ignore` overlaps it (FACT, Desperate Alliance
+    /// recording 64 s: landing a Barracks, only the blocked tiles of the box
+    /// turn red).
+    pub fn placement_tiles(
+        &self,
+        type_id: u16,
+        cursor: (i32, i32),
+        ignore: Option<u32>,
+    ) -> ((i32, i32), (i32, i32), Vec<bool>) {
+        let ty = self.data.unit(type_id);
+        let (pw, ph) = (ty.placement.x.max(32) as i32, ty.placement.y.max(32) as i32);
+        let left = ((cursor.0 - pw / 2) as f32 / 32.0).round() as i32 * 32;
+        let top = ((cursor.1 - ph / 2) as f32 / 32.0).round() as i32 * 32;
+        let blockers: Vec<Rect> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && !u.lifted && Some(u.id) != ignore)
+            .filter_map(|u| {
+                let ut = self.data.unit(u.type_id);
+                if !(ut.is_building() || is_resource_type(u.type_id)) {
+                    return None;
+                }
+                let (ux, uy) = (u.x / fp(1), u.y / fp(1));
+                let hw = ut.dimensions.right.max(0).max(ut.dimensions.left.max(0)) as i32;
+                let hh = ut.dimensions.bottom.max(0).max(ut.dimensions.top.max(0)) as i32;
+                Some(Rect::new(ux - hw, uy - hh, ux + hw, uy + hh))
+            })
+            .collect();
+        let mut tiles = Vec::new();
+        for ty_ in 0..ph / 32 {
+            for tx in 0..pw / 32 {
+                let (x0, y0) = (left + tx * 32, top + ty_ * 32);
+                let free = x0 >= 0
+                    && y0 >= 0
+                    && self.terrain.footprint_buildable(x0, y0, x0 + 32, y0 + 32)
+                    && !blockers
+                        .iter()
+                        .any(|r| Rect::new(x0 + 1, y0 + 1, x0 + 31, y0 + 31).intersects(r));
+                tiles.push(free);
+            }
+        }
+        ((left + pw / 2, top + ph / 2), (pw, ph), tiles)
+    }
+
     /// Find a buildable spot near `near` (pixel coordinates).
     pub fn find_build_spot(&mut self, type_id: u16, near: (i32, i32)) -> Option<(i32, i32)> {
         self.rebuild_creep();
@@ -3245,8 +3292,19 @@ impl World {
                 let _ = self.lift_building(id);
             }
             Order::Land { pos } => {
+                // Fly to the grid-snapped spot (the preview's), then land
+                // (Desperate Alliance recording: the Barracks flies over and
+                // sets down in the green box).
                 let id = self.units[i].id;
-                let _ = self.land_building(id, pos);
+                let ty = self.units[i].type_id;
+                let ((cx, cy), _, tiles) = self.placement_tiles(ty, pos, Some(id));
+                if !tiles.iter().all(|t| *t) {
+                    self.order_done(i);
+                } else if self.distance_to_point(i, (cx * fp(1), cy * fp(1))) > fp(2) {
+                    self.move_towards(i, (cx, cy), fp(1));
+                } else if self.land_building(id, (cx, cy)).is_err() {
+                    self.order_done(i);
+                }
             }
             Order::Die => {}
         }

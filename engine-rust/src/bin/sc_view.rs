@@ -14252,7 +14252,17 @@ impl App {
         content: (i32, i32, i32, i32),
         s: f32,
     ) {
-        let Some(t) = self.build_mode else {
+        // Building placement, or a lifted building's Land target.
+        let landing = match self.target_act {
+            Some((galaxycraft::buttons::Act::Land, _)) => self
+                .selected
+                .iter()
+                .filter_map(|id| self.world.unit(*id))
+                .find(|u| u.lifted)
+                .map(|u| (u.type_id, u.id)),
+            _ => None,
+        };
+        let Some(t) = self.build_mode.or(landing.map(|l| l.0)) else {
             return;
         };
         let (mx, my) = self.drag_now;
@@ -14262,6 +14272,14 @@ impl App {
         let (lx, ly) = self.to_logical(mx, my);
         let cursor = self.world_of(lx, ly);
         let (centre, (pw, ph), valid) = self.world.placement_preview(t, cursor);
+        // Per-tile green / red (gas buildings keep one colour: they need a
+        // geyser, not free tiles).
+        let tiles = (!galaxycraft::sim::is_gas_building(t)).then(|| {
+            self.world
+                .placement_tiles(t, cursor, landing.map(|l| l.1))
+                .2
+        });
+        let (tw, th) = ((pw / 32).max(1), (ph / 32).max(1));
         let (cx, cy, cw, ch) = content;
         let sx = cx as f32 + (centre.0 - self.camera.0) as f32 * s;
         let sy = cy as f32 + (centre.1 - self.camera.1) as f32 * s;
@@ -14315,13 +14333,19 @@ impl App {
                 }
             }
         }
-        let (fr, fg, fb_) = if valid {
-            (0.62, 1.6, 0.62)
-        } else {
-            (1.6, 0.62, 0.62)
-        };
         for y in y0.max(cy)..(y0 + h).min(cy + ch) {
             for x in x0.max(cx)..(x0 + w).min(cx + cw) {
+                let free = tiles.as_ref().map_or(valid, |tl| {
+                    let i = (((y - y0) * th / h.max(1)).min(th - 1) * tw
+                        + ((x - x0) * tw / w.max(1)).min(tw - 1))
+                        as usize;
+                    tl.get(i).copied().unwrap_or(valid)
+                });
+                let (fr, fg, fb_) = if free {
+                    (0.62, 1.6, 0.62)
+                } else {
+                    (1.6, 0.62, 0.62)
+                };
                 let p = fb.get(x, y).0;
                 let ch = |v: u32, f: f32| ((v as f32 * f).round() as u32).min(255);
                 let out = ch((p >> 16) & 0xff, fr) << 16

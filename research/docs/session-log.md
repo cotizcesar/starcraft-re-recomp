@@ -5981,3 +5981,31 @@ clean; `mission_gate.py` 0 failures at 1920x1080 and 3440x1440.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures (1920x1080).
+
+## 2026-11-06 (125) — Land preview and landing as recorded; first waves met away from the base
+
+- **Recording (FACT, Desperate Alliance contact sheet, game 52-136 s).**
+  The player lifts the Barracks (58 s, Land button), and at 64-66 s the
+  screen shows "Select Location" with the placement box: the building's
+  ghost in green, with **only the blocked 32 px tiles red**; the Barracks
+  then flies over and lands.  This falsifies the earlier note that no
+  recording lifts a building.  At 136 s a Refinery placement shows the same
+  box.  At 118 s the camera is on the north plateau with remains of a fight:
+  the player's own units met the first Zerg away from the base, so the
+  first two waves' absence from the base view is player-driven, not an AI
+  timing fault (INFERENCE).
+- **Change.**  `World::placement_tiles` (per-tile validity: buildable
+  terrain, no structure / resource other than the lifted building itself);
+  the preview runs for a pending Land too and tints tile by tile (gas
+  buildings keep one colour); `Order::Land` snaps to the grid like a
+  placement, flies there (it teleported before) and lands, or ends if a
+  tile is blocked.  Test
+  `a_lifted_barracks_flies_to_the_snapped_spot_and_lands_there` (the old
+  instant landing fails "it flies first"); input gate: L, L and a click land
+  the Barracks on the grid at 720p / 1080p / 3440x1440.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720, 1920x1080,
+3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440;
+`timeline_gate.py` 10/10; `ui_visual_diff` 51/51 (no screen moved by more
+than 0.05); walkthrough PASS.

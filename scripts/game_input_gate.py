@@ -16,7 +16,9 @@ each step's state line (`game.tsv`) is checked:
 7. Esc on a selected unfinished building cancels it with a 75 % refund;
 8. Backwater Station: I on Raynor's Vulture then a click lays one Spider Mine;
 9. Desperate Alliance: a right click on a Bunker loads the selected Marines,
-   and a click on a cargo slot unloads that one.
+   and a click on a cargo slot unloads that one;
+10. Desperate Alliance: Lift Off, Land and a click land the Barracks on the
+   grid.
 
 Run from the repo root after `cargo build --release --bin sc_view`:
 
@@ -157,6 +159,24 @@ def main() -> int:
     check(marines("b.tsv") < marines("a.tsv"), "a right click on the Bunker loads the Marines")
     check(field(bunker_rows[-3], "selected") == "[Terran Bunker]", "the loaded Bunker can be selected")
     check(marines("c.tsv") == marines("b.tsv") + 1, "a click on a cargo slot unloads that Marine")
+    # Lift Off and Land (Desperate Alliance recording 58-66 s): L, L, a
+    # click on free ground in the middle of the view -> the Barracks flies
+    # there and lands on the grid.
+    out4 = Path(tempfile.mkdtemp(prefix="gc-game-"))
+    env4 = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(out4))
+    mid = f"{int(w) * 55 // 100}:{int(h) * 45 // 100}"
+    subprocess.run(
+        [str(BIN), "--install", args.install, "--no-intro", "--width", w, "--height", h,
+         "--shot-map", "3", "--game-script",
+         f"ticks:1,look:600:2800,click-world:544:2864,key:L,ticks:120,key:L,move:{mid},"
+         f"click:{mid},ticks:600,dump-units:land"],
+        check=True, env=env4, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    rows4 = [l.split("\t") for l in (out4 / "land.tsv").read_text().splitlines()[1:]]
+    bx = [(int(c[3]), int(c[4]), c[6]) for c in rows4 if c[2] == "Terran Barracks" and c[1] == "1"]
+    check(bool(bx) and (bx[0][0], bx[0][1]) != (544, 2864) and bx[0][2].startswith("Idle")
+          and (bx[0][0] - 32) % 32 == 0,
+          f"Lift Off / Land moves the Barracks onto the grid {bx[:1]}")
     print(f"\ngame input gate: {len(failures)} failure(s) at {args.size} (minerals {minerals(4)} -> {minerals(5)})")
     return 1 if failures else 0
 
