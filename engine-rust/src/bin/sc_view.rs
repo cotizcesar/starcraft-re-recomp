@@ -5001,6 +5001,21 @@ fn run_game_script(app: &mut App, fb: &mut Framebuffer, script: &str) {
                     eprintln!("game script: no on-screen unit named {name:?}");
                 }
             }
+            "click-newest" => {
+                // Left click on the centre of the newest unit named NAME.
+                let name = parts.get(1).copied().unwrap_or("");
+                let at = app
+                    .world
+                    .units
+                    .iter()
+                    .filter(|u| u.alive && app.data.unit_name(u.type_id).contains(name))
+                    .max_by_key(|u| u.id)
+                    .map(|u| (u.x / 256, u.y / 256));
+                if let Some((x, y)) = at {
+                    let p = app.screen_point_of_world(x, y);
+                    mouse = click(app, fb, p, false, false);
+                }
+            }
             "rclick-unit-at" => {
                 // Right click on the own unit named NAME nearest world x, y.
                 let name = parts.get(1).copied().unwrap_or("");

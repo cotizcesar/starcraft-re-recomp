@@ -5765,3 +5765,37 @@ old rule with "53 px away"); clippy / fmt clean; `game_input_gate.py`,
 **Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
 clippy / fmt clean; `mission_gate.py` 0 failures (1920x1080);
 `ui_visual_diff` 51/51 (shader experiment reverted).
+
+## 2026-11-06 (118) — Gas queue stalls fixed; flingy turning; contact hand-in
+
+- **Probe (FACT, Boot Camp geometry: CC (1824, 208), Refinery
+  (1792, 416), three SCVs, frame by frame).**  Deliveries every 35 / 71
+  frames.  Two bugs: (1) a queued SCV stood 81.6 px from the Refinery's
+  centre, just outside the 80 px range, held off by the footprint, idle
+  until nudged; (2) the SCV inside was bumped off contact by the one
+  leaving and its 37-frame harvest restarted (it "entered" at 407 and again
+  at 421).  Fixes: Refinery entry on box contact like mineral fields; once
+  `gather_timer` runs, the range is no longer checked (retail: the SCV is
+  inside the Refinery / busy at its field).  Test
+  `a_worker_nudged_while_harvesting_gas_does_not_start_over` (56 frames on
+  the old rule).
+- **Shape.**  With the queue fixed the Refinery bound the rate (37 frames,
+  1.57 s), faster than the recording, whose 1.5 / 1.6 / 2.8 s rhythm is
+  travel-bound (139-frame cycle per SCV).  Cargo is now handed in on
+  contact with the depot's box (it was 96 px from the centre), and flingy
+  units turn at `turn_rate` per frame without advancing until they face the
+  waypoint within one step (INFERENCE from BW's flingy model): probe
+  35 / 35 / 60 frames per three deliveries (134-frame cycle vs ~139).
+- **Contact slack.**  `HARVEST_CONTACT_PX` 1 px: workers never close to it
+  through collisions (income collapses); 8 px: gas 1.83 s, minerals +10 %;
+  4 px: gas 1.89 s (45.0 frames vs the recording's 46.2), Wasteland
+  minerals 0.1800 / frame (+6 %, unchanged).  4 px kept (INFERENCE).
+- **Gate.**  `game_input_gate.py`: the cancel check clicks the newest depot
+  (`click-newest:NAME` step); a screen-spot click hit the welding SCV on the
+  building's edge, correctly.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720, 1920x1080,
+3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440 (gas
+1.89 s, minerals 0.1800); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51
+(no screen moved by more than 0.05); walkthrough PASS.
