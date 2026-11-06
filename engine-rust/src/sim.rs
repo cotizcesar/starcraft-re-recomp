@@ -53,7 +53,7 @@ pub const GAS_PER_TRIP: i32 = 8;
 /// 93 also brings Wasteland's five-SCV income from +6 % to -1.7 % of its
 /// recording.  INFERENCE for the mechanism (75 is OpenBW's timer; the rest
 /// may be the gather animation); falsifier: the client's mining order code.
-pub const MINING_FRAMES: u16 = 93;
+pub const MINING_FRAMES: u16 = 85;
 /// Frames a worker spends inside a refinery (OpenBW `order_HarvestGas`).
 pub const GAS_MINING_FRAMES: u16 = 37;
 pub const MINERAL_CAPACITY: i32 = 1500;
@@ -720,6 +720,9 @@ pub struct World {
     pub terrain: Terrain,
     /// Connected-component map of the walk grid, built once per terrain.
     pub regions: RegionMap,
+    /// The client's terrain contours (`contour::Contours`), derived from the
+    /// terrain once; not saved (rebuilt with the world).
+    pub contours: Arc<crate::contour::Contours>,
     pub players: Vec<Player>,
     pub units: Vec<SimUnit>,
     pub next_id: u32,
@@ -768,6 +771,7 @@ pub struct World {
 impl World {
     pub fn new(data: Arc<GameData>, terrain: Terrain, player_count: usize) -> Self {
         let regions = RegionMap::from_terrain(&terrain);
+        let contours = Arc::new(crate::contour::Contours::from_terrain(&terrain));
         let creep_tiles = terrain.width * terrain.height;
         let creep = vec![false; creep_tiles];
         let creep_strength = vec![0u8; creep_tiles];
@@ -776,6 +780,7 @@ impl World {
             data,
             terrain,
             regions,
+            contours,
             players: (0..player_count)
                 .map(|i| Player::new(Race::Terran, i as u8, 50, 0))
                 .collect(),
@@ -4571,6 +4576,61 @@ impl World {
         Some(((hw.max(5)) * fp(1), (hh.max(5)) * fp(1)))
     }
 
+    /// The client's short-range path for unit `i` from `start` to `goal`
+    /// (pixels): `Contours::short_path` with the boxes of nearby stationary
+    /// units as walls (idle / holding units, buildings, resources, workers
+    /// mid-harvest; `FUN_005c1380` keeps units standing at their move
+    /// target).  The unit whose box holds `goal` is the target and is not a
+    /// wall.  INFERENCE: which of our states count as "stationary", and no
+    /// region doubling yet.
+    fn short_leg(&self, i: usize, start: (i32, i32), goal: (i32, i32)) -> Vec<(i32, i32)> {
+        let ty = self.data.unit(self.units[i].type_id);
+        let d = &ty.dimensions;
+        let m = crate::contour::Mover::from_box(d.left, d.top, d.right, d.bottom);
+        let (x0, x1) = (start.0.min(goal.0) - 192, start.0.max(goal.0) + 192);
+        let (y0, y1) = (start.1.min(goal.1) - 192, start.1.max(goal.1) + 192);
+        let walls: Vec<(i32, i32, i32, i32)> = self
+            .units
+            .iter()
+            .enumerate()
+            .filter(|(j, u)| {
+                *j != i
+                    && u.alive
+                    && u.in_transport.is_none()
+                    && !u.lifted
+                    && !self.data.unit(u.type_id).is_flyer()
+                    && (matches!(u.order, Order::Idle | Order::HoldPosition)
+                        || self.data.unit(u.type_id).is_building()
+                        || is_resource_type(u.type_id)
+                        || u.gather_timer > 0)
+            })
+            .filter_map(|(_, u)| {
+                let d = &self.data.unit(u.type_id).dimensions;
+                let (x, y) = (u.x / fp(1), u.y / fp(1));
+                let b = (
+                    x - d.left as i32,
+                    y - d.top as i32,
+                    x + d.right as i32,
+                    y + d.bottom as i32,
+                );
+                let near = b.2 >= x0 && b.0 <= x1 && b.3 >= y0 && b.1 <= y1;
+                let target = (b.0..=b.2).contains(&goal.0) && (b.1..=b.3).contains(&goal.1);
+                let inside = (b.0..=b.2).contains(&start.0) && (b.1..=b.3).contains(&start.1);
+                (near && !target && !inside).then_some(b)
+            })
+            .collect();
+        let c = self.contours.with_units(&walls);
+        let limits = (
+            self.terrain.width as i32 * 32 - 1,
+            self.terrain.height as i32 * 32 - 1,
+        );
+        let r = c.short_path(&m, start, goal, limits, &|_| false);
+        if std::env::var_os("GC_LEG_DBG").is_some() {
+            eprintln!("LEG {start:?} -> {goal:?} walls {} path {r:?}", walls.len());
+        }
+        r
+    }
+
     fn try_shift(&mut self, i: usize, dx: i32, dy: i32) -> bool {
         if dx == 0 && dy == 0 {
             return true;
@@ -4664,6 +4724,23 @@ impl World {
     /// Move toward `goal` in pixel coordinates.  Returns true when the unit
     /// has arrived.
     fn move_towards(&mut self, i: usize, goal: (i32, i32), stop_distance: i32) -> bool {
+        self.move_towards_braking(i, goal, stop_distance, None)
+    }
+
+    /// `move_towards`, with flingy braking measured against the box gap to
+    /// `brake_on` when given (a worker walking into contact with its field
+    /// or depot) instead of the distance to `goal`'s centre.  FACT (Boot Camp
+    /// recording 117.7-118.8 s): the SCV slows from ~3 to ~1-1.5 px / frame
+    /// over its last ~48 px (the SCV's `halt_distance`, 47.8 px) and hands in
+    /// at that speed; braking toward the centre made it arrive at full speed.
+    /// INFERENCE: retail's move target is the contact point.
+    fn move_towards_braking(
+        &mut self,
+        i: usize,
+        goal: (i32, i32),
+        stop_distance: i32,
+        brake_on: Option<usize>,
+    ) -> bool {
         let ty = self.data.unit(self.units[i].type_id).clone();
         if ty.is_building() && !self.units[i].status.sieged && !self.units[i].lifted {
             return true;
@@ -4691,6 +4768,20 @@ impl World {
             };
             self.units[i].path.clear();
             self.units[i].path_goal = Some(goal_fp);
+            let path = path.map(|mut p| {
+                if !(req.flying || ty.is_flyer())
+                    && let Some(&first) = p.waypoints.first()
+                {
+                    let detour = self.short_leg(i, req.start, first);
+                    let mut w = detour;
+                    if w.last() != Some(&first) {
+                        w.push(first);
+                    }
+                    w.extend(p.waypoints.iter().skip(1).copied());
+                    p.waypoints = w;
+                }
+                p
+            });
             if let Some(p) = path {
                 for w in p.waypoints {
                     // find_path works in pixels; convert to fp.
@@ -4733,7 +4824,11 @@ impl World {
                 // speed that is exactly flingy.dat's `halt_distance` (SCV
                 // 1280^2 / 134 = 12227).
                 let stopping = (cur as i64 * cur as i64 / (2 * acc as i64)) as i32;
-                let near = self.distance_to_point(i, goal_fp) <= stopping.max(acc);
+                let remaining = match brake_on {
+                    Some(t) if self.units[i].path.len() <= 1 => fp(self.box_gap_px(i, t)),
+                    _ => self.distance_to_point(i, goal_fp),
+                };
+                let near = remaining <= stopping.max(acc);
                 let next = if near {
                     (cur - acc).max(acc)
                 } else {
@@ -5241,7 +5336,7 @@ impl World {
             let (rx, ry) = (self.units[ridx].x, self.units[ridx].y);
             // Walk on until the boxes touch (a 64 px stop left workers
             // short of contact).
-            self.move_towards(i, (rx / fp(1), ry / fp(1)), fp(4));
+            self.move_towards_braking(i, (rx / fp(1), ry / fp(1)), fp(4), Some(ridx));
             return;
         }
         // One worker at a time per patch / refinery, and mining takes time
@@ -5319,7 +5414,7 @@ impl World {
         // 96 px centre distance; see `HARVEST_CONTACT_PX`).
         if self.box_gap_px(i, didx) > HARVEST_CONTACT_PX {
             let (dx, dy) = (self.units[didx].x, self.units[didx].y);
-            self.move_towards(i, (dx / fp(1), dy / fp(1)), fp(4));
+            self.move_towards_braking(i, (dx / fp(1), dy / fp(1)), fp(4), Some(didx));
             return;
         }
         let owner = self.units[i].owner as usize;

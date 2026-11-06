@@ -134,9 +134,10 @@ def run(install: str, size: str, map_index: int, steps: list[str]) -> list[str]:
     return [l.split("\t")[2] for l in (out / "game.tsv").read_text().splitlines()[1:]]
 
 
-def zerg_near_base(install: str, size: str) -> list[tuple[float, int]]:
+def zerg_near_base(install: str, size: str) -> list[tuple[float, int, int]]:
     """Desperate Alliance with a passive player: (game s, Zerg units within
-    900 px of the player's Command Center at (320, 2704)) every 80 frames."""
+    900 px of the player's Command Center at (320, 2704), total HP of the
+    player's units) every 80 frames."""
     w, h = size.split("x")
     out = Path(tempfile.mkdtemp(prefix="gc-mission-"))
     env = dict(os.environ, SC_NO_AUDIO="1", GC_WALK_DIR=str(out))
@@ -148,12 +149,14 @@ def zerg_near_base(install: str, size: str) -> list[tuple[float, int]]:
     )
     rows = []
     for i in range(360):
-        n = 0
+        n = hp = 0
         for line in (out / f"d{i:04d}.tsv").read_text().splitlines()[1:]:
             c = line.split("\t")
             if c[1] == "4" and ((int(c[3]) - 320) ** 2 + (int(c[4]) - 2704) ** 2) < 900 ** 2:
                 n += 1
-        rows.append((round((1 + (i + 1) * 80) * 0.042, 1), n))
+            if c[1] == "1":
+                hp += int(c[5])
+        rows.append((round((1 + (i + 1) * 80) * 0.042, 1), n, hp))
     return rows
 
 
@@ -272,12 +275,19 @@ def main() -> int:
     check(field(st[-1], "result") == "Some(true)", "desperate alliance: victory when the countdown ends")
     print(f"  end: tick={field(st[-1], 'tick')} units={field(st[-1], 'units')}")
     rows = zerg_near_base(args.install, args.size)
-    arrivals = [t for (t, n), (_, p) in zip(rows[1:], rows) if n > p]
+    arrivals = [t for (t, n, _), (_, p, _) in zip(rows[1:], rows) if n > p]
+    # The recorded events are the minimap's "under attack" pings: an attack
+    # episode starts when the player's units lose HP after >= 3 samples
+    # (~10 s) without loss (session log 147).  Waves whose attackers already
+    # stand inside the 900 px radius give no arrival edge.
+    drops = [k for k in range(1, len(rows)) if rows[k][2] < rows[k - 1][2]]
+    attacks = [rows[k][0] for j, k in enumerate(drops) if j == 0 or k - drops[j - 1] > 3]
     missed = [wv for wv in DA_WAVES if not any(abs(t - wv) <= 15 for t in arrivals)]
     check(not missed, f"desperate alliance: Ter3 waves reach the base as recorded, +-15 s (missed {missed})")
-    late = [wv for wv in DA_LATE_WAVES if not any(abs(t - wv) <= 20 for t in arrivals)]
-    check(not late, f"desperate alliance: late waves (swarmed base), +-20 s (missed {late})")
+    late = [wv for wv in DA_LATE_WAVES if not any(abs(t - wv) <= 20 for t in arrivals + attacks)]
+    check(not late, f"desperate alliance: late waves (arrival or attack episode), +-20 s (missed {late})")
     print(f"  arrivals (s): {arrivals}")
+    print(f"  attack episodes (s): {attacks}")
     print(f"\nmission gate: {len(failures)} failure(s) at {args.size}")
     return 1 if failures else 0
 

@@ -786,7 +786,16 @@ impl CampaignAi {
                 self.pc += 1;
             }
             13 => {
+                // attack_prepare: request what the attack group lacks (ASC3
+                // reference: trains missing attack units).  The attack itself
+                // still goes with the units that exist (session log 124:
+                // waiting for the force broke the recorded wave times).
                 self.attack_prepared = true;
+                for (t, n) in self.attack_shortfall(world) {
+                    for _ in 0..n {
+                        let _ = self.try_train_or_morph(world, t);
+                    }
+                }
                 self.pc += 1;
             }
             15 => {
@@ -1580,6 +1589,27 @@ impl CampaignAi {
     /// Zergling`, while the retail recording is calm for 2.5 minutes.  An
     /// empty group (a bare `attack_do`) takes the fighting units only: never
     /// workers, Overlords or Larvae (they had joined the attack too).
+    /// Requested attack units not yet available (type, missing count).
+    fn attack_shortfall(&self, world: &World) -> Vec<(u16, usize)> {
+        let mut want: HashMap<u16, usize> = HashMap::new();
+        for t in &self.attack_group {
+            *want.entry(*t).or_default() += 1;
+        }
+        let have = self.military_ids(world);
+        let mut out: Vec<(u16, usize)> = want
+            .into_iter()
+            .filter_map(|(t, n)| {
+                let got = have
+                    .iter()
+                    .filter(|id| world.unit(**id).is_some_and(|u| u.type_id == t))
+                    .count();
+                (got < n).then_some((t, n - got))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
     fn military_ids(&self, world: &World) -> Vec<u32> {
         let (bx, by) = self.base(world).unwrap_or((0, 0));
         let fighter = |u: &crate::sim::SimUnit| {
