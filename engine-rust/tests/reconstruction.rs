@@ -2393,3 +2393,35 @@ fn a_worker_nudged_while_harvesting_gas_does_not_start_over() {
     let t1 = carried.expect("the SCV comes out with gas");
     assert!(t1 - t0 <= 40, "the harvest ran on: {} frames", t1 - t0);
 }
+
+#[test]
+fn queued_units_take_supply_when_they_start_training() {
+    // Backwater Station recording: four SCVs queued at once cost 200
+    // minerals at once, but supply rises 6 -> 7 -> 8 -> 9 -> 10 one SCV at a
+    // time, as each starts (every 300 frames).
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    world.players[0].minerals = 200;
+    let cc = world.spawn_px(0, uid::COMMAND_CENTER, 400, 400).unwrap();
+    world.units[cc].completed = true;
+    let depot = world.spawn_px(0, uid::SUPPLY_DEPOT, 600, 400).unwrap();
+    world.units[depot].completed = true;
+    let id = world.units[cc].id;
+    let before = world.supply_used(0);
+    for _ in 0..4 {
+        world.train(id, uid::SCV).unwrap();
+    }
+    assert_eq!(world.players[0].minerals, 0, "the queue is paid at once");
+    assert_eq!(
+        world.supply_used(0) - before,
+        2,
+        "only the SCV in training counts"
+    );
+    for _ in 0..301 {
+        world.step();
+    }
+    assert_eq!(
+        world.supply_used(0) - before,
+        4,
+        "the second starts after the first"
+    );
+}
