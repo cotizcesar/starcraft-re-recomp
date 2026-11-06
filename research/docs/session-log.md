@@ -6501,3 +6501,32 @@ clippy / fmt clean; movement unchanged.
 
 **Verification.**  `cargo test --no-fail-fast` 0 failed (4 contour
 tests); clippy / fmt clean; `cargo build --release --bin sc_view` OK.
+
+## 2026-11-06 (144) — Up-right corner sweep ported; it finds the Boot Camp Marine gap
+
+- **Helpers (FACT).**  `FUN_0075db50` normalises a segment one pixel
+  outside its wall (pos / start / end + the `+0x30` extents
+  `[up+1, -right-1, -down-1, left+1]`); `FUN_00760080` adds the target as a
+  reached candidate when it lies in a swept rectangle; `FUN_007600f0`
+  records the rectangle.
+- **Port (`Contours::sweep_up_right`, `0x75e0e0`).**  Band A: limit = max
+  (up reach, top of the right-ray wall - 1), nearest up-facing wall over
+  `x..=right`, candidates (right, y) 0xe7, (right, upper) with the computed
+  mask (0x3b / 0x22 / 0x33 / 0, and-masked 0xfd / 0xdc), (x, upper) 0xdd,
+  then the wall's right end 0x11 and, walking to previous segments on the
+  same line, each left end 0x18.  Band B mirrors it with right-facing walls
+  (0xdd, mask, 1, 0x21 / 0x22).  `node_step` now returns the ray-stopping
+  segments.  INFERENCE: band B's walk stop condition (the decompile loses a
+  branch there).
+- **Boot Camp check (test
+  `up_right_sweep_emits_the_corners_of_the_marine_gap`).**  With the eight
+  Marines as standing units and an SCV box: from (1600, 291) the sweep emits
+  (1660, 233) and (1620, 233), the ends of the upper group's widened bottom
+  edge, beside the recorded turn at ~(1670, 237); from (1484, 295) the
+  Marines are out of the 64 px reach and only the reach corners come out.
+- **Next.**  The other three quadrants (mirrors: `0x75eb90` down-right,
+  `0x75e650` down-left, inline up-left), then `FUN_007661b0`'s search loop,
+  then wiring.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (5 contour tests);
+clippy / fmt clean; `sc_view` builds; movement unchanged.
