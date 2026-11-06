@@ -4,6 +4,14 @@ Notable changes to this project. The detailed, dated engineering record is
 [research/docs/session-log.md](research/docs/session-log.md). Completion
 status is in [PROGRESS.md](PROGRESS.md).
 
+## 2026-11-06 — Episode I playable to victory
+
+### Fixed
+- All four Episode I missions can be won (checked by `scripts/mission_gate.py`).
+- Mined-out mineral fields disappear and workers move to the next field.
+- The campaign AI attacks with the waves its script asks for instead of
+  sending its whole army (Desperate Alliance opened with a 96-unit rush).
+
 ## 2026-11-06 — Wasteland playable to victory
 
 ### Fixed

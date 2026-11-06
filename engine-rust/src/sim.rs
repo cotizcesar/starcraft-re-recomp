@@ -4832,17 +4832,57 @@ impl World {
             .map(|(_, u)| u.id)
     }
 
+    /// Nearest live mineral field within 8 tiles of worker `i` other than
+    /// `current`, busy or not.
+    fn nearest_mineral_near(&self, i: usize, current: usize) -> Option<u32> {
+        let (x, y) = (self.units[i].x, self.units[i].y);
+        self.units
+            .iter()
+            .enumerate()
+            .filter(|(j, u)| {
+                *j != current
+                    && u.alive
+                    && is_resource_type(u.type_id)
+                    && !is_gas_resource(u.type_id)
+                    && u.type_id != uid::VESPENE_GEYSER
+                    && u.resource_amount > 0
+                    && (u.x - x).abs() <= fp(256)
+                    && (u.y - y).abs() <= fp(256)
+            })
+            .min_by_key(|(j, u)| {
+                let (dx, dy) = ((u.x - x) as i64 / 256, (u.y - y) as i64 / 256);
+                (dx * dx + dy * dy, *j)
+            })
+            .map(|(_, u)| u.id)
+    }
+
     fn order_gather(&mut self, i: usize, resource: u32) {
         let Some(ridx) = self.index_of(resource) else {
             self.order_done(i);
             return;
         };
-        if !self.units[ridx].alive {
-            self.order_done(i);
-            return;
-        }
-        if self.units[ridx].resource_amount <= 0 {
-            self.order_done(i);
+        let mined_out = !self.units[ridx].alive || self.units[ridx].resource_amount <= 0;
+        if mined_out {
+            // Retail `order_MoveToMinerals`: a worker whose field is gone
+            // takes the nearest other field within 8 tiles (FACT, Backwater
+            // Station 2026-11-06: without it every SCV went idle once the
+            // small base fields ran out, freezing income at tick ~3,500).
+            let was_mineral = !is_gas_resource(self.units[ridx].type_id)
+                && self.units[ridx].type_id != uid::VESPENE_GEYSER
+                && !is_gas_building(self.units[ridx].type_id);
+            match was_mineral
+                .then(|| self.nearest_mineral_near(i, ridx))
+                .flatten()
+            {
+                Some(next) => {
+                    self.units[i].order = Order::Gather { resource: next };
+                    self.units[i].resource_target = Some(next);
+                }
+                None => {
+                    self.units[i].resource_target = None;
+                    self.order_done(i);
+                }
+            }
             return;
         }
         // Raw geysers require a completed Refinery/Assimilator/Extractor.
@@ -4917,6 +4957,12 @@ impl World {
         };
         let taken = amount.min(self.units[ridx].resource_amount);
         self.units[ridx].resource_amount -= taken;
+        // A mineral field mined out disappears (retail removes the sprite and
+        // its footprint); geysers / refineries stay and yield less gas.
+        if !gas && self.units[ridx].resource_amount <= 0 {
+            self.units[ridx].alive = false;
+            self.units[ridx].order = Order::Die;
+        }
         self.units[i].carry = taken;
         self.units[i].carry_kind = kind;
         self.units[i].resource_target = Some(resource);

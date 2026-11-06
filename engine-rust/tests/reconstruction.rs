@@ -2134,3 +2134,34 @@ fn an_scv_walks_to_its_build_site_at_full_speed() {
     let speed = (world.units[scv].x - x0) as f64 / 256.0 / 48.0;
     assert!(speed > 4.0, "SCV build walk {speed:.2} px/tick");
 }
+
+#[test]
+fn a_mined_out_field_disappears_and_its_worker_moves_to_the_next() {
+    // Backwater Station: SCVs on a depleted field went idle and the empty
+    // field stayed on the map, so income stopped for good.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    let cc = world.spawn_px(0, uid::COMMAND_CENTER, 400, 400).unwrap();
+    world.units[cc].completed = true;
+    let small = world.spawn_px(0, uid::MINERAL_FIELD, 400, 560).unwrap();
+    world.units[small].resource_amount = 8;
+    let next = world.spawn_px(0, uid::MINERAL_FIELD, 470, 560).unwrap();
+    world.units[next].resource_amount = 500;
+    let (small_id, next_id) = (world.units[small].id, world.units[next].id);
+    let scv = world.spawn_px(0, uid::SCV, 400, 480).unwrap();
+    let scv_id = world.units[scv].id;
+    world
+        .issue(scv_id, Order::Gather { resource: small_id })
+        .unwrap();
+    for _ in 0..1500 {
+        world.step();
+    }
+    assert!(
+        world.unit(small_id).is_none_or(|u| !u.alive),
+        "the empty field is gone"
+    );
+    assert!(
+        world.unit(next_id).unwrap().resource_amount < 500,
+        "the SCV mines the next field"
+    );
+    assert!(world.players[0].minerals_gathered > 8);
+}
