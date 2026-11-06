@@ -68,7 +68,7 @@ pub struct UnitType {
     pub group_flags: u8,
     pub mineral_cost: u16,
     pub gas_cost: u16,
-    /// Training/construction time in the table's native units (1/15 s).
+    /// Training/construction time in game frames (`sim::build_ticks`).
     pub build_time: u16,
     /// Supply requirement in half-points (2 == one supply).
     pub supply_required: u8,
@@ -83,6 +83,10 @@ pub struct UnitType {
     pub placement: Point16,
     pub dimensions: Box16,
     pub portrait: u16,
+    /// `units.dat` rank / sublabel: the selection panel shows `stat_txt`
+    /// string `1302 + rank` (SCV 1 and Marine 2 -> "Private", Firebat 4 ->
+    /// "Corporal"; 0 = no rank line).
+    pub rank: u8,
 }
 
 impl UnitType {
@@ -688,6 +692,7 @@ fn parse_units(d: &[u8]) -> Result<Vec<UnitType>, DataError> {
                 bottom: i16_at(d, unit_off::DIMENSIONS, i * 4 + 3),
             },
             portrait: u16_at(d, unit_off::PORTRAIT, i),
+            rank: u8_at(d, unit_off::SUBLABEL, i),
         });
     }
     Ok(units)

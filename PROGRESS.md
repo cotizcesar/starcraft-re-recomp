@@ -15,19 +15,19 @@ restating status.
 <!-- progress:summary:start -->
 | Area | Weight | Done | Total | Progress |
 |---|---:|---:|---:|---:|
-| [Simulation rules](#simulation-rules) | 25 | 17 | 20 | 85 % |
+| [Simulation rules](#simulation-rules) | 25 | 18 | 20 | 90 % |
 | [Data and file formats](#data-and-file-formats) | 10 | 8 | 8 | 100 % |
 | [Front end (menus)](#front-end-menus) | 10 | 9 | 10 | 90 % |
 | [Campaign](#campaign) | 15 | 9 | 13 | 69 % |
-| [In-game client](#in-game-client) | 10 | 8 | 12 | 67 % |
+| [In-game client](#in-game-client) | 10 | 9 | 14 | 64 % |
 | [Persistence](#persistence) | 5 | 5 | 6 | 83 % |
 | [LAN multiplayer](#lan-multiplayer) | 10 | 6 | 9 | 67 % |
 | [Packaging and platforms](#packaging-and-platforms) | 5 | 4 | 5 | 80 % |
 | [Reverse engineering](#reverse-engineering) | 5 | 6 | 6 | 100 % |
 | [Controller support (planned)](#controller-support-planned) | 5 | 0 | 4 | 0 % |
-| **Overall (weighted)** | **100** | **72** | **93** | **77 %** |
+| **Overall (weighted)** | **100** | **74** | **95** | **78 %** |
 
-_Last updated: 2026-11-05_
+_Last updated: 2026-11-06_
 <!-- progress:summary:end -->
 
 **Out of scope (not listed):** Battle.net and online services, ladder, the
@@ -56,8 +56,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] Mining as OpenBW: 75 frames per mineral trip, 37 in a refinery, one worker per field (SimpleAi income on Boxer 1,448 → 520 in 1,857 ticks; retail sheet ~376) — `tests/economy_original.rs::mining_takes_75_frames_and_a_field_serves_one_worker_at_a_time`
 - [x] Alliances: allied players (lobby teams, trigger action 57) neither fight nor target each other and share vision in team games — `trigger::tests::set_alliance_status_stops_two_players_fighting`, `tests/multiplayer.rs::a_team_wins_together_and_never_targets_itself`, `teammates_share_vision`
 - [x] Build, research and upgrade times are game frames (SCV 300 frames = 12.6 s on the Backwater Station recording) — `tests/reconstruction.rs::time_units_are_game_frames`, session log 2026-11-05 (105)
-- [ ] A Terran SCV stays on its building until it completes (today it leaves as soon as construction starts)
-- [ ] Mineral delivery distance as OpenBW (on Boot Camp the cargo is handed in ~320 px from the Command Center)
+- [x] A Terran SCV stays on its building (orders.dat 33); construction pauses without it and resumes when an SCV is sent back; hit points grow with the progress — `tests/reconstruction.rs::a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`
+- [ ] Terran construction graphics (scaffold, then the rising building, SCV welding sparks) as on the Boot Camp recording 173-193 s
 - [ ] Campaign AI opcodes that only advance today (`if_dif`, `if_towns`, `get_oldpeons`, `wait_upgrades`, `set_attacks`, `quick_attack`, …; only `get_oldpeons` is used by an Episode I map) — `research/docs/session-log.md` 2026-11-05 (93)
 
 ## Data and file formats
@@ -118,6 +118,8 @@ map/campaign editor, patches other than 1.23.10.13515.
 - [x] In-game frames within the visual gate on the eight (8)The Hunters references — `engine-rust/docs/gates/ui-visual-diff-raw.txt`
 - [x] Mouse and keyboard act on the world at every UI scale: click and box selection (own units, units over buildings, 12 max), retail right click (attack enemies, workers gather, others move, buildings set rally), the retail command card and its tooltip hotkeys, build cards, placement, training, target buttons — `scripts/game_input_gate.py`, `engine-rust/docs/gates/game-input.txt`
 - [x] In-game frame under 8 ms at 3440x1440 (was 181 ms): baked sprite shading, row-sliced terrain / fog / stretch on parallel bands, cached console plates and minimap — `engine-rust/docs/gates/ingame-draw-time.txt`, `hd_sprites::tests::baked_frames_match_the_per_pixel_shader`
+- [x] Selection panel as retail: rank (`units.dat` sublabel), kills, armour / weapon upgrade boxes, the production queue with its progress bar (`pbrempt` / `pbrfull`), Under Construction, research and upgrade progress — `statdata.ui.json` controls, Backwater Station 126 s
+- [ ] Multi-selection panel (12 wireframes in `statdata` 33-44) and transport cargo slots
 - [ ] Remaining command-card actions: Cancel construction, spells with a target (only Stim Packs and siege are wired), the Land placement preview
 - [ ] The four Episode I missions step by step against their recordings (Boot Camp, Wasteland, Backwater Station, Desperate Alliance)
 - [ ] Single-player cheat codes (retail feature)

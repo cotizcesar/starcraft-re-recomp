@@ -5321,3 +5321,35 @@ foundation; mission-by-mission parity is open (PROGRESS.md).
 clippy and `fmt --check` clean; `game_input_gate.py` 0 failures at 1280x720,
 1920x1080, 3440x1440; `ui_visual_diff` 51/51, `ultrawide_diff` 31/31,
 `resolution_diff` 245/245, walkthrough PASS, hover text 14/14.
+
+## 2026-11-05 (106) — Selection panel as retail; Terran construction keeps its SCV
+
+- **Selection panel (FACT, `statdata.ui.json` + recordings).**  Controls
+  read from the shipped dialog: -5 name, -20 rank, -21 kills, 3-6 upgrade
+  boxes; 2 current item, 7 bar, -15 "Building", 3-6 queue; -30 / 13 Under
+  Construction; -35/15/14 research, -40/17/16 upgrade; 33-44 the 12-unit
+  grid.  Rank = `stat_txt` 1302 + `units.dat` sublabel (offset 4524; SCV 1
+  and Marine 2 -> "Private", Firebat 4 -> "Corporal").  Retail Jim Raynor
+  reads "Marshal" (Backwater Station 100 s) while `stat_txt` 1319 is
+  "Marshall": the mission maps carry "Marshal" (INFERENCE: a map string
+  overrides the rank; falsifier: the CHK reference to it).  Progress bars
+  are `pbrempt.dds` / `pbrfull.dds`; `cmdbtns.dds.grp` frames 2-5 queue
+  boxes, 6-10 the digits 1-5, 12 the upgrade box.  New `SimUnit::kills`
+  (credited in `kill_unit`, hashed).  A training Command Center hides its
+  supply rows like retail.
+- **Mining (falsifies (105)'s open item).**  Traced every 10 ticks: the SCV
+  mines ~75 frames at the field, walks back and delivers at x 1741 next to
+  the Command Center (x 1824); Boot Camp's mineral line is ~330 px away.
+  The "~320 px delivery" was one frame of a walking SCV.
+- **Terran construction.**  `Order::Construct { building }` (orders.dat 33,
+  save tag 24) keeps the SCV on the structure; `SimUnit::builder`; the
+  structure advances only while its SCV holds that order, its HP grows from
+  10 % to full; a right click of an SCV on the unfinished building resumes
+  it.  The card returns to the unit's own set after placement.  Boot Camp
+  recording 173-193 s: a depot takes ~20+ s and shows a growing scaffold,
+  then the building; that look is open.
+
+**Verification.**  `cargo test --no-fail-fast` 0 failed (new
+`a_terran_scv_stays_on_its_building_and_construction_pauses_without_it`);
+clippy / fmt clean; `game_input_gate.py` 0 failures at 3440x1440;
+`ui_visual_diff` 51/51 with no screen moving by more than 0.05.

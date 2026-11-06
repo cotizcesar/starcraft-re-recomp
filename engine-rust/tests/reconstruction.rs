@@ -1961,3 +1961,68 @@ fn hatchery_creep_fills_the_retail_ellipse() {
     assert!(!world.has_creep_tile(60, 28), "resource tiles stay clear");
     assert!(world.has_creep_tile(60, 29));
 }
+
+#[test]
+fn a_terran_scv_stays_on_its_building_and_construction_pauses_without_it() {
+    // Retail Terran construction: the SCV keeps building (orders.dat 33)
+    // until the structure completes; a stopped SCV pauses it, and an SCV
+    // ordered back resumes it.  Supply Depot = 600 frames.
+    let mut world = World::new(Arc::new(data()), Terrain::open(64, 64), 2);
+    world.players[0].minerals = 500;
+    let scv = world.spawn_px(0, uid::SCV, 10 * 32, 10 * 32).unwrap();
+    let scv_id = world.units[scv].id;
+    let spot = world
+        .find_build_spot(uid::SUPPLY_DEPOT, (14 * 32, 10 * 32))
+        .unwrap();
+    world
+        .issue(
+            scv_id,
+            Order::Build {
+                unit_type: uid::SUPPLY_DEPOT,
+                pos: spot,
+            },
+        )
+        .unwrap();
+    let mut depot = None;
+    for _ in 0..400 {
+        world.step();
+        depot = world
+            .units
+            .iter()
+            .position(|u| u.alive && u.type_id == uid::SUPPLY_DEPOT);
+        if depot.is_some() {
+            break;
+        }
+    }
+    let d = depot.expect("the depot is placed");
+    let depot_id = world.units[d].id;
+    assert!(
+        matches!(world.units[scv].order, Order::Construct { building } if building == depot_id)
+    );
+    let hp0 = world.units[d].hp;
+    for _ in 0..100 {
+        world.step();
+    }
+    let left = world.units[d].build_remaining;
+    assert!(world.units[d].hp > hp0, "hit points grow with the progress");
+    // Stop the SCV: construction pauses.
+    world.stop(scv_id);
+    for _ in 0..100 {
+        world.step();
+    }
+    assert_eq!(
+        world.units[d].build_remaining, left,
+        "paused without its SCV"
+    );
+    // Send it back: construction resumes and completes.
+    world
+        .issue(scv_id, Order::Construct { building: depot_id })
+        .unwrap();
+    for _ in 0..(left + 50) {
+        world.step();
+    }
+    assert!(world.units[d].completed);
+    assert!(!matches!(world.units[scv].order, Order::Construct { .. }));
+    let max = world.data.unit(uid::SUPPLY_DEPOT).hit_points_raw as i32;
+    assert_eq!(world.units[d].hp, max);
+}
