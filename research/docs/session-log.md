@@ -5952,3 +5952,32 @@ PASS.
 
 **Verification.**  `cargo test --no-fail-fast` 0 failed; clippy / fmt
 clean; `mission_gate.py` 0 failures at 1920x1080 and 3440x1440.
+
+## 2026-11-06 (124) — Desperate Alliance waves 1-2: guard hypothesis falsified
+
+- **Recording (FACT).**  The whole minimap shows no enemy dot before
+  138.0 s of game time; at 138.0-140.0 s a single red pixel at the map's
+  west edge (minimap (25, 219), by the west Bunker at (112, 2304)); the next
+  enemy sighting is 246.5 s.  Ours (passive player) has the first two waves
+  at the base at 72 and 151-155 s.
+- **`Ter3` (FACT).**  pc 21-27: `max_force 600`, `wait 750`, `capt_expand`,
+  `attack_add 2 Zergling`, `attack_prepare`, `wait 500`, `attack_do`; the
+  second wave repeats with 4 Zerglings after `wait 1500`.  `wait` is in
+  frames (0.042 s each; Korean ASC3 reference, and waves 3-11 match with
+  that clock), so the first two launches (52.6 / 138.6 s) are right.
+- **Hypothesis tested and falsified.**  ASC3 guide (pr0nogo): `attack_prepare`
+  trains missing attack units, the force rallies, and `attack_do` attacks
+  even if not fully grouped.  Implemented: the units a computer player owns
+  when its script starts are guards that never join attacks, `attack_prepare`
+  trains the shortfall, `attack_do` waits up to 2,000 frames.  Result: wave 1
+  launched empty at 136.6 s (no Zerglings trained in time), and the later
+  waves slipped so far that three recorded waves (310.5 / 395.5 / 698.5 s)
+  had no match (all nine matched before).  Reverted.  The recording's
+  mid-game waves support attacking with existing units at once.
+- **Open.**  Why retail's first two waves never reach the base view:
+  candidates are another target (the west Bunker, consistent with the
+  138 s pixel) or interception by the player's outlying units.  Falsifier: a
+  recording frame of the west approach at 75-140 s.
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures (1920x1080).
