@@ -21,4 +21,6 @@ PASS desperate alliance: no attack on the base in the first 2.5 minutes (recordi
 PASS desperate alliance: Marines trained
 PASS desperate alliance: victory when the countdown ends
   end: tick=29401 units=[Map Revealer=1 Terran Academy=1 Terran Barracks=1 Terran Bunker=1 Terran Engineering Bay=1 Terran Marine=19 Terran SCV=1 Terran Supply Depot=3 Terran Vulture=2]
+PASS desperate alliance: Ter3 waves reach the base as recorded (missed [])
+  arrivals (s): [70.6, 151.2, 154.6, 238.6, 245.3, 305.8, 315.9, 389.8, 393.2, 396.5, 446.9, 450.3, 530.9, 534.3, 537.6, 678.8, 682.1, 685.5, 799.7, 809.8, 954.3, 964.4, 967.7, 974.4, 981.2, 987.9, 998.0, 1011.4, 1021.5, 1034.9, 1051.7, 1055.1, 1058.4, 1082.0, 1105.5, 1125.6, 1135.7, 1159.2, 1182.8, 1206.3]
 mission gate: 0 failure(s) at 3440x1440
