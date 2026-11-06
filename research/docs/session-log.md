@@ -6401,3 +6401,34 @@ walkthrough PASS.
   (`FUN_007661b0`).  Port next, as one change.
 
 **Verification.**  No code change; gates as in (138).
+
+## 2026-11-06 (141) — Contour builder ported (`src/contour.rs`), not yet used by movement
+
+- **Walk grid (FACT, `FUN_00760c20`).**  One byte per 8 px cell, row stride
+  0x400; `0x80` unwalkable; on walkable cells bits 1 / 2 / 4 / 8 = the edge
+  above / right / below / left is blocked (map edges count as blocked).  The
+  client also makes the bottom eight cell rows unwalkable for the 20 cells
+  at each end, and the bottom four rows entirely (from `DAT_00d50d30` =
+  0x80 bytes).  Our `Terrain` does not apply that margin (open: whether our
+  units should be kept out of it).
+- **Port.**  `contour::walk_grid` and `Contours::from_terrain`, a literal
+  port of `FUN_00760350`: the same row-major start scan, the same XOR
+  bookkeeping and the corner tables from the dump (`0xf2b6a0` lowest edge,
+  `0xf2b6b0` start kind, `0xf2b6c0`/`c8` steps, `0xf2b6d0` concave step,
+  `0xf2b6f4` / `0xf2b714` start / end pixel offsets), the byte-7 flag
+  formula, and the final sort by (position, span start).  Hand-checked on a
+  4 x 4-cell block at cells 20-23: up-facing at y 191, down at 160, right at
+  x 160, left at 191, each spanning 160-191; map border and bottom margin
+  segments as expected.  Counts (up / right / down / left): Boot Camp
+  447 / 497 / 527 / 477, Wasteland 546 / 560 / 598 / 584, Backwater
+  Station 643 / 690 / 719 / 672, Desperate Alliance (jungle) 897 / 1039 /
+  1104 / 962 (`sc_regions` prints them).  INFERENCE until compared with the
+  live client's lists (read-only `/proc` read of `DAT_011a6478 + 0x97a1c`
+  during a Boot Camp game).
+- **Tests.**  `a_square_obstacle_gives_one_segment_per_side`,
+  `every_blocked_edge_is_covered_once`.  Movement is unchanged (the module
+  has no caller in `sim.rs` yet).  Next in the chain: the four lookups and
+  the free box (`FUN_0075f290`).
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `mission_gate.py` 0 failures at 1280x720.
