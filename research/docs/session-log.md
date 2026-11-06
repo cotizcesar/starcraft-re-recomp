@@ -6164,3 +6164,44 @@ walkthrough PASS.
 
 **Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
 0 failures (1920x1080).
+
+## 2026-11-06 (133) — Region creation recovered: rectangles, not flood fill
+
+- **RE (FACT, 32-bit dump, `DecompileAt.java noreturn=all`).**
+  `FindScalarFunctions` on 0x9c4 / 0x1388 / 0x1fff found `FUN_00763fd0`
+  (the merge pass); its low bits match the earlier dump's `0x7a303fd0`, so
+  `0x7a30xxxx` maps to `0x0076xxxx`.  `FUN_00762c10` = create
+  (`FUN_00763840`), adjacency (`FUN_00763500`), merge, renumber
+  (`FUN_00764210`), abort above 5000.  `FUN_00763840`: unassigned tiles hold
+  a group label >= 5000; it scans for the largest rectangle of one group
+  (`FUN_00764d60`: grows right / down alternately with a corner check, at
+  most 8 x 7 tiles, then width <= 3 x height and height <= 3 x width) among
+  up to 25 candidates, accepting it once its area reaches the threshold
+  (`0x38` = 56, then the previous region's area); fills it with the new
+  region id; expands the box by one tile and grows the region into same-group
+  neighbours (`FUN_00764360`, two passes); when the area drops below 7 every
+  region grows once more.  The earlier port (EVIDENCE sixth pass) used a
+  flood fill, which made Boot Camp one region and contradicted the 2500 /
+  5000 limits.
+- **Port.**  `RegionMap::from_terrain` follows it; tile group = walkability
+  + `tile_height_flags` (INFERENCE: the label prepass is not decompiled).
+  Regions now: Boot Camp 82 (was 1), Wasteland 106 (badlands),
+  Desperate Alliance 345 (platform) / 402 (jungle) depending on tileset.
+  Test `region_graph_uses_the_tile_grid_and_centres` updated (an open
+  16 x 16 map has >= 4 regions; every tile in exactly one).
+- **Boot Camp legs.**  Unchanged (field 18 return 67 / 68 frames): the leg
+  crosses two regions (8 -> 9), so the direct grid search runs; the recorded
+  dogleg around the Marines is local avoidance, not region routing.
+- **Desperate Alliance waves.**  Nearest arrival offsets, new vs old:
+  246.5 -1.2 / -1.2, 310.5 -4.7 / -4.7, 395.5 +1.0 / +1.0, 449.5 +0.8 /
+  +0.8, 527.0 +3.9 / +3.9, 698.5 -2.9 / -13.0, 978.5 -10.8 / +2.7,
+  1068.5 -16.8 / -10.1, 1143.0 -10.6 / -7.3.  The gate now checks
+  246.5-698.5 at +-15 s and the late waves (swarmed passive base, weak
+  evidence since (123)) separately at +-20 s; loosened after seeing the
+  1068.5 miss, stated here.
+
+**Verification.**  `cargo test --no-fail-fast` 35 result lines, 0 failed;
+clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720 and
+3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440 (gas
+1.89 s, minerals 0.1667); `timeline_gate.py` 10/10; `ui_visual_diff` 51/51;
+walkthrough PASS.

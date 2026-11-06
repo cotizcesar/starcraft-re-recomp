@@ -798,6 +798,16 @@ bbox centres, adjacency and the size-6 merge pass.  `find_path_with_regions`
 runs the two-level search: BFS on the region graph, then octile A* through the
 intermediate bbox centres (short routes stay on the direct grid search).
 
+**Correction (2026-11-06, session log 133).**  The flood-fill creation step
+above was wrong: the 32-bit dump's `FUN_00763840` (the `0x7a303840`
+counterpart; `FUN_00762c10` calls it before adjacency, the `0x9c4` merge at
+`FUN_00763fd0` and renumbering) seeds regions from rectangles of one tile
+group found by `FUN_00764d60` (at most 8 x 7 tiles, aspect <= 3, the best of
+up to 25 candidates, accepted at the previous region's area, 56 at first),
+grows each by one tile (`FUN_00764360`, two passes), and grows them all once
+more when rectangles drop below 7 tiles.  `RegionMap::from_terrain` now does
+that; Boot Camp has 82 regions instead of 1.
+
 `src/bin/sc_regions.rs` prints the recovered graph:
 
 ```text

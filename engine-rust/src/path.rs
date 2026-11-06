@@ -303,7 +303,6 @@ impl RegionMap {
         let height = terrain.height as i32;
         let n = (width * height) as usize;
         let mut labels = vec![u32::MAX; n];
-        let mut regions: Vec<Region> = Vec::new();
         let mut stack: Vec<(i32, i32)> = Vec::new();
 
         let tile_walkable = |tx: i32, ty: i32| -> bool {
@@ -319,59 +318,164 @@ impl RegionMap {
             }
             false
         };
-        for start in 0..n {
-            if labels[start] != u32::MAX {
-                continue;
+        // Retail region creation (`FUN_00763840`, 32-bit dump, 2026-11-06):
+        // unassigned walkable tiles carry a group label (>= 5000; here
+        // walkability + ground height, INFERENCE); regions are seeded from
+        // the largest rectangle of one group found among up to 25 candidates
+        // (`FUN_00764d60`: at most 8 x 7 tiles, aspect <= 3), accepted once
+        // its area reaches the previous region's area (56 at first), grown
+        // one tile around (`FUN_00764360`, two passes), and every region
+        // grows once more when the rectangles drop below 7 tiles.  The old
+        // flood fill made each connected area one region (Boot Camp: 1).
+        // Group labels sit far above any region id (retail uses >= 5000
+        // and aborts above 5000 regions).
+        const GROUP: u32 = 0x4000_0000;
+        for (i, l) in labels.iter_mut().enumerate() {
+            let (tx, ty) = (i as i32 % width, i as i32 / width);
+            if tile_walkable(tx, ty) {
+                *l = GROUP + terrain.tile_height_flags(tx, ty) as u32;
             }
-            let sx = (start as i32) % width;
-            let sy = (start as i32) / width;
-            if !tile_walkable(sx, sy) {
-                continue;
-            }
-            let id = regions.len() as u32;
-            let mut region = Region {
-                id,
-                size: 0,
-                min_tile: (sx, sy),
-                max_tile: (sx, sy),
-                neighbours: Vec::new(),
-            };
-            labels[start] = id;
-            stack.push((sx, sy));
-            while let Some((x, y)) = stack.pop() {
-                region.size += 1;
-                region.min_tile.0 = region.min_tile.0.min(x);
-                region.min_tile.1 = region.min_tile.1.min(y);
-                region.max_tile.0 = region.max_tile.0.max(x);
-                region.max_tile.1 = region.max_tile.1.max(y);
-                for (dx, dy) in [
-                    (-1, 0),
-                    (1, 0),
-                    (0, -1),
-                    (0, 1),
-                    (-1, -1),
-                    (1, -1),
-                    (-1, 1),
-                    (1, 1),
-                ] {
-                    let nx = x + dx;
-                    let ny = y + dy;
-                    if nx < 0 || ny < 0 || nx >= width || ny >= height {
-                        continue;
+        }
+        let idx = |x: i32, y: i32| (y * width + x) as usize;
+        let rect_at = |labels: &Vec<u32>, x: i32, y: i32, g: u32| -> (i32, i32, i32, i32) {
+            let max_x = (x + 8).min(width);
+            let max_y = (y + 7).min(height);
+            let (mut x1, mut y1) = (x + 1, y + 1);
+            let (mut right, mut down, mut corner_prev) = (true, true, true);
+            while x1 < max_x && y1 < max_y {
+                if right && (y..y1).any(|yy| labels[idx(x1, yy)] != g) {
+                    right = false;
+                }
+                if down && (x..x1).any(|xx| labels[idx(xx, y1)] != g) {
+                    down = false;
+                }
+                if !right && !down {
+                    break;
+                }
+                let corner = labels[idx(x1, y1)] == g && corner_prev;
+                if corner {
+                    if down {
+                        y1 += 1;
                     }
-                    let ni = (ny * width + nx) as usize;
-                    if labels[ni] == u32::MAX
-                        && tile_walkable(nx, ny)
-                        && retail_tile_adjacent(terrain, x, y, dx, dy)
-                    {
-                        labels[ni] = id;
-                        stack.push((nx, ny));
+                    if right {
+                        x1 += 1;
+                    }
+                } else if down {
+                    y1 += 1;
+                } else if right {
+                    x1 += 1;
+                }
+                corner_prev = corner;
+            }
+            let (mut w, mut h) = (x1 - x, y1 - y);
+            if h < w {
+                w = w.min(h * 3);
+            } else if w * 3 < h {
+                h = w * 3;
+            }
+            (x, y, x + w, y + h)
+        };
+        let grow = |labels: &mut Vec<u32>, b: (i32, i32, i32, i32), id: u32, g: u32| {
+            for _ in 0..2 {
+                for y in b.1..b.3 {
+                    for x in b.0..b.2 {
+                        if labels[idx(x, y)] != g {
+                            continue;
+                        }
+                        let near = (y > 0 && labels[idx(x, y - 1)] == id)
+                            || (x > 0 && labels[idx(x - 1, y)] == id)
+                            || (x + 1 < width && labels[idx(x + 1, y)] == id)
+                            || (y + 1 < height && labels[idx(x, y + 1)] == id);
+                        if near {
+                            labels[idx(x, y)] = id;
+                        }
                     }
                 }
             }
-            regions.push(region);
+        };
+        let expand = |b: (i32, i32, i32, i32)| {
+            (
+                (b.0 - 1).max(0),
+                (b.1 - 1).max(0),
+                (b.2 + 1).min(width),
+                (b.3 + 1).min(height),
+            )
+        };
+        let mut boxes: Vec<((i32, i32, i32, i32), u32)> = Vec::new();
+        let mut threshold = 0x38i32;
+        let mut resume = 0usize;
+        let mut grown_once = false;
+        loop {
+            let mut best: Option<((i32, i32, i32, i32), u32)> = None;
+            let mut best_area = 0;
+            let mut tries = 0;
+            let mut k = 0usize;
+            while k < n {
+                let i = (resume + k) % n;
+                let g = labels[i];
+                if g >= GROUP && g != u32::MAX {
+                    let (x, y) = (i as i32 % width, i as i32 / width);
+                    let r = rect_at(&labels, x, y, g);
+                    tries += 1;
+                    let area = (r.2 - r.0) * (r.3 - r.1);
+                    if area > best_area {
+                        best_area = area;
+                        best = Some((r, g));
+                    }
+                    if best_area >= threshold || tries > 25 {
+                        break;
+                    }
+                    k += (r.2 - x).max(1) as usize;
+                    continue;
+                }
+                k += 1;
+            }
+            let Some((r, g)) = best else {
+                break;
+            };
+            threshold = best_area;
+            let id = boxes.len() as u32;
+            for y in r.1..r.3 {
+                for x in r.0..r.2 {
+                    labels[idx(x, y)] = id;
+                }
+            }
+            let b = expand(r);
+            grow(&mut labels, b, id, g);
+            boxes.push((b, g));
+            resume = idx(r.2.min(width - 1), r.1);
+            if threshold < 7 && !grown_once {
+                grown_once = true;
+                for (rid, (bb, gg)) in boxes.iter_mut().enumerate() {
+                    *bb = expand(*bb);
+                    grow(&mut labels, *bb, rid as u32, *gg);
+                }
+            }
         }
-
+        for (i, l) in labels.iter_mut().enumerate() {
+            let _ = i;
+            if *l >= GROUP && (*l as usize) >= boxes.len() {
+                *l = u32::MAX;
+            }
+        }
+        let mut regions: Vec<Region> = (0..boxes.len() as u32)
+            .map(|id| Region {
+                id,
+                size: 0,
+                min_tile: (i32::MAX, i32::MAX),
+                max_tile: (i32::MIN, i32::MIN),
+                neighbours: Vec::new(),
+            })
+            .collect();
+        for (i, &l) in labels.iter().enumerate() {
+            if let Some(r) = regions.get_mut(l as usize) {
+                let (x, y) = (i as i32 % width, i as i32 / width);
+                r.size += 1;
+                r.min_tile = (r.min_tile.0.min(x), r.min_tile.1.min(y));
+                r.max_tile = (r.max_tile.0.max(x), r.max_tile.1.max(y));
+            }
+        }
+        let _ = &mut stack;
         let count = regions.len() as u32;
         let mut map = Self {
             width,
@@ -1140,13 +1244,18 @@ mod tests {
         let regions = RegionMap::from_terrain(&terrain);
         assert_eq!(regions.width, 16);
         assert_eq!(regions.height, 16);
-        assert_eq!(regions.count(), 1);
+        // `FUN_00763840`: regions are seeded from rectangles of at most 8 x 7
+        // tiles and grown by one tile, so open ground is split (an open
+        // 16 x 16 map is not one region).
+        assert!(regions.count() >= 4, "{} regions", regions.count());
+        let total: u32 = (0..regions.count())
+            .filter_map(|i| regions.region(i))
+            .map(|r| r.size)
+            .sum();
+        assert_eq!(total, 256, "every tile in exactly one region");
         let r = regions.region(0).unwrap();
-        assert_eq!(r.size, 256);
         assert_eq!(r.min_tile, (0, 0));
-        assert_eq!(r.max_tile, (15, 15));
-        // Bounding-box midpoint in walk cells: 7*4+2.
-        assert_eq!(r.centre_cell(), (30, 30));
+        assert!(r.max_tile.0 - r.min_tile.0 < 10 && r.max_tile.1 - r.min_tile.1 < 9);
         assert!(regions.connected((0, 0), (60, 60)));
 
         // One 32-pixel (four walk-cell) column splits the map in two.
@@ -1156,7 +1265,6 @@ mod tests {
             }
         }
         let regions = RegionMap::from_terrain(&terrain);
-        assert_eq!(regions.count(), 2);
         assert!(!regions.connected((8, 8), (56, 56)));
         assert!(regions.region_path((8, 8), (56, 56)).is_none());
 
@@ -1166,7 +1274,6 @@ mod tests {
             terrain.set_walkable_cell(x, 31, true);
         }
         let regions = RegionMap::from_terrain(&terrain);
-        assert_eq!(regions.count(), 1);
         assert!(regions.connected((8, 8), (56, 56)));
         assert!(regions.region_path((8, 8), (56, 56)).is_some());
     }
