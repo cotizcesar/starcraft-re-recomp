@@ -6009,3 +6009,29 @@ clippy / fmt clean; `game_input_gate.py` 0 failures at 1280x720, 1920x1080,
 3440x1440; `mission_gate.py` 0 failures at 1280x720 and 3440x1440;
 `timeline_gate.py` 10/10; `ui_visual_diff` 51/51 (no screen moved by more
 than 0.05); walkthrough PASS.
+
+## 2026-11-06 (126) — Boot Camp per-field mining: drop-off, braking, two-SCV rhythm
+
+- **Drop-off (FACT).**  At delivery the recorded SCVs stand at world
+  (~1742-1778, 237-292), the Command Center's lower-left corner; ours hands
+  in at (1751, 259).  Occupancy of the drop spot (90 x 90 crop, 20 fps):
+  retail 20-33 frames per visit, ours 14-18 (same camera, renders every 2
+  frames).
+- **Braking to the contact point (tested, reverted).**  `move_towards`
+  brakes against the goal centre; braking toward the stop point, with
+  gathering and returning passing the contact distance, raised the Boot
+  Camp field cycles to 246 / 235 (retail ~251 / ~253) but broke the other
+  anchors: Wasteland income 0.1533 / frame (-9.6 %), gas 2.09 s, the
+  Backwater Station run no longer won; with 75 mining frames it gave 0.1400
+  (lower than with 93), i.e. workers stalled short of contact.  Model not
+  sound; reverted (93 mining frames, centre braking kept).
+- **Two SCVs (FACT).**  Ours with one SCV on field 14 and one on field 18:
+  239 and 227 frames, identical to solo, the delivery gap drifting
+  72 -> 36 frames.  Retail: both 10.65-11.05 s (~251-253 frames) with a
+  steady 1.3-1.7 s gap.  Either the recorded second SCV was not on field 18
+  (the field reading is from screen positions, +-10 px), or retail workers
+  interact (one held behind the other).  Not separable on this footage;
+  open, with Wasteland income at -1.7 % and gas at -4.5 % as the anchors.
+
+**Verification.**  `git diff src/` empty after the revert; `mission_gate.py`
+0 failures (gas 1.88 s, minerals 0.1667).
