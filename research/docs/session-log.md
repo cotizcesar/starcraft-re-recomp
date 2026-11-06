@@ -6239,3 +6239,34 @@ walkthrough PASS.
   of the Boot Camp field-18 track.
 
 **Verification.**  No code change this session; the gates are as in (133).
+
+## 2026-11-06 (135) — Contour short-path search: call tree and algorithm (port not started)
+
+- **RE (FACT, decompiles in `research/analysis/pathx3`, `pathx4`, local).**
+  Setters: `FUN_0075fe10` (copies a search context), `FUN_007601c0` (the
+  mover's box from the `units.dat` dimension table at `0x00f90fe0`, or a
+  fixed size when the id has bit `0x8000`), `FUN_00760300` (excluded unit,
+  target point / unit), `FUN_00766e50` (open-list sift-up on the cost at node
+  `+0x1c`).  The work happens in eight routines called from the
+  `FUN_007661b0` loop (785 decompiled lines): `0x767690`, `0x766dd0`,
+  `0x767510`, `0x760120`, `0x75fee0`, `FUN_0075f290`, `FUN_0075f0f0`
+  (fills the candidate corner list at `0x11a88a0`, count `0x11a8898`),
+  `0x767260`; they call 15 more (`FUN_0075db50`, `FUN_0075ddbb`,
+  `FUN_0075f140`, `FUN_0075f1a0`, `FUN_0075f5b0`, `FUN_0075f8e0`,
+  `FUN_00760080`, `FUN_007600f0`, `FUN_00761e30`, `FUN_00761f20`,
+  `FUN_00762000`, `FUN_007620f0`, `0x75e0e0`, `0x75e650`, `0x75eb90`).
+- **Algorithm (FACT for the structure, from `FUN_0075f290`).**  From a node
+  (x, y) a free box is grown up to 64 px each way (direction flags 0x19 /
+  0x23 / 0x46 / 0x8c select the sides), each side stopped by the nearest
+  unit box (units gathered by `FUN_0075f5b0` / `FUN_0075f8e0`) or terrain
+  contour line (`FUN_007620f0` up, `FUN_00762000` right, `FUN_00761e30`
+  down, `FUN_00761f20` left; contours built at map load, `FUN_0075db50`
+  family); the box's corners become successor nodes, scored by distance
+  (`FUN_00604060`), doubled outside the next region and its neighbours, in
+  a best-first search with a node budget.
+- **Plan.**  (1) Decompile the terrain-contour builder and the four contour
+  lookups; (2) port the free-box step with unit boxes and contours;
+  (3) port the search loop; (4) check the Boot Camp field-18 track
+  (session log 131) and every gate.  Multi-session; no partial port merged.
+
+**Verification.**  No code change; gates as in (133).
